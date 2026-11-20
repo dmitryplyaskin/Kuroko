@@ -3,9 +3,11 @@ import { Tooltip } from '@mantine/core';
 import { useLocalStorage, useMediaQuery } from '@mantine/hooks';
 import { Feather, KeyRound, MessageSquare, PanelLeftClose, PanelLeftOpen, PanelsTopLeft, Settings } from 'lucide-react';
 import type { User } from './api';
-import { Appearance, ThemeMenu } from './Appearance';
+import { ThemeMenu } from './Appearance';
+import { useChatSettings } from './chat/chatSettings';
 import { Profile } from './Profile';
 import { SceneCover, Scenes } from './Scenes';
+import { SettingsPage } from './Settings';
 import { Vault } from './Vault';
 
 const Chat = lazy(() => import('./chat/Chat'));
@@ -47,6 +49,8 @@ function readView(): View {
 export function Workspace({ user, onSessionEnd }: { user: User; onSessionEnd: (notice?: string) => void }) {
   const [view, setView] = useState(readView);
   const [chatVisited, setChatVisited] = useState(() => view === 'chat');
+  const [settingsTab, setSettingsTab] = useState<string | null>('appearance');
+  const chatSettings = useChatSettings(user.id, onSessionEnd);
   const [menuCollapsed, setMenuCollapsed] = useLocalStorage({
     key: 'kuroko-menu-collapsed', defaultValue: false, getInitialValueInEffect: false,
     deserialize: (value) => value === 'true',
@@ -106,12 +110,12 @@ export function Workspace({ user, onSessionEnd }: { user: User; onSessionEnd: (n
         {chatVisited && (
           <Activity mode={view === 'chat' ? 'visible' : 'hidden'}>
             <Suspense fallback={<output className="chat-loading">Загрузка чата…</output>}>
-              <Chat username={user.username} active={view === 'chat'} />
+              <Chat username={user.username} active={view === 'chat'} settings={chatSettings.applied} />
             </Suspense>
           </Activity>
         )}
         {view === 'secrets' && <Vault user={user} onSessionEnd={onSessionEnd} />}
-        {view === 'settings' && <Appearance />}
+        {view === 'settings' && <SettingsPage tab={settingsTab} setTab={setSettingsTab} chatSettings={chatSettings} />}
       </main>
     </div>
   );

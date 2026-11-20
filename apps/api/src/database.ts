@@ -33,6 +33,13 @@ const schema = `
   CREATE INDEX secrets_owner ON secrets (user_id, created_at DESC, id);
 `;
 
+const chatSettingsSchema = `
+  CREATE TABLE chat_settings (
+    user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    settings_json TEXT NOT NULL CHECK (json_valid(settings_json))
+  ) STRICT;
+`;
+
 export function openDatabase(path: string, vaultKey: Buffer) {
   const db = new Database(path, { strict: true });
   const fingerprint = createHash('sha256').update(vaultKey).digest('hex');
@@ -45,8 +52,7 @@ export function openDatabase(path: string, vaultKey: Buffer) {
       if (version === 0) {
         db.exec(schema);
         db.run('INSERT INTO vault_settings (id, key_fingerprint) VALUES (1, ?)', [fingerprint]);
-        db.exec('PRAGMA user_version = 1');
-      } else if (version !== 1) {
+      } else if (version !== 1 && version !== 2) {
         throw new Error(`Unsupported SQLite schema version: ${version}`);
       }
 
@@ -55,6 +61,11 @@ export function openDatabase(path: string, vaultKey: Buffer) {
       ).get();
       if (stored?.key_fingerprint !== fingerprint) {
         throw new Error('The vault key does not match this SQLite database');
+      }
+
+      if (version !== 2) {
+        db.exec(chatSettingsSchema);
+        db.exec('PRAGMA user_version = 2');
       }
     }).immediate();
   } catch (error) {

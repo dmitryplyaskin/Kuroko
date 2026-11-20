@@ -334,9 +334,10 @@ h1, h2, h3, p, figure, dl, dd { margin: 0; }
 .vault-name { font-weight: 580; overflow-wrap: anywhere; }
 
 .appearance-page { max-inline-size: 820px; margin-inline: auto; }
-.appearance-heading { margin-block-end: 20px; }
-.appearance-heading h2 { font-size: 1.2rem; font-weight: 680; }
-.appearance-heading p { color: var(--kr-muted); margin-block-start: 4px; }
+.settings-tabs .mantine-Tabs-list::before { border-color: var(--kr-border); }
+.settings-tabs .mantine-Tabs-tab { min-block-size: 44px; color: var(--kr-muted); font-weight: 600; }
+.settings-tabs .mantine-Tabs-tab[data-active] { color: var(--kr-accent); }
+.settings-tabs .mantine-Tabs-panel { padding-block-start: 26px; }
 .appearance-group { min-inline-size: 0; padding: 0; margin: 0; border: 0; }
 .appearance-group + .appearance-group { margin-block-start: 32px; }
 .appearance-group legend { padding: 0; margin-block-end: 12px; }

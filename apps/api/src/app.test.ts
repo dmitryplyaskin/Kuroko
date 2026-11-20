@@ -2,6 +2,7 @@ import { afterEach, beforeEach, expect, test } from 'bun:test';
 import { randomBytes } from 'node:crypto';
 import { once } from 'node:events';
 import type { Server } from 'node:http';
+import { defaultChatSettings } from '../../shared/chatSettings';
 import { createApp } from './app';
 import { openDatabase } from './database';
 
@@ -151,6 +152,42 @@ test('changes the password once, revokes all sessions and preserves the vault', 
   expect(await list.json()).toEqual([{ id: expect.any(String), name: secret.name }]);
 });
 
+test('validates chat settings and stores them for the signed-in account only', async () => {
+  const path = '/settings/chat';
+  const { id: account } = await (await register('owner')).json() as { id: number };
+  expect((await register('other')).status).toBe(201);
+  const owner = sessionCookie(await login('owner')).token;
+  const other = sessionCookie(await login('other')).token;
+  const settings = {
+    fontSize: 20, width: 1088, userSide: 'left',
+    colors: { light: { speech: '#891d39' }, dark: { text: '#DEDCF6', quote: '#d5abf8' } },
+  };
+
+  expect((await request(path)).status).toBe(401);
+  expect((await request(path, { method: 'PUT', body: settings })).status).toBe(401);
+  expect((await request(path, { method: 'PUT', cookie: owner, body: settings, withHeader: false })).status).toBe(403);
+  expect((await request(path, { method: 'PUT', cookie: other, account, body: settings })).status).toBe(401);
+  expect(await (await request(path, { cookie: owner })).json()).toEqual({ settings: null });
+
+  const saved = await request(path, { method: 'PUT', cookie: owner, body: settings });
+  expect(saved.status).toBe(200);
+  const expected = { ...settings, colors: { ...settings.colors, dark: { ...settings.colors.dark, text: '#dedcf6' } } };
+  expect(await saved.json()).toEqual({ settings: expected });
+
+  for (const invalid of [
+    { ...settings, fontSize: 27 }, { ...settings, width: 1087 }, { ...settings, userSide: 'center' },
+    { ...settings, colors: { light: [], dark: {} } }, { ...settings, colors: { light: { speech: 'blue' }, dark: {} } },
+  ]) {
+    expect((await request(path, { method: 'PUT', cookie: owner, body: invalid })).status).toBe(400);
+  }
+
+  const secondSession = sessionCookie(await login('owner')).token;
+  expect(await (await request(path, { cookie: secondSession })).json()).toEqual({ settings: expected });
+  expect(await (await request(path, { cookie: other })).json()).toEqual({ settings: null });
+  expect((await request(path, { method: 'PUT', cookie: secondSession, body: defaultChatSettings })).status).toBe(200);
+  expect(await (await request(path, { cookie: owner })).json()).toEqual({ settings: defaultChatSettings });
+});
+
 test('deletes only the confirmed account and cascades to its sessions and secrets', async () => {
   const other = await register('other');
   const { id: otherId } = await other.json() as { id: number };
@@ -162,6 +199,7 @@ test('deletes only the confirmed account and cascades to its sessions and secret
   const body = { username: 'owner', currentPassword: password };
   for (const [cookie, name] of [[first, 'Owner secret'], [otherCookie, 'Other secret']]) {
     expect((await request('/secrets', { method: 'POST', cookie, body: { name, value: 'test value' } })).status).toBe(201);
+    expect((await request('/settings/chat', { method: 'PUT', cookie, body: defaultChatSettings })).status).toBe(200);
   }
 
   expect((await request(path, { method: 'DELETE', cookie: first, body, withHeader: false })).status).toBe(403);
@@ -177,6 +215,7 @@ test('deletes only the confirmed account and cascades to its sessions and secret
   expect((await request('/secrets', { cookie: second })).status).toBe(401);
   expect((await login('owner')).status).toBe(401);
   expect(db.query('SELECT name FROM secrets').all()).toEqual([{ name: 'Other secret' }]);
+  expect(db.query('SELECT user_id FROM chat_settings').all()).toEqual([{ user_id: otherId }]);
   expect((await request('/auth/session', { cookie: otherCookie })).status).toBe(200);
 
   expect((await register('owner')).status).toBe(201);

@@ -1,31 +1,11 @@
 import { Button, Menu, Textarea } from '@mantine/core';
 import { Bot, ChevronRight, Ellipsis, Pencil, Trash2 } from 'lucide-react';
 import { memo, useCallback, useLayoutEffect, useRef, useState } from 'react';
-import Markdown, { type Components } from 'react-markdown';
-import remarkGfm from 'remark-gfm';
+import { ChatText } from './ChatText';
 import type { ChatImage, Message } from './mock';
 
 const clock = new Intl.DateTimeFormat('ru', { hour: '2-digit', minute: '2-digit' });
 const date = new Intl.DateTimeFormat('ru', { dateStyle: 'long', timeStyle: 'short' });
-const markdownPlugins = [remarkGfm];
-const markdownComponents: Components = {
-  a: ({ href, children }) => <a href={href} target="_blank" rel="noreferrer">{children}</a>,
-  img: ({ src, alt, title }) => <img src={src} alt={alt ?? ''} title={title} loading="lazy" decoding="async" referrerPolicy="no-referrer" />,
-  pre: ({ children }) => (
-    // oxlint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- Make overflowing code keyboard-scrollable.
-    <pre tabIndex={0} aria-label="Блок кода">{children}</pre>
-  ),
-  table: ({ children }) => (
-    // oxlint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- Make overflowing tables keyboard-scrollable.
-    <section className="chat-table" tabIndex={0} aria-label="Таблица в сообщении">
-      <table>{children}</table>
-    </section>
-  ),
-};
-
-function MessageMarkdown({ children }: { children: string }) {
-  return <div className="chat-markdown"><Markdown remarkPlugins={markdownPlugins} components={markdownComponents} skipHtml>{children}</Markdown></div>;
-}
 
 export function ChatPicture({ image }: { image: ChatImage }) {
   const file = 'file' in image ? image.file : undefined;
@@ -144,7 +124,7 @@ export const ChatMessage = memo(function ChatMessage({
                 {phase === 'reasoning' ? 'Модель рассуждает…' : 'Ход рассуждений'}
               </button>
               <div id={`chat-reasoning-${id}`} className="chat-reasoning-body" hidden={!reasoningOpen}>
-                {reasoningOpen && reasoning && <MessageMarkdown>{reasoning}</MessageMarkdown>}
+                {reasoningOpen && reasoning && <ChatText>{reasoning}</ChatText>}
               </div>
             </div>
           )}
@@ -172,9 +152,7 @@ export const ChatMessage = memo(function ChatMessage({
                 <Button type="submit" size="compact-sm" disabled={!canSave}>Сохранить</Button>
               </div>
             </form>
-          ) : assistant ? (
-            text ? <MessageMarkdown>{text}</MessageMarkdown> : phase === 'answer' && <p className="chat-typing">Модель отвечает…</p>
-          ) : text && <p className="chat-user-text">{text}</p>}
+          ) : text ? <ChatText user={!assistant}>{text}</ChatText> : phase === 'answer' && <p className="chat-typing">Модель отвечает…</p>}
           {image && (
             <button type="button" className="chat-picture" aria-label="Открыть изображение" onClick={() => onPreview(image)}>
               <ChatPicture image={image} />

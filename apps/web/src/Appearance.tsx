@@ -37,14 +37,7 @@ export function Appearance() {
   const { accent, setAccent, theme } = useAppearance();
 
   return (
-    <div className="appearance-page">
-      <header className="page-heading">
-        <h1 tabIndex={-1}>Настройки</h1>
-      </header>
-      <div className="appearance-heading">
-        <h2>Внешний вид</h2>
-        <p>Настройки сохраняются в этом браузере.</p>
-      </div>
+    <>
       <fieldset className="appearance-group">
         <legend>Тема</legend>
         <div className="mode-options">
@@ -81,6 +74,6 @@ export function Appearance() {
           ))}
         </div>
       </fieldset>
-    </div>
+    </>
   );
 }

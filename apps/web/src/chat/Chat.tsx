@@ -1,9 +1,11 @@
-import { Button, Group, Modal } from '@mantine/core';
+import { Button, Group, Modal, useComputedColorScheme } from '@mantine/core';
 import { ArrowDownToLine, ArrowUpToLine } from 'lucide-react';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ChatComposer } from './ChatComposer';
 import { ChatHistory, type ChatHistoryHandle } from './ChatHistory';
 import { ChatMessage, ChatPicture, type ReplyPhase } from './ChatMessage';
+import type { ChatSettings } from '../../../shared/chatSettings';
+import { chatDisplayStyle } from './chatSettings';
 import { createMockHistory, getMockReply, historySize, type ChatImage, type Message } from './mock';
 import './chat.css';
 
@@ -25,7 +27,8 @@ function partialReply({ message, phase, visible }: Reply): Message {
   };
 }
 
-export default function Chat({ username, active }: { username: string; active: boolean }) {
+export default function Chat({ username, active, settings }: { username: string; active: boolean; settings: ChatSettings }) {
+  const scheme = useComputedColorScheme('light');
   const [messages, setMessages] = useState(createMockHistory);
   const [reply, setReply] = useState<Reply>();
   const [dialog, setDialog] = useState<Preview | Delete>();
@@ -137,7 +140,8 @@ export default function Chat({ username, active }: { username: string; active: b
   }
 
   return (
-    <section className="chat-panel" hidden={!active} aria-labelledby="chat-title">
+    <section className="chat-panel" hidden={!active} aria-labelledby="chat-title" data-user-side={settings.userSide}
+      style={chatDisplayStyle(settings, scheme)}>
       <header className="chat-header">
         <div className="chat-header-inner chat-column">
           <div>
