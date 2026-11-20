@@ -1,12 +1,14 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { Activity, lazy, Suspense, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Tooltip } from '@mantine/core';
 import { useLocalStorage, useMediaQuery } from '@mantine/hooks';
-import { Feather, KeyRound, PanelLeftClose, PanelLeftOpen, PanelsTopLeft, Settings } from 'lucide-react';
+import { Feather, KeyRound, MessageSquare, PanelLeftClose, PanelLeftOpen, PanelsTopLeft, Settings } from 'lucide-react';
 import type { User } from './api';
 import { Appearance, ThemeMenu } from './Appearance';
 import { Profile } from './Profile';
 import { SceneCover, Scenes } from './Scenes';
 import { Vault } from './Vault';
+
+const Chat = lazy(() => import('./chat/Chat'));
 
 export function Brand() {
   return (
@@ -29,6 +31,7 @@ export function GuestLayout({ children }: { children: ReactNode }) {
 
 const sections = {
   scenes: { label: 'Сцены', title: 'Сцены', Icon: PanelsTopLeft },
+  chat: { label: 'Чат', title: 'Тестовый чат', Icon: MessageSquare },
   secrets: { label: 'Секреты', title: 'Мои секреты', Icon: KeyRound },
   settings: { label: 'Настройки', title: 'Настройки', Icon: Settings },
 } as const;
@@ -43,6 +46,7 @@ function readView(): View {
 
 export function Workspace({ user, onSessionEnd }: { user: User; onSessionEnd: (notice?: string) => void }) {
   const [view, setView] = useState(readView);
+  const [chatVisited, setChatVisited] = useState(() => view === 'chat');
   const [menuCollapsed, setMenuCollapsed] = useLocalStorage({
     key: 'kuroko-menu-collapsed', defaultValue: false, getInitialValueInEffect: false,
     deserialize: (value) => value === 'true',
@@ -53,19 +57,23 @@ export function Workspace({ user, onSessionEnd }: { user: User; onSessionEnd: (n
   const MenuIcon = menuCollapsed ? PanelLeftOpen : PanelLeftClose;
 
   useEffect(() => {
-    const onHashChange = () => setView(readView());
+    const onHashChange = () => {
+      const next = readView();
+      if (next === 'chat') setChatVisited(true);
+      setView(next);
+    };
     window.addEventListener('hashchange', onHashChange);
     return () => window.removeEventListener('hashchange', onHashChange);
   }, []);
 
   useEffect(() => {
     document.title = `${sections[view].title} · Kuroko`;
-    main.current?.querySelector('h1')?.focus();
+    if (view !== 'chat') main.current?.querySelector<HTMLHeadingElement>('h1:not([hidden] h1)')?.focus();
   }, [view]);
 
   return (
     <div className="workspace" data-menu-collapsed={menuCollapsed || undefined}>
-      <button type="button" className="skip-link" onClick={() => main.current?.querySelector('h1')?.focus()}>
+      <button type="button" className="skip-link" onClick={() => main.current?.querySelector<HTMLHeadingElement>('h1:not([hidden] h1)')?.focus()}>
         К содержимому
       </button>
       <aside className="workspace-sidebar">
@@ -93,8 +101,15 @@ export function Workspace({ user, onSessionEnd }: { user: User; onSessionEnd: (n
         </nav>
         <Profile user={user} onSessionEnd={onSessionEnd} />
       </aside>
-      <main className="workspace-content" ref={main}>
+      <main className="workspace-content" data-chat={view === 'chat' || undefined} ref={main}>
         {view === 'scenes' && <Scenes />}
+        {chatVisited && (
+          <Activity mode={view === 'chat' ? 'visible' : 'hidden'}>
+            <Suspense fallback={<output className="chat-loading">Загрузка чата…</output>}>
+              <Chat username={user.username} active={view === 'chat'} />
+            </Suspense>
+          </Activity>
+        )}
         {view === 'secrets' && <Vault user={user} onSessionEnd={onSessionEnd} />}
         {view === 'settings' && <Appearance />}
       </main>
