@@ -1,8 +1,11 @@
 import '@mantine/core/styles.css';
-import { MantineProvider } from '@mantine/core';
+import '@fontsource-variable/onest';
+import '@fontsource-variable/literata';
+import './styles.css';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './App';
+import { KurokoThemeProvider } from './theme';
 
 const root = document.getElementById('root');
 if (!root) {
@@ -11,8 +14,8 @@ if (!root) {
 
 createRoot(root).render(
   <StrictMode>
-    <MantineProvider defaultColorScheme="auto">
+    <KurokoThemeProvider>
       <App />
-    </MantineProvider>
+    </KurokoThemeProvider>
   </StrictMode>,
 );

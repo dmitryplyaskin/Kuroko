@@ -1,7 +1,17 @@
+import type { Database } from 'bun:sqlite';
 import { Router } from 'express';
+import { createAuth } from './auth';
+import { createSecretsRouter } from './secrets';
 
-export const apiRouter = Router();
+export function createApiRouter(db: Database, vaultKey: Buffer, secureCookie: boolean) {
+  const router = Router();
+  const { router: authRouter, requireUser } = createAuth(db, secureCookie);
 
-apiRouter.get('/health', (_request, response) => {
-  response.set('Cache-Control', 'no-store').json({ status: 'ok' });
-});
+  router.get('/health', (_request, response) => {
+    response.json({ status: 'ok' });
+  });
+  router.use('/auth', authRouter);
+  router.use('/secrets', requireUser, createSecretsRouter(db, vaultKey));
+
+  return router;
+}

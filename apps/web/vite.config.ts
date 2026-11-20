@@ -6,7 +6,9 @@ const workspaceRoot = fileURLToPath(new URL('../..', import.meta.url));
 const outDir = fileURLToPath(new URL('../../dist/web', import.meta.url));
 
 export default defineConfig(({ mode }) => {
-  const { PORT = '3000' } = loadEnv(mode, workspaceRoot, 'PORT');
+  const { PORT = '3000', HOST = '127.0.0.1' } = loadEnv(mode, workspaceRoot, ['PORT', 'HOST']);
+  const apiHost = HOST === '0.0.0.0' ? '127.0.0.1' : HOST === '::' ? '::1' : HOST;
+  const proxyHost = apiHost.includes(':') ? `[${apiHost}]` : apiHost;
 
   return {
     plugins: [react()],
@@ -15,7 +17,7 @@ export default defineConfig(({ mode }) => {
       port: 5173,
       strictPort: true,
       proxy: {
-        '/api': `http://localhost:${Number(PORT)}`,
+        '/api': `http://${proxyHost}:${Number(PORT)}`,
       },
     },
     build: {
