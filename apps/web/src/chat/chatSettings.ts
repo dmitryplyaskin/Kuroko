@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState, type CSSProperties, type Dispatch, type SetStateAction } from 'react';
 import { defaultChatSettings, readChatSettings, sameChatSettings, type ChatColorScheme, type ChatSettings, type ChatSettingsResponse } from '../../../shared/chatSettings';
 import { api, ApiError, errorMessage } from '../api';
+import { notify } from '../notifications';
 
 type LoadState = { status: 'loading' } | { status: 'error'; message: string } | { status: 'ready'; settings: ChatSettings; fromBrowser: boolean };
-type SaveState = { status: 'idle' | 'saving' | 'saved' } | { status: 'error'; message: string };
+type SaveState = { status: 'idle' | 'saving' } | { status: 'error'; message: string };
 
 function readBrowserSettings() {
   try {
@@ -66,7 +67,8 @@ export function useChatSettings(account: number, onSessionEnd: () => void) {
       if (!settings) throw new Error('The server did not return the saved chat settings');
       setLoad({ status: 'ready', settings, fromBrowser: false });
       updateDraft(settings);
-      setSubmission({ status: 'saved' });
+      setSubmission({ status: 'idle' });
+      notify({ tone: 'success', message: 'Настройки чата сохранены' });
     } catch (error) {
       if (controller.signal.aborted) return;
       if (error instanceof ApiError && error.status === 401) onSessionEnd();

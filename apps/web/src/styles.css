@@ -230,12 +230,15 @@ h1, h2, h3, p, figure, dl, dd { margin: 0; }
 .profile-trigger .account-avatar { inline-size: 30px; block-size: 30px; font-size: .85rem; }
 .profile-trigger-name { font-size: .85rem; font-weight: 560; overflow-wrap: anywhere; }
 .profile-trigger-arrow { color: var(--kr-muted); }
-.workspace-content {
+.page-container {
+  --page-container-width: 68rem;
   min-inline-size: 0;
-  inline-size: min(100%, 1232px);
+  inline-size: min(100%, var(--page-container-width));
   margin-inline: auto;
-  padding: clamp(32px, 5vw, 62px) clamp(24px, 5vw, 66px) 52px;
 }
+
+.page-container[data-size='wide'] { --page-container-width: 77rem; }
+.workspace-content { padding: clamp(32px, 5vw, 62px) clamp(24px, 5vw, 66px) 52px; }
 
 .workspace:has(> .workspace-content[data-chat]) {
   block-size: 100dvh;
@@ -333,7 +336,10 @@ h1, h2, h3, p, figure, dl, dd { margin: 0; }
 .vault-list li + li { border-block-start: 1px solid var(--kr-border); }
 .vault-name { font-weight: 580; overflow-wrap: anywhere; }
 
-.appearance-page { max-inline-size: 820px; margin-inline: auto; }
+.form-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px 12px; }
+.form-actions .mantine-Button-root { max-inline-size: 100%; }
+.form-actions .mantine-Button-label { white-space: normal; }
+
 .settings-tabs .mantine-Tabs-list::before { border-color: var(--kr-border); }
 .settings-tabs .mantine-Tabs-tab { min-block-size: 44px; color: var(--kr-muted); font-weight: 600; }
 .settings-tabs .mantine-Tabs-tab[data-active] { color: var(--kr-accent); }

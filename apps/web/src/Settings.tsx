@@ -12,7 +12,7 @@ export function SettingsPage({ chatSettings, tab, setTab }: {
   setTab: (tab: string | null) => void;
 }) {
   return (
-    <div className="appearance-page">
+    <div className="page-container">
       <header className="page-heading">
         <h1 tabIndex={-1}>Настройки</h1>
         <p>{tab === 'chat' ? 'Настройки чата применяются после сохранения.' : 'Тема и цвет акцента сохраняются в этом браузере.'}</p>

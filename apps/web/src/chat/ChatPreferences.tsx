@@ -109,7 +109,7 @@ export default function ChatPreferences({ accountSettings }: { accountSettings: 
   }
 
   const unsaved = load.fromBrowser ? 'Настройки из этого браузера готовы к сохранению в аккаунте.' : 'Есть несохранённые изменения.';
-  const status = { saving: 'Сохраняем…', saved: 'Изменения сохранены в аккаунте.', idle: dirty ? unsaved : '', error: '' }[submission.status];
+  const status = { saving: 'Сохраняем…', idle: dirty ? unsaved : '', error: '' }[submission.status];
 
   return (
     <div className="chat-preferences">
@@ -151,10 +151,10 @@ export default function ChatPreferences({ accountSettings }: { accountSettings: 
             </p>
           </fieldset>
         </div>
-        <div className="chat-preferences-actions">
-          <Button type="submit" loading={saving} disabled={!dirty}>Сохранить изменения</Button>
+        <div className="form-actions chat-preferences-actions">
           <Button type="button" variant="subtle" disabled={saving || sameChatSettings(settings, defaultChatSettings)}
             onClick={() => setSettings(defaultChatSettings)}>Вернуть значения по умолчанию</Button>
+          <Button type="submit" loading={saving} disabled={!dirty}>Сохранить изменения</Button>
         </div>
         {submission.status === 'error'
           ? <p className="chat-preferences-error" role="alert">{submission.message}</p>

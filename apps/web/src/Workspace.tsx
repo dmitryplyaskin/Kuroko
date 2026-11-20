@@ -105,7 +105,7 @@ export function Workspace({ user, onSessionEnd }: { user: User; onSessionEnd: (n
         </nav>
         <Profile user={user} onSessionEnd={onSessionEnd} />
       </aside>
-      <main className="workspace-content" data-chat={view === 'chat' || undefined} ref={main}>
+      <main className="workspace-content page-container" data-size="wide" data-chat={view === 'chat' || undefined} ref={main}>
         {view === 'scenes' && <Scenes />}
         {chatVisited && (
           <Activity mode={view === 'chat' ? 'visible' : 'hidden'}>

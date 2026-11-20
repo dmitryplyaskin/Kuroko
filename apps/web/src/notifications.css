@@ -1,0 +1,50 @@
+.app-notifications {
+  --notification-gutter: clamp(12px, 2vw, 24px);
+  pointer-events: none;
+}
+
+.app-notifications[data-position='top-right'] {
+  top: var(--notification-gutter);
+  right: auto;
+  inset-inline-end: var(--notification-gutter);
+  inline-size: calc(100% - 2 * var(--notification-gutter));
+}
+
+.app-notification {
+  --kr-notification-warning: #895c13;
+  pointer-events: auto;
+  min-block-size: 56px;
+  padding: 8px 10px 8px 12px;
+  border-color: var(--kr-border);
+  border-radius: var(--kr-radius-panel);
+  background: var(--kr-surface);
+  box-shadow: 0 6px 24px rgb(0 0 0 / .12);
+}
+
+[data-mantine-color-scheme='dark'] .app-notification { --kr-notification-warning: #f1c879; }
+
+.app-notification .mantine-Notification-icon {
+  flex: none;
+  inline-size: 32px;
+  block-size: 32px;
+  margin-inline-end: 10px;
+  border-radius: var(--kr-radius-control);
+  background: color-mix(in srgb, var(--notification-color) 14%, var(--kr-surface));
+  color: var(--notification-color);
+}
+
+.app-notification :is(.mantine-Notification-title, .mantine-Notification-description) { overflow-wrap: anywhere; }
+.app-notification .mantine-Notification-title, .app-notification .mantine-Notification-description:not([data-with-title]) {
+  color: var(--kr-text);
+  font-weight: 620;
+}
+
+.app-notification .mantine-Notification-description[data-with-title], .app-notification .mantine-Notification-closeButton {
+  color: var(--kr-muted);
+}
+
+.app-notification .mantine-Notification-closeButton { min-inline-size: 36px; min-block-size: 36px; }
+
+@media (hover: hover) {
+  .app-notification .mantine-Notification-closeButton:hover { background: var(--kr-hover); }
+}
