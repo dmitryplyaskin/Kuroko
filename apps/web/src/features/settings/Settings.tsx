@@ -3,7 +3,8 @@ import { MessageSquare, Palette, Plug } from 'lucide-react';
 import { lazy, Suspense } from 'react';
 import { Appearance } from './Appearance';
 import classes from './Settings.module.css';
-import type { useChatSettings } from '../chat-settings/useChatSettings';
+import { useUnit } from 'effector-react';
+import { $settingsTab, settingsTabChanged } from '../../app/workspaceModel';
 
 const ChatPreferences = lazy(() => import('../chat-settings/ChatPreferences'));
 const ConnectionSettings = lazy(() => import('../connection/ConnectionSettings'));
@@ -14,20 +15,17 @@ const descriptions: Record<string, string> = {
   connection: 'Сохраняйте провайдера, модель и параметры генерации в пресеты.',
 };
 
-export function SettingsPage({ account, onSessionEnd, chatSettings, tab, setTab }: {
-  account: number;
-  onSessionEnd: () => void;
-  chatSettings: ReturnType<typeof useChatSettings>;
-  tab: string | null;
-  setTab: (tab: string | null) => void;
-}) {
+export function SettingsPage() {
+  const [tab, selectTab] = useUnit([$settingsTab, settingsTabChanged]);
   return (
     <div className="page-container">
       <header className="page-heading">
         <h1 tabIndex={-1}>Настройки</h1>
-        <p>{descriptions[tab ?? 'appearance']}</p>
+        <p>{descriptions[tab]}</p>
       </header>
-      <Tabs value={tab} onChange={setTab} keepMounted={false} color="var(--kr-accent)"
+      <Tabs value={tab} onChange={(value) => {
+          if (value === 'appearance' || value === 'chat' || value === 'connection') selectTab(value);
+        }} keepMounted={false} color="var(--kr-accent)"
         classNames={{ list: classes.list, tab: classes.tab }} styles={{ panel: { paddingBlockStart: 26 } }}>
         <Tabs.List aria-label="Разделы настроек">
           <Tabs.Tab value="appearance" leftSection={<Palette size={17} aria-hidden="true" />}>Внешний вид</Tabs.Tab>
@@ -37,12 +35,12 @@ export function SettingsPage({ account, onSessionEnd, chatSettings, tab, setTab 
         <Tabs.Panel value="appearance"><Appearance /></Tabs.Panel>
         <Tabs.Panel value="chat">
           <Suspense fallback={<output>Загрузка настроек чата…</output>}>
-            <ChatPreferences accountSettings={chatSettings} />
+            <ChatPreferences />
           </Suspense>
         </Tabs.Panel>
         <Tabs.Panel value="connection">
           <Suspense fallback={<output>Загружаем настройки подключения…</output>}>
-            <ConnectionSettings account={account} onSessionEnd={onSessionEnd} />
+            <ConnectionSettings />
           </Suspense>
         </Tabs.Panel>
       </Tabs>

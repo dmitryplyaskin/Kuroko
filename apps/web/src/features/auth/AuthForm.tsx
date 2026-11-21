@@ -1,16 +1,17 @@
 import { Button, Checkbox, Stack, Text, TextInput } from '@mantine/core';
 import { ArrowRight } from 'lucide-react';
-import { useEffect, useRef, useState, type SubmitEvent } from 'react';
-import type { AuthField, User } from '@kuroko/contracts/auth';
-import { authApi, authError } from './authApi';
+import { useEffect, useRef, type SubmitEvent } from 'react';
+import { useUnit } from 'effector-react';
+import {
+  $authError, $authPending, $registered, $registering, $username, authModeSwitched, authSubmitted, usernameChanged,
+} from './authFormModel';
 import './auth.css';
 
-export function AuthForm({ onLogin, notice }: { onLogin: (user: User) => void; notice?: string }) {
-  const [registering, setRegistering] = useState(false);
-  const [username, setUsername] = useState('');
-  const [pending, setPending] = useState(false);
-  const [registered, setRegistered] = useState(false);
-  const [error, setError] = useState<{ message: string; field?: AuthField }>();
+export function AuthForm({ notice }: { notice?: string }) {
+  const { registering, username, pending, registered, error, submitCredentials, switchMode, setUsername } = useUnit({
+    registering: $registering, username: $username, pending: $authPending, registered: $registered,
+    error: $authError, submitCredentials: authSubmitted, switchMode: authModeSwitched, setUsername: usernameChanged,
+  });
   const usernameInput = useRef<HTMLInputElement>(null);
   const passwordInput = useRef<HTMLInputElement>(null);
 
@@ -25,37 +26,10 @@ export function AuthForm({ onLogin, notice }: { onLogin: (user: User) => void; n
     }
   }, [error]);
 
-  async function submit(event: SubmitEvent<HTMLFormElement>) {
+  function submit(event: SubmitEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (pending) {
-      return;
-    }
-    const form = event.currentTarget;
-    const fields = new FormData(form);
-    const password = fields.get('password');
-    setPending(true);
-    setError(undefined);
-    try {
-      if (registering) {
-        const user = await authApi.register(username, password);
-        setUsername(user.username);
-        setRegistering(false);
-        setRegistered(true);
-      } else {
-        const user = await authApi.login(username, password, fields.has('remember'));
-        onLogin(user);
-      }
-    } catch (failure) {
-      setError(authError(failure));
-    } finally {
-      setPending(false);
-    }
-  }
-
-  function switchMode() {
-    setRegistering(!registering);
-    setRegistered(false);
-    setError(undefined);
+    const fields = new FormData(event.currentTarget);
+    submitCredentials({ password: fields.get('password'), remember: fields.has('remember') });
   }
 
   const message = registered ? 'Аккаунт создан. Введите пароль, чтобы войти.' : !registering && notice;

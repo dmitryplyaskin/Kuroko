@@ -1,14 +1,18 @@
 import { Button, ColorInput, SegmentedControl, useComputedColorScheme, type ButtonProps } from '@mantine/core';
 import { Bot, Check, UserRound } from 'lucide-react';
+import { useUnit } from 'effector-react';
 import { useId, useState, type CSSProperties } from 'react';
 import {
   chatColorRoles, chatFontSize, chatWidth, defaultChatSettings, isChatColor, sameChatSettings,
   type ChatColor, type ChatColorScheme,
 } from '@kuroko/contracts/chatSettings';
-import { useAppearance } from '../../shared/theme/theme';
+import { $theme } from '../../shared/theme/appearanceModel';
 import { ChatText } from '../chat/ChatText';
 import { chatDisplayStyle } from '../chat/chatDisplayStyle';
-import type { useChatSettings } from './useChatSettings';
+import {
+  $chatSettingsDraft, $chatSettingsDirty, $chatSettingsLoad, $chatSettingsSubmission, chatSettingsChanged,
+  chatSettingsColorChanged, chatSettingsResetRequested, chatSettingsRetryRequested, chatSettingsSaveRequested,
+} from './model';
 import './chatPreferences.css';
 
 const actionButtonStyles: ButtonProps['styles'] = {
@@ -73,12 +77,16 @@ function ChatColorInput({ role, value, onChange }: {
   );
 }
 
-export default function ChatPreferences({ accountSettings }: { accountSettings: ReturnType<typeof useChatSettings> }) {
-  const { load, draft: settings, setDraft: setSettings, dirty, submission, retry, save } = accountSettings;
+export default function ChatPreferences() {
+  const { load, settings, dirty, submission, change, changeColor, reset, retry, save } = useUnit({
+    load: $chatSettingsLoad, settings: $chatSettingsDraft, dirty: $chatSettingsDirty, submission: $chatSettingsSubmission,
+    change: chatSettingsChanged, changeColor: chatSettingsColorChanged, reset: chatSettingsResetRequested,
+    retry: chatSettingsRetryRequested, save: chatSettingsSaveRequested,
+  });
   const activeScheme = useComputedColorScheme('light');
   const [selectedScheme, setSelectedScheme] = useState<ChatColorScheme>();
   const scheme = selectedScheme ?? activeScheme;
-  const { theme } = useAppearance();
+  const theme = useUnit($theme);
   const palette = theme[scheme];
   const themeColors = { text: palette.text, speech: palette.accent, emphasis: palette.muted, quote: palette.muted };
   const saving = submission.status === 'saving';
@@ -99,10 +107,6 @@ export default function ChatPreferences({ accountSettings }: { accountSettings: 
     '--chat-demo-inset': `${(chatWidth.max - settings.width) / (chatWidth.max - chatWidth.min) * 9}%`,
   } satisfies CSSProperties & Record<`--${string}`, string | undefined>;
 
-  function setColor(role: ChatColor, color: string) {
-    setSettings((current) => ({ ...current, colors: { ...current.colors, [scheme]: { ...current.colors[scheme], [role]: color.toLowerCase() } } }));
-  }
-
   if (load.status === 'loading') return <output>Загружаем настройки чата…</output>;
   if (load.status === 'error') {
     return (
@@ -118,21 +122,21 @@ export default function ChatPreferences({ accountSettings }: { accountSettings: 
 
   return (
     <div className="chat-preferences">
-      <form onSubmit={(event) => { event.preventDefault(); void save(); }}>
+      <form onSubmit={(event) => { event.preventDefault(); save(); }}>
         <div className="chat-preferences-controls">
           <fieldset className="field-group chat-size-controls" disabled={saving}>
             <legend>Размер и расположение</legend>
             <SizeSlider label="Размер текста" bounds={chatFontSize} value={settings.fontSize}
-              onChange={(fontSize) => setSettings((current) => ({ ...current, fontSize }))} />
+              onChange={(fontSize) => change({ fontSize })} />
             <SizeSlider label="Ширина чата" bounds={chatWidth} value={settings.width}
-              onChange={(width) => setSettings((current) => ({ ...current, width }))} />
+              onChange={(width) => change({ width })} />
             <fieldset className="chat-side-options">
               <legend>Сообщения пользователя</legend>
               <div>
                 {(['left', 'right'] as const).map((side) => (
                   <label className="choice-option" key={side}>
                     <input type="radio" name="chat-user-side" checked={settings.userSide === side}
-                      onChange={() => setSettings((current) => ({ ...current, userSide: side }))} />
+                      onChange={() => change({ userSide: side })} />
                     <span>{side === 'left' ? 'Слева' : 'Справа'}</span>
                     <Check className="option-check" size={17} aria-hidden="true" />
                   </label>
@@ -148,7 +152,7 @@ export default function ChatPreferences({ accountSettings }: { accountSettings: 
             <div className="chat-color-controls">
               {chatColorRoles.map((role) => (
                 <ChatColorInput key={`${scheme}-${role}`} role={role} value={settings.colors[scheme][role] ?? themeColors[role]}
-                  onChange={(color) => setColor(role, color)} />
+                  onChange={(color) => changeColor({ scheme, role, color })} />
               ))}
             </div>
             <p className="chat-color-hint">
@@ -158,7 +162,7 @@ export default function ChatPreferences({ accountSettings }: { accountSettings: 
         </div>
         <div className="chat-preferences-actions">
           <Button type="button" variant="subtle" styles={actionButtonStyles} disabled={saving || sameChatSettings(settings, defaultChatSettings)}
-            onClick={() => setSettings(defaultChatSettings)}>Вернуть значения по умолчанию</Button>
+            onClick={reset}>Вернуть значения по умолчанию</Button>
           <Button type="submit" styles={actionButtonStyles} loading={saving} disabled={!dirty}>Сохранить изменения</Button>
         </div>
         {submission.status === 'error'

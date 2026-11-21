@@ -1,75 +1,37 @@
 import { Button, Group, Modal, Stack, TextInput } from '@mantine/core';
-import { useEffect, useRef, useState, type SubmitEvent } from 'react';
+import { useUnit } from 'effector-react';
+import { useEffect, useRef, type SubmitEvent } from 'react';
+import { connectionNameLimit, providers, type Provider, type ProviderKey } from '@kuroko/contracts/connectionSettings';
 import {
-  connectionNameLimit, isApiKey, providers, readConnectionName, type ConnectionState, type Provider, type ProviderKey,
-} from '@kuroko/contracts/connectionSettings';
-import { ApiError, errorMessage } from '../../shared/http/api';
-import { connectionApi } from './connectionApi';
+  $keyBeingDeleted, $keyPending, $keySubmission, connectionActionRequested, keyDeleteClosed, keyDeleteOpened, keyErrorCleared,
+} from './model';
 
-export function ProviderKeysDialog({ account, provider, keys, onClose, onAdd, onRemove, onSessionEnd }: {
-  account: number;
+export function ProviderKeysDialog({ provider, keys, onClose }: {
   provider: Provider;
   keys: ProviderKey[];
   onClose: () => void;
-  onAdd: (key: ProviderKey) => void;
-  onRemove: (state: ConnectionState) => void;
-  onSessionEnd: () => void;
 }) {
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState('');
-  const [notice, setNotice] = useState('');
-  const [deleting, setDeleting] = useState<ProviderKey>();
+  const [pending, feedback, perform, clearError, deleting, openDelete, dismissDelete] = useUnit([
+    $keyPending, $keySubmission, connectionActionRequested, keyErrorCleared, $keyBeingDeleted, keyDeleteOpened, keyDeleteClosed,
+  ]);
   const nameInput = useRef<HTMLInputElement>(null);
   const cancel = useRef<HTMLButtonElement>(null);
   const deleteTrigger = useRef<HTMLButtonElement>(null);
 
   useEffect(() => { if (deleting) cancel.current?.focus(); }, [deleting]);
 
-  function handleError(failure: unknown) {
-    if (failure instanceof ApiError && failure.status === 401) onSessionEnd();
-    else setError(errorMessage(failure));
-  }
+  useEffect(() => {
+    if (feedback.status === 'removed') {
+      const frame = requestAnimationFrame(() => nameInput.current?.focus());
+      return () => cancelAnimationFrame(frame);
+    }
+  }, [feedback]);
 
-  async function add(event: SubmitEvent<HTMLFormElement>) {
+  function add(event: SubmitEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (pending || deleting) return;
-    const form = event.currentTarget;
-    const fields = new FormData(form);
-    const name = readConnectionName(fields.get('name'));
-    const apiKey = String(fields.get('apiKey') ?? '').trim();
-    if (!name || !isApiKey(apiKey) || name.includes(apiKey)) {
-      setError('Укажите название ключа и введите API-ключ в отдельное поле.');
-      return;
-    }
-
-    setPending(true);
-    setError('');
-    try {
-      const saved = await connectionApi.addKey(account, provider, name, apiKey);
-      form.reset();
-      onAdd(saved);
-    } catch (failure) {
-      handleError(failure);
-    } finally {
-      setPending(false);
-    }
-  }
-
-  async function remove() {
-    if (!deleting || pending) return;
-    setPending(true);
-    setError('');
-    try {
-      const saved = await connectionApi.deleteKey(account, provider, deleting.id);
-      onRemove(saved);
-      setDeleting(undefined);
-      setNotice('Ключ удалён.');
-      requestAnimationFrame(() => nameInput.current?.focus());
-    } catch (failure) {
-      handleError(failure);
-    } finally {
-      setPending(false);
-    }
+    if (deleting) return;
+    const fields = new FormData(event.currentTarget);
+    perform({ kind: 'addKey', name: fields.get('name'), apiKey: fields.get('apiKey') });
   }
 
   return (
@@ -84,9 +46,7 @@ export function ProviderKeysDialog({ account, provider, keys, onClose, onAdd, on
                 <Button type="button" variant="subtle" color="red" size="compact-sm" disabled={pending || Boolean(deleting)}
                   aria-label={`Удалить ключ ${key.name}`} onClick={(event) => {
                     deleteTrigger.current = event.currentTarget;
-                    setDeleting(key);
-                    setError('');
-                    setNotice('');
+                    openDelete(key);
                   }}>Удалить</Button>
               </li>
             ))}
@@ -97,24 +57,24 @@ export function ProviderKeysDialog({ account, provider, keys, onClose, onAdd, on
             <p className="connection-modal-copy">Удалить ключ «{deleting.name}»? В пресетах, где он выбран, привязка будет снята.</p>
             <Group justify="flex-end">
               <Button ref={cancel} variant="default" disabled={pending} onClick={() => {
-                setDeleting(undefined);
-                setError('');
+                dismissDelete();
+                clearError();
                 requestAnimationFrame(() => deleteTrigger.current?.focus());
               }}>Отмена</Button>
-              <Button color="red" loading={pending} onClick={remove}>Удалить ключ</Button>
+              <Button color="red" loading={pending} onClick={() => perform({ kind: 'deleteKey', id: deleting.id })}>Удалить ключ</Button>
             </Group>
           </Stack>
         ) : (
           <form className="provider-key-form" method="post" onSubmit={add}>
             <TextInput ref={nameInput} data-autofocus label="Название ключа" name="name" required maxLength={connectionNameLimit}
-              autoComplete="off" readOnly={pending} onChange={() => setError('')} />
+              autoComplete="off" readOnly={pending} onChange={clearError} />
             <TextInput type="password" label="API-ключ" name="apiKey" required description="Значение доступно только при вводе."
-              autoComplete="off" spellCheck={false} autoCapitalize="none" maxLength={4096} readOnly={pending} onChange={() => setError('')} />
+              autoComplete="off" spellCheck={false} autoCapitalize="none" maxLength={4096} readOnly={pending} onChange={clearError} />
             <Group justify="flex-end"><Button type="submit" loading={pending}>Добавить ключ</Button></Group>
           </form>
         )}
-        {error && <p role="alert" className="connection-error">{error}</p>}
-        <output className="connection-hint">{notice}</output>
+        {feedback.status === 'error' && <p role="alert" className="connection-error">{feedback.message}</p>}
+        <output className="connection-hint">{feedback.status === 'removed' && 'Ключ удалён.'}</output>
       </Stack>
     </Modal>
   );

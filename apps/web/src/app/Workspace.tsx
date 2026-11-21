@@ -1,9 +1,11 @@
-import { Activity, lazy, Suspense, useEffect, useRef, useState } from 'react';
+import { Activity, lazy, Suspense, useEffect, useRef } from 'react';
 import { Tooltip } from '@mantine/core';
-import { useLocalStorage, useMediaQuery } from '@mantine/hooks';
+import { useMediaQuery } from '@mantine/hooks';
 import { MessageSquare, PanelLeftClose, PanelLeftOpen, PanelsTopLeft, Settings } from 'lucide-react';
 import type { User } from '@kuroko/contracts/auth';
-import { useChatSettings } from '../features/chat-settings/useChatSettings';
+import { useUnit } from 'effector-react';
+import { $appliedChatSettings } from '../features/chat-settings/model';
+import { $chatVisited, $menuCollapsed, $workspaceView, menuToggled, type WorkspaceView } from './workspaceModel';
 import { Profile } from '../features/auth/Profile';
 import { Scenes } from '../features/scenes/Scenes';
 import { SettingsPage } from '../features/settings/Settings';
@@ -18,38 +20,14 @@ const sections = {
   settings: { label: 'Настройки', title: 'Настройки', Icon: Settings },
 } as const;
 
-type View = keyof typeof sections;
-
-function readView(): View {
-  const view = window.location.hash.slice(1);
-  if (view === 'appearance' || view === 'secrets') return 'settings';
-  return Object.hasOwn(sections, view) ? view as View : 'scenes';
-}
-
-export function Workspace({ user, onSessionEnd }: { user: User; onSessionEnd: (notice?: string) => void }) {
-  const [view, setView] = useState(readView);
-  const [chatVisited, setChatVisited] = useState(() => view === 'chat');
-  const [settingsTab, setSettingsTab] = useState<string | null>(() => window.location.hash === '#secrets' ? 'connection' : 'appearance');
-  const chatSettings = useChatSettings(user.id, onSessionEnd);
-  const [menuCollapsed, setMenuCollapsed] = useLocalStorage({
-    key: 'kuroko-menu-collapsed', defaultValue: false, getInitialValueInEffect: false,
-    deserialize: (value) => value === 'true',
-  });
+export function Workspace({ user }: { user: User }) {
+  const [view, chatVisited, menuCollapsed, toggleMenu, chatSettings] = useUnit([
+    $workspaceView, $chatVisited, $menuCollapsed, menuToggled, $appliedChatSettings,
+  ]);
   const narrowLayout = useMediaQuery('(max-width: 740px)');
   const main = useRef<HTMLElement>(null);
   const menuLabel = menuCollapsed ? 'Развернуть меню' : 'Свернуть меню';
   const MenuIcon = menuCollapsed ? PanelLeftOpen : PanelLeftClose;
-
-  useEffect(() => {
-    const onHashChange = () => {
-      const next = readView();
-      if (next === 'chat') setChatVisited(true);
-      if (window.location.hash === '#secrets') setSettingsTab('connection');
-      setView(next);
-    };
-    window.addEventListener('hashchange', onHashChange);
-    return () => window.removeEventListener('hashchange', onHashChange);
-  }, []);
 
   useEffect(() => {
     document.title = `${sections[view].title} · Kuroko`;
@@ -66,12 +44,12 @@ export function Workspace({ user, onSessionEnd }: { user: User; onSessionEnd: (n
           <Brand />
           <button type="button" className="icon-button menu-toggle" aria-expanded={!menuCollapsed}
             aria-controls="workspace-menu" aria-label={menuLabel} title={menuLabel}
-            onClick={() => setMenuCollapsed((collapsed) => !collapsed)}>
+            onClick={toggleMenu}>
             <MenuIcon size={16} aria-hidden="true" />
           </button>
         </div>
         <nav id="workspace-menu" className="workspace-nav" aria-label="Рабочее пространство">
-          {(Object.keys(sections) as View[]).map((id) => {
+          {(Object.keys(sections) as WorkspaceView[]).map((id) => {
             const { Icon, label } = sections[id];
             return (
               <Tooltip key={id} label={label} disabled={!menuCollapsed} interactive openDelay={150}
@@ -84,19 +62,18 @@ export function Workspace({ user, onSessionEnd }: { user: User; onSessionEnd: (n
             );
           })}
         </nav>
-        <Profile user={user} onSessionEnd={onSessionEnd} />
+        <Profile user={user} />
       </aside>
       <main className="workspace-content page-container" data-size="wide" data-chat={view === 'chat' || undefined} ref={main}>
         {view === 'scenes' && <Scenes />}
         {chatVisited && (
           <Activity mode={view === 'chat' ? 'visible' : 'hidden'}>
             <Suspense fallback={<output className="chat-loading">Загрузка чата…</output>}>
-              <Chat username={user.username} active={view === 'chat'} settings={chatSettings.applied} />
+              <Chat username={user.username} active={view === 'chat'} settings={chatSettings} />
             </Suspense>
           </Activity>
         )}
-        {view === 'settings' && <SettingsPage account={user.id} onSessionEnd={onSessionEnd}
-          tab={settingsTab} setTab={setSettingsTab} chatSettings={chatSettings} />}
+        {view === 'settings' && <SettingsPage />}
       </main>
     </div>
   );

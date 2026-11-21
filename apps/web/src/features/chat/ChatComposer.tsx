@@ -1,39 +1,24 @@
 import { Textarea } from '@mantine/core';
 import { ArrowUp, Paperclip, Square, X } from 'lucide-react';
-import { useRef, useState, type SubmitEvent } from 'react';
-import type { ChatImage } from './message';
+import { useUnit } from 'effector-react';
+import { useRef, type SubmitEvent } from 'react';
+import {
+  $chatAttachment, $chatAttachmentError, $chatCanSend, $chatDraft, $replyId, chatAttachmentRemoved,
+  chatAttachmentSelected, chatDraftChanged, chatSendRequested, chatStopRequested,
+} from './model';
 
-type Props = {
-  streaming: boolean;
-  onSend: (text: string, image?: ChatImage) => void;
-  onStop: () => void;
-};
-
-export function ChatComposer({ streaming, onSend, onStop }: Props) {
-  const [draft, setDraft] = useState('');
-  const [file, setFile] = useState<File>();
-  const [error, setError] = useState('');
+export function ChatComposer() {
+  const { draft, file, error, canSend, replyId, setDraft, attach, remove, send, stop } = useUnit({
+    draft: $chatDraft, file: $chatAttachment, error: $chatAttachmentError, canSend: $chatCanSend, replyId: $replyId,
+    setDraft: chatDraftChanged, attach: chatAttachmentSelected, remove: chatAttachmentRemoved,
+    send: chatSendRequested, stop: chatStopRequested,
+  });
   const input = useRef<HTMLInputElement>(null);
   const textarea = useRef<HTMLTextAreaElement>(null);
-  const canSend = Boolean(draft.trim() || file) && !streaming;
-
-  function attach(next?: File) {
-    if (!next) return;
-    if (!next.type.startsWith('image/') || next.size > 10 * 1024 * 1024) {
-      setError('Выберите изображение размером до 10 МБ.');
-      return;
-    }
-    setError('');
-    setFile(next);
-  }
-
   function submit(event: SubmitEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!canSend) return;
-    onSend(draft.trim(), file && { file });
-    setDraft('');
-    setFile(undefined);
-    setError('');
+    send();
     textarea.current?.focus({ preventScroll: true });
   }
 
@@ -41,15 +26,15 @@ export function ChatComposer({ streaming, onSend, onStop }: Props) {
     <footer className="chat-footer">
       <form className="chat-composer chat-column" onSubmit={submit}>
         <input ref={input} type="file" accept="image/*" hidden onChange={(event) => {
-          attach(event.currentTarget.files?.[0]);
+          const file = event.currentTarget.files?.[0];
+          if (file) attach(file);
           event.currentTarget.value = '';
         }} />
         {file && (
           <div className="chat-attachment">
             <span>{file.name}</span>
             <button type="button" className="icon-button" aria-label="Убрать вложение" onClick={() => {
-              setFile(undefined);
-              setError('');
+              remove();
               textarea.current?.focus({ preventScroll: true });
             }}><X size={16} aria-hidden="true" /></button>
           </div>
@@ -74,10 +59,10 @@ export function ChatComposer({ streaming, onSend, onStop }: Props) {
             }
           }}
         />
-        {streaming ? (
+        {replyId !== null ? (
           <button type="button" className="icon-button chat-send-button" data-stop aria-label="Остановить" title="Остановить"
             onClick={() => {
-              onStop();
+              stop();
               textarea.current?.focus({ preventScroll: true });
             }}>
             <Square size={14} aria-hidden="true" />

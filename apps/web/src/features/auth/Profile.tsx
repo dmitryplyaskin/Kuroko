@@ -1,21 +1,20 @@
 import { Button, Group, Modal, TextInput } from '@mantine/core';
 import { ChevronRight, KeyRound, LogOut, Trash2, UserRound } from 'lucide-react';
 import { useEffect, useRef, useState, type SubmitEvent } from 'react';
-import type { AuthField, User } from '@kuroko/contracts/auth';
-import { ApiError } from '../../shared/http/api';
-import { authApi, authError } from './authApi';
+import { useUnit } from 'effector-react';
+import type { User } from '@kuroko/contracts/auth';
+import { $profileError, $profilePending, profileActionRequested, profileErrorCleared } from './profileModel';
 import './profile.css';
 
 type ProfileView = 'overview' | 'password' | 'delete';
-type FormError = { message: string; field?: AuthField | 'confirmPassword' };
-
 const titles = { overview: 'Профиль', password: 'Сменить пароль', delete: 'Удалить аккаунт' };
 
-export function Profile({ user, onSessionEnd }: { user: User; onSessionEnd: (notice?: string) => void }) {
+export function Profile({ user }: { user: User }) {
   const [opened, setOpened] = useState(false);
   const [view, setView] = useState<ProfileView>('overview');
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState<FormError>();
+  const [pending, error, perform, clearError] = useUnit([
+    $profilePending, $profileError, profileActionRequested, profileErrorCleared,
+  ]);
   const firstAction = useRef<HTMLButtonElement>(null);
   const form = useRef<HTMLFormElement>(null);
   const initial = Array.from(user.username)[0]?.toLocaleUpperCase('ru');
@@ -35,50 +34,17 @@ export function Profile({ user, onSessionEnd }: { user: User; onSessionEnd: (not
   }, [error]);
 
   function show(nextView: ProfileView) {
-    setError(undefined);
+    clearError();
     setView(nextView);
   }
 
-  async function perform(action: () => Promise<void>, notice?: string) {
-    if (pending) return;
-    setError(undefined);
-    setPending(true);
-    try {
-      await action();
-      onSessionEnd(notice);
-    } catch (failure) {
-      if (failure instanceof ApiError && failure.status === 401) {
-        onSessionEnd();
-      } else {
-        setError(authError(failure));
-      }
-    } finally {
-      setPending(false);
-    }
-  }
-
-  async function submit(event: SubmitEvent<HTMLFormElement>) {
+  function submit(event: SubmitEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (pending) return;
-
     const fields = new FormData(event.currentTarget);
     const currentPassword = fields.get('currentPassword');
-    if (deleting) {
-      const username = fields.get('username');
-      if (username !== user.username) {
-        setError({ message: 'Введите имя аккаунта точно как указано.', field: 'username' });
-        return;
-      }
-      await perform(() => authApi.deleteAccount(user.id, username, currentPassword), 'Аккаунт удалён.');
-      return;
-    }
-
-    const newPassword = fields.get('newPassword');
-    if (newPassword !== fields.get('confirmPassword')) {
-      setError({ message: 'Повторите новый пароль точно как ввели его выше.', field: 'confirmPassword' });
-      return;
-    }
-    await perform(() => authApi.changePassword(user.id, currentPassword, newPassword), 'Пароль изменён. Войдите с новым паролем.');
+    perform(deleting
+      ? { kind: 'delete', currentPassword, username: fields.get('username') }
+      : { kind: 'password', currentPassword, newPassword: fields.get('newPassword'), confirmation: fields.get('confirmPassword') });
   }
 
   return (
@@ -101,7 +67,7 @@ export function Profile({ user, onSessionEnd }: { user: User; onSessionEnd: (not
               <button type="button" className="profile-action" ref={firstAction} data-autofocus onClick={() => show('password')} disabled={pending}>
                 <KeyRound size={17} aria-hidden="true" />Сменить пароль<ChevronRight size={15} aria-hidden="true" />
               </button>
-              <button type="button" className="profile-action" onClick={() => perform(() => authApi.logout(user.id))} disabled={pending}>
+              <button type="button" className="profile-action" onClick={() => perform({ kind: 'logout' })} disabled={pending}>
                 <LogOut size={17} aria-hidden="true" />Выйти
               </button>
               <button type="button" className="profile-action profile-action-danger" onClick={() => show('delete')} disabled={pending}>

@@ -7,16 +7,16 @@ const keysPath = (provider: Provider) => `${path}/keys/${provider}`;
 
 export const connectionApi = {
   load: (account: number, signal: AbortSignal) => api<ConnectionState>(path, { account, signal }),
-  savePreset: (account: number, id: string, preset: SaveConnectionPreset) => api<ConnectionState>(
+  savePreset: (account: number, id: string, preset: SaveConnectionPreset, signal: AbortSignal) => api<ConnectionState>(
     id ? `${presetsPath}/${encodeURIComponent(id)}` : presetsPath,
-    { method: id ? 'PUT' : 'POST', account, body: preset },
+    { method: id ? 'PUT' : 'POST', account, signal, body: preset },
   ),
-  deletePreset: (account: number, id: string) =>
-    api<ConnectionState>(`${presetsPath}/${encodeURIComponent(id)}`, { method: 'DELETE', account }),
+  deletePreset: (account: number, id: string, signal: AbortSignal) =>
+    api<ConnectionState>(`${presetsPath}/${encodeURIComponent(id)}`, { method: 'DELETE', account, signal }),
   models: (account: number, provider: Provider, keyId: string, signal: AbortSignal) =>
     api<{ models: ProviderModel[] }>(`${path}/models`, { method: 'POST', account, body: { provider, keyId }, signal }),
-  addKey: (account: number, provider: Provider, name: string, apiKey: string) =>
-    api<ProviderKey>(keysPath(provider), { method: 'POST', account, body: { name, apiKey } }),
-  deleteKey: (account: number, provider: Provider, id: string) =>
-    api<ConnectionState>(`${keysPath(provider)}/${encodeURIComponent(id)}`, { method: 'DELETE', account }),
+  addKey: (account: number, provider: Provider, name: string, apiKey: string, signal: AbortSignal) =>
+    api<ProviderKey>(keysPath(provider), { method: 'POST', account, signal, body: { name, apiKey } }),
+  deleteKey: (account: number, provider: Provider, id: string, signal: AbortSignal) =>
+    api<ConnectionState>(`${keysPath(provider)}/${encodeURIComponent(id)}`, { method: 'DELETE', account, signal }),
 };

@@ -1,4 +1,6 @@
 import { Button, Group, Modal, useComputedColorScheme } from '@mantine/core';
+import { createWatch } from 'effector';
+import { useProvidedScope, useUnit } from 'effector-react';
 import { ArrowDownToLine, ArrowUpToLine } from 'lucide-react';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ChatComposer } from './ChatComposer';
@@ -7,11 +9,14 @@ import { ChatMessage, ChatPicture } from './ChatMessage';
 import type { ChatSettings } from '@kuroko/contracts/chatSettings';
 import { chatDisplayStyle } from './chatDisplayStyle';
 import type { ChatImage, Message } from './message';
-import { useMockConversation } from './useMockConversation';
+import {
+  $chatAnnouncement, $chatInitialized, $chatRows, $expandedReasoning, $messageEditor, $replyId, $replyPhase,
+  chatHidden, chatShown, keepHistoryAtEndRequested, messageDeleteRequested, messageEditCancelled,
+  messageEditChanged, messageEditRequested, messageEditSubmitted, messageSent, reasoningToggled,
+} from './model';
 import './chat.css';
 
 type Preview = { kind: 'preview'; image: ChatImage };
-type Edit = { id: number; text: string };
 type Delete = { kind: 'delete'; message: Message };
 
 const number = new Intl.NumberFormat('ru');
@@ -21,49 +26,45 @@ const messageForms = { one: 'сообщение', few: 'сообщения', man
 export default function Chat({ username, active, settings }: { username: string; active: boolean; settings: ChatSettings }) {
   const scheme = useComputedColorScheme('light');
   const [dialog, setDialog] = useState<Preview | Delete>();
-  const [editor, setEditor] = useState<Edit>();
-  const [expandedReasoning, setExpandedReasoning] = useState(() => new Set<number>());
+  const scope = useProvidedScope();
+  const {
+    initialized, rows, replyId, replyPhase, announcement, editor, expandedReasoning, show, hide, openEditor,
+    changeDraft, closeEditor, saveEdit, remove, toggleReasoning,
+  } = useUnit({
+    initialized: $chatInitialized, rows: $chatRows, replyId: $replyId, replyPhase: $replyPhase, announcement: $chatAnnouncement,
+    editor: $messageEditor, expandedReasoning: $expandedReasoning, show: chatShown, hide: chatHidden,
+    openEditor: messageEditRequested, changeDraft: messageEditChanged, closeEditor: messageEditCancelled,
+    saveEdit: messageEditSubmitted, remove: messageDeleteRequested, toggleReasoning: reasoningToggled,
+  });
   const title = useRef<HTMLHeadingElement>(null);
   const history = useRef<ChatHistoryHandle>(null);
   const jumpOnSend = useRef(false);
   const focusAfterDelete = useRef(false);
 
-  const keepEndInView = useCallback(() => history.current?.keepEndInView(), []);
-  const { rows, replyId, replyPhase, announcement, send, stop, edit, remove } = useMockConversation(keepEndInView);
-
-  const openEditor = useCallback((message: Message) => {
-    setEditor((current) => current?.id === message.id ? current : { id: message.id, text: message.text });
-  }, []);
-  const changeDraft = useCallback((id: number, text: string) => {
-    setEditor((current) => current?.id === id ? { id, text } : current);
-  }, []);
-  const closeEditor = useCallback(() => setEditor(undefined), []);
-  const saveEdit = useCallback((id: number, text: string) => {
-    edit(id, text);
-    setEditor(undefined);
-  }, [edit]);
   const openDelete = useCallback((message: Message) => setDialog({ kind: 'delete', message }), []);
   const openPreview = useCallback((image: ChatImage) => setDialog({ kind: 'preview', image }), []);
-  const setReasoningOpen = useCallback((id: number, open: boolean) => {
-    setExpandedReasoning((current) => {
-      if (current.has(id) === open) return current;
-      const next = new Set(current);
-      if (open) next.add(id);
-      else next.delete(id);
-      return next;
-    });
-  }, []);
+  const setReasoningOpen = useCallback((id: number, open: boolean) => toggleReasoning({ id, open }), [toggleReasoning]);
+  const updateMessageDraft = useCallback((id: number, text: string) => changeDraft({ id, text }), [changeDraft]);
   const renderMessage = useCallback((message: Message) => (
-    <ChatMessage message={message} username={username} phase={message.id === replyId ? replyPhase : undefined}
-      draft={editor?.id === message.id ? editor.text : undefined}
+    <ChatMessage message={message} username={username} phase={message.id === replyId ? replyPhase ?? undefined : undefined}
+      editor={editor?.id === message.id ? editor : undefined}
       reasoningOpen={expandedReasoning.has(message.id)} onToggleReasoning={setReasoningOpen}
-      onEdit={openEditor} onDraftChange={changeDraft} onCancelEdit={closeEditor} onSaveEdit={saveEdit}
+      onEdit={openEditor} onDraftChange={updateMessageDraft} onCancelEdit={closeEditor} onSaveEdit={saveEdit}
       onDelete={openDelete} onPreview={openPreview} />
-  ), [username, replyId, replyPhase, editor, expandedReasoning, setReasoningOpen, openEditor, changeDraft, closeEditor, saveEdit, openDelete, openPreview]);
+  ), [username, replyId, replyPhase, editor, expandedReasoning, setReasoningOpen, openEditor, updateMessageDraft, closeEditor, saveEdit, openDelete, openPreview]);
 
   useEffect(() => {
+    if (!scope) return;
+    const unwatchScroll = createWatch({ unit: keepHistoryAtEndRequested, scope, fn: () => history.current?.keepEndInView() });
+    const unwatchSend = createWatch({ unit: messageSent, scope, fn: () => { jumpOnSend.current = true; } });
+    show();
     title.current?.focus({ preventScroll: true });
-  }, []);
+    return () => {
+      unwatchScroll();
+      unwatchSend();
+      hide();
+    };
+  }, [scope, show, hide]);
 
   useLayoutEffect(() => {
     if (!jumpOnSend.current) return;
@@ -71,20 +72,9 @@ export default function Chat({ username, active, settings }: { username: string;
     history.current?.scrollToEnd();
   }, [replyId]);
 
-  function sendMessage(text: string, image?: ChatImage) {
-    if (send(text, image)) jumpOnSend.current = true;
-  }
-
-  function stopReply() {
-    const discardedId = stop();
-    if (discardedId !== undefined) setReasoningOpen(discardedId, false);
-  }
-
   function removeMessage(message: Message) {
     focusAfterDelete.current = true;
     remove(message.id);
-    setReasoningOpen(message.id, false);
-    if (editor?.id === message.id) closeEditor();
     setDialog(undefined);
   }
 
@@ -111,8 +101,8 @@ export default function Chat({ username, active, settings }: { username: string;
       </header>
       {rows.length ? (
         <ChatHistory ref={history} messages={rows} renderMessage={renderMessage} />
-      ) : <p className="chat-empty">История пуста. Напишите сообщение, чтобы начать диалог.</p>}
-      <ChatComposer streaming={replyId !== undefined} onSend={sendMessage} onStop={stopReply} />
+      ) : initialized ? <p className="chat-empty">История пуста. Напишите сообщение, чтобы начать диалог.</p> : <output className="chat-loading">Загрузка чата…</output>}
+      <ChatComposer />
       <output className="chat-sr-only">{announcement}</output>
 
       <Modal opened={Boolean(dialog)} onClose={() => setDialog(undefined)} onExitTransitionEnd={() => {

@@ -31,27 +31,25 @@ type Props = {
   message: Message;
   username: string;
   phase?: ReplyPhase;
-  draft?: string;
+  editor?: { text: string; canSave: boolean };
   reasoningOpen: boolean;
   onToggleReasoning: (id: number, open: boolean) => void;
-  onEdit: (message: Message) => void;
+  onEdit: (id: number) => void;
   onDraftChange: (id: number, value: string) => void;
   onCancelEdit: () => void;
-  onSaveEdit: (id: number, text: string) => void;
+  onSaveEdit: (id: number) => void;
   onDelete: (message: Message) => void;
   onPreview: (image: ChatImage) => void;
 };
 
 export const ChatMessage = memo(function ChatMessage({
-  message, username, phase, draft, reasoningOpen, onToggleReasoning,
+  message, username, phase, editor, reasoningOpen, onToggleReasoning,
   onEdit, onDraftChange, onSaveEdit, onCancelEdit, onDelete, onPreview,
 }: Props) {
   const { id, text, time, image, edited, reasoning } = message;
   const assistant = message.role === 'assistant';
   const author = assistant ? 'Мок-модель' : username;
-  const editing = draft !== undefined;
-  const editedText = draft?.trim() ?? '';
-  const canSave = Boolean(editedText || image) && editedText !== text;
+  const editing = editor !== undefined;
   const menuButton = useRef<HTMLButtonElement>(null);
   const editInput = useRef<HTMLTextAreaElement>(null);
   const focusEditor = useRef(false);
@@ -105,7 +103,7 @@ export const ChatMessage = memo(function ChatMessage({
                 {!editing && (
                   <Menu.Item leftSection={<Pencil size={15} aria-hidden="true" />} onClick={() => {
                     focusEditor.current = true;
-                    onEdit(message);
+                    onEdit(id);
                   }}>Редактировать</Menu.Item>
                 )}
                 <Menu.Item color="var(--kr-danger)" leftSection={<Trash2 size={15} aria-hidden="true" />} onClick={() => onDelete(message)}>Удалить</Menu.Item>
@@ -129,13 +127,13 @@ export const ChatMessage = memo(function ChatMessage({
           {editing ? (
             <form className="chat-message-editor" onSubmit={(event) => {
               event.preventDefault();
-              if (!canSave) return;
-              onSaveEdit(message.id, editedText);
+              if (!editor?.canSave) return;
+              onSaveEdit(id);
               menuButton.current?.focus({ preventScroll: true });
             }}>
               <Textarea ref={editInput} aria-label="Текст сообщения" placeholder="Текст сообщения" variant="unstyled"
                 classNames={{ input: 'chat-editor-input' }} autosize minRows={1} maxRows={8}
-                value={draft} onChange={(event) => onDraftChange(message.id, event.currentTarget.value)} onKeyDown={(event) => {
+                value={editor?.text} onChange={(event) => onDraftChange(message.id, event.currentTarget.value)} onKeyDown={(event) => {
                   if (event.nativeEvent.isComposing) return;
                   if (event.key === 'Escape') {
                     event.preventDefault();
@@ -147,7 +145,7 @@ export const ChatMessage = memo(function ChatMessage({
                 }} />
               <div className="chat-editor-actions">
                 <Button type="button" variant="subtle" size="compact-sm" onClick={cancelEdit}>Отмена</Button>
-                <Button type="submit" size="compact-sm" disabled={!canSave}>Сохранить</Button>
+                <Button type="submit" size="compact-sm" disabled={!editor?.canSave}>Сохранить</Button>
               </div>
             </form>
           ) : text ? <ChatText user={!assistant}>{text}</ChatText> : phase === 'answer' && <p className="chat-typing">Модель отвечает…</p>}

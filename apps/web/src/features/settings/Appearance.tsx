@@ -1,6 +1,7 @@
 import { useComputedColorScheme, useMantineColorScheme } from '@mantine/core';
 import { Check } from 'lucide-react';
-import { accents, useAppearance, type AccentId } from '../../shared/theme/theme';
+import { useUnit } from 'effector-react';
+import { $accent, $theme, accentChanged, accents, type AccentId } from '../../shared/theme/appearanceModel';
 import { themeModes } from '../../shared/theme/themeModes';
 import './appearance.css';
 
@@ -9,7 +10,7 @@ const accentIds = Object.keys(accents) as AccentId[];
 export function Appearance() {
   const { colorScheme, setColorScheme } = useMantineColorScheme();
   const activeScheme = useComputedColorScheme('light');
-  const { accent, setAccent, theme } = useAppearance();
+  const [accent, setAccent, theme] = useUnit([$accent, accentChanged, $theme]);
 
   return (
     <>

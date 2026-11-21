@@ -1,28 +1,68 @@
 import { ActionIcon, Autocomplete, Button, Group, Modal, NativeSelect, NumberInput, Stack, TextInput, Tooltip } from '@mantine/core';
 import { ChevronDown, KeyRound } from 'lucide-react';
-import { useRef, useState, type SubmitEvent } from 'react';
+import { useUnit } from 'effector-react';
+import { useCallback, useEffect, useRef, type SubmitEvent } from 'react';
 import {
   connectionNameLimit, connectionParameterRanges, isModelId, isOptionalConnectionNumber, isProvider, providers,
 } from '@kuroko/contracts/connectionSettings';
 import { numericValue, type NumericField } from './connectionDraft';
 import { ProviderKeysDialog } from './ProviderKeysDialog';
-import { useConnectionSettings } from './useConnectionSettings';
+import {
+  $connectionLoad, $connectionSelection, $keyManagerOpen, $keySubmission, $presetDeleteError, $presetDeleteOpen,
+  $presetPending, $presetSubmission,
+  connectionActionRequested, connectionClosed, connectionDraftChanged, connectionModelsRequested, connectionOpened,
+  connectionProviderChanged, connectionRetryRequested, keyManagerClosed, keyManagerOpened, presetCopyRequested,
+  presetDeleteClosed, presetDeleteOpened, presetSelected,
+} from './model';
+import { $modelCatalog } from './modelCatalog';
 import './connectionSettings.css';
 
 const providerOptions = Object.entries(providers).map(([value, { label }]) => ({ value, label }));
 const formatter = new Intl.NumberFormat('ru');
 
-export default function ConnectionSettings({ account, onSessionEnd }: { account: number; onSessionEnd: () => void }) {
+export default function ConnectionSettings() {
   const {
-    load, retry, presetId, selectedPreset, activePreset, draft, keyId, providerKeys, submission, deleteError,
-    catalog, selectPreset, copyPreset, updateDraft, save, removePreset, loadModels, onKeyAdded, onKeyRemoved, clearDeleteError,
-  } = useConnectionSettings(account, onSessionEnd);
-  const [keyManagerOpen, setKeyManagerOpen] = useState(false);
-  const [deleteOpen, setDeleteOpen] = useState(false);
+    load, retry, selection, submission, deleteError, saving, catalog, selectPreset, copyPreset, updateDraft, changeProvider,
+    perform, loadModels, keySubmission, open, close, keyManagerOpen, deleteOpen, openKeyManager,
+    dismissKeyManager, openDelete, dismissDelete,
+  } = useUnit({
+    load: $connectionLoad, retry: connectionRetryRequested, selection: $connectionSelection, submission: $presetSubmission,
+    deleteError: $presetDeleteError, saving: $presetPending, catalog: $modelCatalog, selectPreset: presetSelected,
+    copyPreset: presetCopyRequested, updateDraft: connectionDraftChanged, changeProvider: connectionProviderChanged,
+    perform: connectionActionRequested, loadModels: connectionModelsRequested, keySubmission: $keySubmission,
+    open: connectionOpened, close: connectionClosed, keyManagerOpen: $keyManagerOpen, deleteOpen: $presetDeleteOpen,
+    openKeyManager: keyManagerOpened, dismissKeyManager: keyManagerClosed, openDelete: presetDeleteOpened, dismissDelete: presetDeleteClosed,
+  });
+  const { presetId, selectedPreset, activePreset, draft, keyId, providerKeys } = selection;
   const keyManagerTrigger = useRef<HTMLButtonElement>(null);
   const presetName = useRef<HTMLInputElement>(null);
   const presetSelect = useRef<HTMLSelectElement>(null);
   const presetDelete = useRef<HTMLButtonElement>(null);
+
+  const closeKeyManager = useCallback(() => {
+    dismissKeyManager();
+    requestAnimationFrame(() => keyManagerTrigger.current?.focus());
+  }, [dismissKeyManager]);
+
+  useEffect(() => {
+    open();
+    return () => { close(); };
+  }, [open, close]);
+
+  useEffect(() => {
+    if (keySubmission.status === 'added') {
+      const frame = requestAnimationFrame(() => keyManagerTrigger.current?.focus());
+      return () => cancelAnimationFrame(frame);
+    }
+  }, [keySubmission]);
+
+  useEffect(() => {
+    if (submission.status === 'error' && submission.field === 'name') presetName.current?.focus();
+    if (submission.status === 'deleted') {
+      const frame = requestAnimationFrame(() => presetSelect.current?.focus());
+      return () => cancelAnimationFrame(frame);
+    }
+  }, [submission]);
 
   if (load.status === 'error') {
     return (
@@ -44,31 +84,19 @@ export default function ConnectionSettings({ account, onSessionEnd }: { account:
     model?.inputLimit && `Ввод: ${formatter.format(model.inputLimit)}`,
     model?.outputLimit && `Ответ: ${formatter.format(model.outputLimit)}`,
   ].filter(Boolean).join(' · ');
-  const saving = submission.status === 'pending';
   const loadingModels = catalog.status === 'loading';
   const keyOptions = [{ value: '', label: providerKeys.length ? 'Без ключа' : 'Нет сохранённых ключей' },
     ...providerKeys.map(({ id, name }) => ({ value: id, label: name }))];
   const presetOptions = [{ value: '', label: 'Новый пресет' }, ...load.data.presets.map(({ id, name }) => ({ value: id, label: name }))];
 
-  async function submit(event: SubmitEvent<HTMLFormElement>) {
+  function submit(event: SubmitEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (await save() === 'name') presetName.current?.focus();
-  }
-
-  async function confirmPresetDelete() {
-    if (!await removePreset()) return;
-    setDeleteOpen(false);
-    requestAnimationFrame(() => presetSelect.current?.focus());
+    perform({ kind: 'savePreset' });
   }
 
   function closePresetDelete() {
-    setDeleteOpen(false);
+    dismissDelete();
     requestAnimationFrame(() => presetDelete.current?.focus());
-  }
-
-  function closeKeyManager() {
-    setKeyManagerOpen(false);
-    requestAnimationFrame(() => keyManagerTrigger.current?.focus());
   }
 
   function numberField(field: NumericField, label: string, description: string) {
@@ -98,10 +126,7 @@ export default function ConnectionSettings({ account, onSessionEnd }: { account:
                 copyPreset();
                 presetName.current?.focus();
               }}>Создать копию</Button>
-              <Button ref={presetDelete} type="button" variant="subtle" color="red" onClick={() => {
-                clearDeleteError();
-                setDeleteOpen(true);
-              }}>Удалить пресет</Button>
+              <Button ref={presetDelete} type="button" variant="subtle" color="red" onClick={openDelete}>Удалить пресет</Button>
             </Group>
           )}
         </fieldset>
@@ -110,16 +135,14 @@ export default function ConnectionSettings({ account, onSessionEnd }: { account:
             <legend>Провайдер и модель</legend>
             <NativeSelect label="Провайдер" value={provider} data={providerOptions} onChange={(event) => {
               const next = event.currentTarget.value;
-              if (isProvider(next) && next !== provider) {
-                updateDraft({ provider: next, model: '', keyId: '', topK: providers[next].topK ? draft.topK : '' });
-              }
+              if (isProvider(next)) changeProvider(next);
             }} />
             <div className="connection-key-control">
               <NativeSelect label="API-ключ" value={keyId} data={keyOptions}
                 onChange={(event) => updateDraft({ keyId: event.currentTarget.value })} />
               <Tooltip label={`Ключи ${providerConfig.label}`} events={{ hover: true, focus: true, touch: false }}>
                 <ActionIcon ref={keyManagerTrigger} type="button" variant="default" size={44} aria-label={`Управлять ключами ${providerConfig.label}`}
-                  aria-haspopup="dialog" onClick={() => setKeyManagerOpen(true)}>
+                  aria-haspopup="dialog" onClick={openKeyManager}>
                   <KeyRound size={19} aria-hidden="true" />
                 </ActionIcon>
               </Tooltip>
@@ -170,20 +193,14 @@ export default function ConnectionSettings({ account, onSessionEnd }: { account:
           <div className="connection-action-status">
             {submission.status === 'error' && <p className="connection-error" role="alert">{submission.message}</p>}
             <output className="connection-hint">
-              {submission.status === 'saved' ? submission.message : activePreset && `Активный пресет · ${activePreset.name}`}
+              {submission.status === 'saved' || submission.status === 'deleted' ? submission.message : activePreset && `Активный пресет · ${activePreset.name}`}
             </output>
           </div>
           <Button type="submit" ms="auto" loading={saving && !deleteOpen} disabled={saving || loadingModels}>Сохранить пресет</Button>
         </div>
       </form>
       {keyManagerOpen && (
-        <ProviderKeysDialog account={account} provider={provider} keys={providerKeys} onSessionEnd={onSessionEnd}
-          onClose={closeKeyManager}
-          onAdd={(key) => {
-            onKeyAdded(key);
-            closeKeyManager();
-          }}
-          onRemove={onKeyRemoved} />
+        <ProviderKeysDialog provider={provider} keys={providerKeys} onClose={closeKeyManager} />
       )}
       {deleteOpen && selectedPreset && (
         <Modal opened onClose={closePresetDelete} title="Удалить пресет?" returnFocus={false} transitionProps={{ transition: 'fade' }}
@@ -193,7 +210,7 @@ export default function ConnectionSettings({ account, onSessionEnd }: { account:
             {deleteError && <p className="connection-error" role="alert">{deleteError}</p>}
             <Group justify="flex-end">
               <Button data-autofocus variant="default" disabled={saving} onClick={closePresetDelete}>Отмена</Button>
-              <Button color="red" loading={saving} onClick={confirmPresetDelete}>Удалить пресет</Button>
+              <Button color="red" loading={saving} onClick={() => perform({ kind: 'deletePreset' })}>Удалить пресет</Button>
             </Group>
           </Stack>
         </Modal>
