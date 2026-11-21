@@ -1,16 +1,18 @@
 import { Button, Loader, Stack, Text } from '@mantine/core';
 import { useUnit } from 'effector-react';
-import { $session, sessionRetryRequested } from '../features/auth/sessionModel';
-import { AuthForm } from '../features/auth/AuthForm';
+import type { ModuleRegistry } from '../modules/registry';
+import { $session, sessionRetryRequested } from '../platform/session/model';
+import { AuthForm } from './account/AuthForm';
 import { GuestLayout } from './GuestLayout';
 import { Workspace } from './Workspace';
+import type { WorkspaceModel } from './workspaceModel';
 
-export function App() {
+export function App({ registry, workspace }: { registry: ModuleRegistry; workspace: WorkspaceModel }) {
   const [session, retry] = useUnit([$session, sessionRetryRequested]);
 
   if (session.status === 'authenticated') {
     const { user } = session.session;
-    return <Workspace key={user.id} user={user} />;
+    return <Workspace key={user.id} user={user} registry={registry} model={workspace} />;
   }
 
   if (session.status === 'guest') {

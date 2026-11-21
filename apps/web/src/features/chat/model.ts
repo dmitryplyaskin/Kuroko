@@ -1,6 +1,6 @@
 import { combine, createEffect, createEvent, createStore, sample, type StoreValue } from 'effector';
 import { abortFx } from '../../shared/async/abort';
-import { $activeSession, sessionEnded, type ActiveSession } from '../auth/sessionModel';
+import { $activeSession, sessionEnded, type ActiveSession } from '../../platform/session/model';
 import type { ChatImage, Message, ReplyPhase } from './message';
 import { createMockHistory, getMockReply } from './mock';
 
@@ -129,7 +129,7 @@ function partialReply({ message, phase, visible }: Reply): Message {
 
 type Tick = { visibility: Visibility; reply: Reply };
 export const waitForReplyTickFx = createEffect(({ visibility, reply }: Tick) => {
-  const signal = AbortSignal.any([visibility.controller.signal, reply.controller.signal, visibility.session.controller.signal]);
+  const signal = AbortSignal.any([visibility.controller.signal, reply.controller.signal, visibility.session.signal]);
   const delay = reply.phase === 'reasoning' && reply.visible === 0 ? 350 : 75;
   return new Promise<void>((resolve) => {
     if (signal.aborted) {

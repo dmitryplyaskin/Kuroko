@@ -3,10 +3,10 @@ import {
   defaultChatSettings, readChatSettings, sameChatSettings, type ChatColor, type ChatColorScheme,
   type ChatSettings, type ChatSettingsResponse,
 } from '@kuroko/contracts/chatSettings';
-import { $activeSession, protectedRequestFailed, sessionEnded, sessionStarted, type ActiveSession } from '../auth/sessionModel';
-import { readBrowserStorage } from '../../shared/browser/storage';
-import { api, errorMessage } from '../../shared/http/api';
-import { notify } from '../../shared/notifications/notifications';
+import { $activeSession, protectedRequestFailed, sessionEnded, sessionStarted, type ActiveSession } from '../../../platform/session/model';
+import { readBrowserStorage } from '../../../shared/browser/storage';
+import { api, errorMessage } from '../../../shared/http/api';
+import { notify } from '../../../shared/notifications/notifications';
 
 type LoadState = { status: 'loading' } | { status: 'error'; message: string } | { status: 'ready'; settings: ChatSettings; fromBrowser: boolean };
 type Submission = { status: 'idle' | 'saving' } | { status: 'error'; message: string };
@@ -31,14 +31,14 @@ function readLegacySettings() {
 
 export const loadChatSettingsFx = createEffect(async (session: ActiveSession) => {
   const { settings } = await api<ChatSettingsResponse>('/settings/chat', {
-    account: session.user.id, signal: session.controller.signal,
+    account: session.user.id, signal: session.signal,
   });
   return { settings, legacy: settings === null ? readLegacySettings() : undefined };
 });
 
 export const saveChatSettingsFx = createEffect(async ({ session, draft }: { session: ActiveSession; draft: ChatSettings }) => {
   const { settings } = await api<ChatSettingsResponse>('/settings/chat', {
-    method: 'PUT', account: session.user.id, body: draft, signal: session.controller.signal,
+    method: 'PUT', account: session.user.id, body: draft, signal: session.signal,
   });
   if (!settings) throw new Error('The server did not return the saved chat settings');
   return settings;

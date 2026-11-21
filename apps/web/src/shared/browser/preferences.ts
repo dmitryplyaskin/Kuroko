@@ -1,5 +1,5 @@
 import { createEffect, createEvent, createStore, sample } from 'effector';
-import { appStarted } from '../../app/lifecycle';
+import { appStarted } from '../../platform/lifecycle';
 import { readBrowserStorage, writeBrowserStorageFx } from './storage';
 
 export const browserStorageChanged = createEvent<{ key: string | null; value: string | null }>();

@@ -7,7 +7,7 @@ import './appearance.css';
 
 const accentIds = Object.keys(accents) as AccentId[];
 
-export function Appearance() {
+export default function Appearance() {
   const { colorScheme, setColorScheme } = useMantineColorScheme();
   const activeScheme = useComputedColorScheme('light');
   const [accent, setAccent, theme] = useUnit([$accent, accentChanged, $theme]);

@@ -3,15 +3,15 @@ import { test } from 'node:test';
 import { allSettled, fork, scopeBind } from 'effector';
 import { defaultChatSettings } from '@kuroko/contracts/chatSettings';
 import { defaultConnectionSettings, type ConnectionState } from '@kuroko/contracts/connectionSettings';
-import { appStarted } from './lifecycle';
+import { appStarted } from '../platform/lifecycle';
 import { ApiError } from '../shared/http/api';
 import {
   $activeSession, $session, checkSessionFx, protectedRequestFailed, sessionEndRequested, sessionRetryRequested, sessionUserReceived,
-} from '../features/auth/sessionModel';
+} from '../platform/session/model';
 import {
   $appliedChatSettings, $chatSettingsDirty, $chatSettingsDraft, $chatSettingsSubmission, chatSettingsChanged,
   chatSettingsSaveRequested, loadChatSettingsFx, saveChatSettingsFx,
-} from '../features/chat-settings/model';
+} from '../features/chat/settings/model';
 import {
   $connectionLoad, $connectionSelection, connectionActionRequested, connectionClosed, connectionDraftChanged,
   connectionModelsRequested, connectionOpened, connectionProviderChanged, loadConnectionFx, mutateConnectionFx,
@@ -70,7 +70,7 @@ test('a late 401 after signing in again as the same user leaves the new session 
   scopeBind(chatSettingsSaveRequested, { scope })();
   assert.equal(scope.getState($chatSettingsSubmission).status, 'saving');
   scopeBind(sessionEndRequested, { scope })({ session: oldSession });
-  assert.equal(oldSession.controller.signal.aborted, true);
+  assert.equal(oldSession.signal.aborted, true);
   assert.deepEqual(scope.getState($chatSettingsDraft), defaultChatSettings);
   scopeBind(sessionUserReceived, { scope })(user);
 

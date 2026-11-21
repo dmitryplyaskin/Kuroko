@@ -8,8 +8,10 @@ import { lazy, StrictMode, Suspense } from 'react';
 import { createRoot } from 'react-dom/client';
 import { fork, scopeBind } from 'effector';
 import { Provider } from 'effector-react';
-import { appStarted } from './app/lifecycle';
-import { workspaceHashChanged } from './app/workspaceModel';
+import { corePlugin } from './core';
+import { createModuleRegistry } from './modules/registry';
+import { appStarted } from './platform/lifecycle';
+import { createWorkspaceModel } from './app/workspaceModel';
 import { browserStorageChanged } from './shared/browser/preferences';
 import { App } from './app/App';
 import { NotificationAnnouncements } from './shared/notifications/notifications';
@@ -22,8 +24,10 @@ if (!root) {
   throw new Error('Root element missing');
 }
 
+const registry = createModuleRegistry(corePlugin);
+const workspace = createWorkspaceModel(registry);
 const scope = fork();
-const syncHash = scopeBind(workspaceHashChanged, { scope });
+const syncHash = scopeBind(workspace.workspaceHashChanged, { scope });
 const syncStorage = scopeBind(browserStorageChanged, { scope });
 const handleHashChange = () => syncHash(window.location.hash);
 const handleStorage = (event: StorageEvent) => {
@@ -42,7 +46,7 @@ appRoot.render(
   <StrictMode>
     <Provider value={scope}>
       <KurokoThemeProvider>
-        <App />
+        <App registry={registry} workspace={workspace} />
         <NotificationAnnouncements />
         <Suspense fallback={null}><AppNotifications /></Suspense>
       </KurokoThemeProvider>

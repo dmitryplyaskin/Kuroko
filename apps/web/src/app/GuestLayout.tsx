@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { SceneCover } from '../features/scenes/SceneCover';
+import { SceneCover } from '../shared/scene-cover/SceneCover';
 import { ThemeMenu } from '../shared/theme/ThemeMenu';
 import { Brand } from './Brand';
 import './guest.css';

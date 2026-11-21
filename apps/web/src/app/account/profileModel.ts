@@ -1,6 +1,6 @@
 import { combine, createEffect, createEvent, createStore, sample } from 'effector';
-import { authApi, authError } from './authApi';
-import { $activeSession, protectedRequestFailed, sessionEnded, sessionEndRequested, type ActiveSession } from './sessionModel';
+import { authApi, authError } from '../../platform/session/authApi';
+import { $activeSession, protectedRequestFailed, sessionEnded, sessionEndRequested, type ActiveSession } from '../../platform/session/model';
 
 type ProfileAction = { kind: 'logout' }
   | { kind: 'password'; currentPassword: FormDataEntryValue | null; newPassword: FormDataEntryValue | null; confirmation: FormDataEntryValue | null }
@@ -11,7 +11,7 @@ export const profileActionRequested = createEvent<ProfileAction>();
 export const profileErrorCleared = createEvent();
 const performProfileActionFx = createEffect(async ({ action, session }: { action: ProfileAction; session: ActiveSession }) => {
   const { id, username } = session.user;
-  const signal = session.controller.signal;
+  const signal = session.signal;
   switch (action.kind) {
     case 'logout':
       await authApi.logout(id, signal);

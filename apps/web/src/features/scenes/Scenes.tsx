@@ -1,8 +1,8 @@
 import { MessageSquare, NotebookPen } from 'lucide-react';
-import { SceneCover } from './SceneCover';
+import { SceneCover } from '../../shared/scene-cover/SceneCover';
 import './scenes.css';
 
-export function Scenes() {
+export default function Scenes() {
   return (
     <>
       <header className="page-heading"><h1 tabIndex={-1}>Сцены</h1></header>

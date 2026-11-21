@@ -6,7 +6,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import { ChatComposer } from './ChatComposer';
 import { ChatHistory, type ChatHistoryHandle } from './ChatHistory';
 import { ChatMessage, ChatPicture } from './ChatMessage';
-import type { ChatSettings } from '@kuroko/contracts/chatSettings';
+import { $activeSession } from '../../platform/session/model';
 import { chatDisplayStyle } from './chatDisplayStyle';
 import type { ChatImage, Message } from './message';
 import {
@@ -14,6 +14,7 @@ import {
   chatHidden, chatShown, keepHistoryAtEndRequested, messageDeleteRequested, messageEditCancelled,
   messageEditChanged, messageEditRequested, messageEditSubmitted, messageSent, reasoningToggled,
 } from './model';
+import { $appliedChatSettings } from './settings/model';
 import './chat.css';
 
 type Preview = { kind: 'preview'; image: ChatImage };
@@ -23,19 +24,21 @@ const number = new Intl.NumberFormat('ru');
 const plural = new Intl.PluralRules('ru');
 const messageForms = { one: 'сообщение', few: 'сообщения', many: 'сообщений', other: 'сообщения', zero: 'сообщений', two: 'сообщения' };
 
-export default function Chat({ username, active, settings }: { username: string; active: boolean; settings: ChatSettings }) {
+export default function Chat() {
   const scheme = useComputedColorScheme('light');
   const [dialog, setDialog] = useState<Preview | Delete>();
   const scope = useProvidedScope();
   const {
-    initialized, rows, replyId, replyPhase, announcement, editor, expandedReasoning, show, hide, openEditor,
+    session, settings, initialized, rows, replyId, replyPhase, announcement, editor, expandedReasoning, show, hide, openEditor,
     changeDraft, closeEditor, saveEdit, remove, toggleReasoning,
   } = useUnit({
+    session: $activeSession, settings: $appliedChatSettings,
     initialized: $chatInitialized, rows: $chatRows, replyId: $replyId, replyPhase: $replyPhase, announcement: $chatAnnouncement,
     editor: $messageEditor, expandedReasoning: $expandedReasoning, show: chatShown, hide: chatHidden,
     openEditor: messageEditRequested, changeDraft: messageEditChanged, closeEditor: messageEditCancelled,
     saveEdit: messageEditSubmitted, remove: messageDeleteRequested, toggleReasoning: reasoningToggled,
   });
+  const username = session?.user.username ?? '';
   const title = useRef<HTMLHeadingElement>(null);
   const history = useRef<ChatHistoryHandle>(null);
   const jumpOnSend = useRef(false);
@@ -58,7 +61,6 @@ export default function Chat({ username, active, settings }: { username: string;
     const unwatchScroll = createWatch({ unit: keepHistoryAtEndRequested, scope, fn: () => history.current?.keepEndInView() });
     const unwatchSend = createWatch({ unit: messageSent, scope, fn: () => { jumpOnSend.current = true; } });
     show();
-    title.current?.focus({ preventScroll: true });
     return () => {
       unwatchScroll();
       unwatchSend();
@@ -79,7 +81,7 @@ export default function Chat({ username, active, settings }: { username: string;
   }
 
   return (
-    <section className="chat-panel" hidden={!active} aria-labelledby="chat-title" data-user-side={settings.userSide}
+    <section className="chat-panel" aria-labelledby="chat-title" data-user-side={settings.userSide}
       style={chatDisplayStyle(settings, scheme)}>
       <header className="chat-header">
         <div className="chat-header-inner chat-column">

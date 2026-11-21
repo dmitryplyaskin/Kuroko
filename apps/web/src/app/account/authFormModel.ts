@@ -1,6 +1,6 @@
 import { createEffect, createEvent, createStore, sample } from 'effector';
-import { authApi, authError } from './authApi';
-import { $session, sessionStarted, sessionUserReceived } from './sessionModel';
+import { authApi, authError } from '../../platform/session/authApi';
+import { $session, sessionStarted, sessionUserReceived } from '../../platform/session/model';
 
 type Credentials = { password: FormDataEntryValue | null; remember: boolean };
 

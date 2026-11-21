@@ -4,7 +4,7 @@ import {
 } from '@kuroko/contracts/connectionSettings';
 import { abortFx } from '../../shared/async/abort';
 import { errorMessage } from '../../shared/http/api';
-import { $activeSession, protectedRequestFailed, sessionEnded, type ActiveSession } from '../auth/sessionModel';
+import { $activeSession, protectedRequestFailed, sessionEnded, type ActiveSession } from '../../platform/session/model';
 import { connectionApi } from './connectionApi';
 import { createDraft, validateDraft, type ConnectionDraft } from './connectionDraft';
 import { $modelCatalog, catalogInvalidated, catalogRequested } from './modelCatalog';
@@ -60,7 +60,7 @@ export const loadConnectionFx = createEffect(({ session, controller }: Page) =>
 export const mutateConnectionFx = createEffect(async ({ page, mutation }: { page: Page; mutation: Mutation }) => {
   const { session } = page;
   const id = session.user.id;
-  const signal = session.controller.signal;
+  const signal = session.signal;
   switch (mutation.kind) {
     case 'savePreset':
       return { kind: mutation.kind, id: mutation.id, state: await connectionApi.savePreset(id, mutation.id, mutation.preset, signal) };

@@ -1,15 +1,16 @@
 import { createEffect, createEvent, createStore, sample } from 'effector';
 import type { User } from '@kuroko/contracts/auth';
-import { appStarted } from '../../app/lifecycle';
+import { appStarted } from '../lifecycle';
 import { abortFx } from '../../shared/async/abort';
 import { ApiError } from '../../shared/http/api';
 import { authApi } from './authApi';
 
-export type ActiveSession = { user: User; controller: AbortController };
+export type ActiveSession = Readonly<{ user: User; signal: AbortSignal }>;
+
 type SessionState =
   | { status: 'loading' | 'unavailable' }
   | { status: 'guest'; notice?: string }
-  | { status: 'authenticated'; session: ActiveSession };
+  | { status: 'authenticated'; session: ActiveSession; controller: AbortController };
 
 export const sessionRetryRequested = createEvent();
 export const sessionUserReceived = createEvent<User>();
@@ -17,20 +18,30 @@ export const sessionEndRequested = createEvent<{ session: ActiveSession; notice?
 export const protectedRequestFailed = createEvent<{ session: ActiveSession; error: unknown }>();
 
 export const checkSessionFx = createEffect(() => authApi.session());
-export const sessionStarted = sessionUserReceived.map((user): ActiveSession => ({ user, controller: new AbortController() }));
-export const $session = createStore<SessionState>({ status: 'loading' });
+const sessionActivated = sessionUserReceived.map((user) => {
+  const controller = new AbortController();
+  return { status: 'authenticated' as const, session: { user, signal: controller.signal }, controller };
+});
+export const sessionStarted = sessionActivated.map(({ session }): ActiveSession => session);
+
+const $state = createStore<SessionState>({ status: 'loading' });
+export const $session = $state.map((state) =>
+  state.status === 'authenticated' ? { status: state.status, session: state.session } : state);
 export const $activeSession = $session.map((state) => state.status === 'authenticated' ? state.session : null);
 
-export const sessionEnded = sample({
+const sessionClosing = sample({
   clock: sessionEndRequested,
-  source: $activeSession,
-  filter: (current, { session }) => current === session,
-  fn: (_, request) => request,
-});
+  source: $state,
+  fn: (current, request) => current.status === 'authenticated' && current.session === request.session
+    ? { ...request, controller: current.controller }
+    : undefined,
+}).filterMap((request) => request);
+
+export const sessionEnded = sessionClosing.map(({ session, notice }) => ({ session, notice }));
 
 sample({
   clock: [appStarted, sessionRetryRequested],
-  source: { state: $session, pending: checkSessionFx.pending },
+  source: { state: $state, pending: checkSessionFx.pending },
   filter: ({ state, pending }) => !pending && (state.status === 'loading' || state.status === 'unavailable'),
   fn: () => undefined,
   target: checkSessionFx,
@@ -45,12 +56,12 @@ sample({
   target: sessionEndRequested,
 });
 
-sample({ clock: sessionEnded, fn: ({ session }) => session.controller, target: abortFx });
+sample({ clock: sessionClosing, fn: ({ controller }) => controller, target: abortFx });
 
-$session
+$state
   .on(checkSessionFx, () => ({ status: 'loading' }))
   .on(checkSessionFx.failData, (_, error) => ({
     status: error instanceof ApiError && error.status === 401 ? 'guest' : 'unavailable',
   }))
-  .on(sessionStarted, (_, session) => ({ status: 'authenticated', session }))
+  .on(sessionActivated, (_, state) => state)
   .on(sessionEnded, (_, { notice }) => ({ status: 'guest', notice }));

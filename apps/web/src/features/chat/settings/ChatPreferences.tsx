@@ -6,9 +6,9 @@ import {
   chatColorRoles, chatFontSize, chatWidth, defaultChatSettings, isChatColor, sameChatSettings,
   type ChatColor, type ChatColorScheme,
 } from '@kuroko/contracts/chatSettings';
-import { $theme } from '../../shared/theme/appearanceModel';
-import { ChatText } from '../chat/ChatText';
-import { chatDisplayStyle } from '../chat/chatDisplayStyle';
+import { $theme } from '../../../shared/theme/appearanceModel';
+import { ChatText } from '../ChatText';
+import { chatDisplayStyle } from '../chatDisplayStyle';
 import {
   $chatSettingsDraft, $chatSettingsDirty, $chatSettingsLoad, $chatSettingsSubmission, chatSettingsChanged,
   chatSettingsColorChanged, chatSettingsResetRequested, chatSettingsRetryRequested, chatSettingsSaveRequested,
