@@ -1,17 +1,23 @@
 import { sample, type Event } from 'effector';
-import { api } from '../../shared/http/api';
+import { api, apiResponse } from '../../shared/http/api';
 import { $activeSession, type ActiveSession } from './model';
 
-type RequestOptions = Omit<NonNullable<Parameters<typeof api>[1]>, 'account' | 'signal'> & {
-  signal?: AbortSignal;
-};
+type RequestOptions = Omit<NonNullable<Parameters<typeof apiResponse>[1]>, 'account'>;
 
-export function sessionRequest<T>(session: ActiveSession, path: string, { signal, ...options }: RequestOptions = {}) {
-  return api<T>(path, {
+function forSession(session: ActiveSession, { signal, ...options }: RequestOptions = {}) {
+  return {
     ...options,
     account: session.user.id,
     signal: signal ? AbortSignal.any([session.signal, signal]) : session.signal,
-  });
+  };
+}
+
+export function sessionRequest<T>(session: ActiveSession, path: string, options?: RequestOptions) {
+  return api<T>(path, forSession(session, options));
+}
+
+export function sessionResponse(session: ActiveSession, path: string, options?: RequestOptions) {
+  return apiResponse(path, forSession(session, options));
 }
 
 export function inActiveSession<Completion extends { params: unknown }>(

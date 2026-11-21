@@ -4,9 +4,18 @@ export class ApiError extends Error {
   }
 }
 
-type Options = { method?: 'GET' | 'POST' | 'PUT' | 'DELETE'; body?: object; account?: number; signal?: AbortSignal };
+type Options = {
+  method?: 'GET' | 'POST' | 'PUT' | 'DELETE';
+  body?: object;
+  account?: number;
+  signal?: AbortSignal;
+  accept?: string;
+  timeoutMs?: number;
+};
 
-export async function api<T>(path: string, { method = 'GET', body, account, signal }: Options = {}): Promise<T> {
+export async function apiResponse(
+  path: string, { method = 'GET', body, account, signal, accept, timeoutMs = 15_000 }: Options = {},
+): Promise<Response> {
   const headers = new Headers();
   if (method !== 'GET') {
     headers.set('X-Kuroko-Request', '1');
@@ -17,7 +26,8 @@ export async function api<T>(path: string, { method = 'GET', body, account, sign
   if (account !== undefined) {
     headers.set('X-Kuroko-Account', String(account));
   }
-  const timeout = AbortSignal.timeout(15_000);
+  if (accept) headers.set('Accept', accept);
+  const timeout = AbortSignal.timeout(timeoutMs);
   const response = await fetch(`/api${path}`, {
     method,
     mode: 'same-origin',
@@ -33,7 +43,11 @@ export async function api<T>(path: string, { method = 'GET', body, account, sign
       : 'Сервер не смог выполнить запрос.';
     throw new ApiError(response.status, message, field);
   }
+  return response;
+}
 
+export async function api<T>(path: string, options?: Options): Promise<T> {
+  const response = await apiResponse(path, options);
   return response.status === 204 ? undefined as T : response.json();
 }
 

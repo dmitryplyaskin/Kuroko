@@ -1,7 +1,7 @@
 import type { Database } from 'bun:sqlite';
 import { randomUUID } from 'node:crypto';
 import {
-  isProvider, readConnectionSettings, type ConnectionState, type SaveConnectionPreset,
+  isProvider, readConnectionSettings, type ConnectionPreset, type ConnectionState, type SaveConnectionPreset,
 } from '@kuroko/contracts/connectionSettings';
 import type { ProviderKeyStore } from './providerKeyStore';
 
@@ -11,7 +11,12 @@ export function createConnectionStore(db: Database, keys: ProviderKeyStore) {
   const list = db.query<Row, [number]>(`
     SELECT id, name, provider, settings_json, key_id, active FROM connection_presets WHERE user_id = ? ORDER BY name, id
   `);
-  const find = db.query<{ id: string }, [number, string]>('SELECT id FROM connection_presets WHERE user_id = ? AND id = ?');
+  const find = db.query<Row, [number, string]>(`
+    SELECT id, name, provider, settings_json, key_id, active FROM connection_presets WHERE user_id = ? AND id = ?
+  `);
+  const findActive = db.query<Row, [number]>(`
+    SELECT id, name, provider, settings_json, key_id, active FROM connection_presets WHERE user_id = ? AND active = 1
+  `);
   const findByName = db.query<{ id: string }, [number, string]>('SELECT id FROM connection_presets WHERE user_id = ? AND name = ?');
   const deactivate = db.query('UPDATE connection_presets SET active = 0 WHERE user_id = ? AND active = 1');
   const insert = db.query(`
@@ -26,12 +31,7 @@ export function createConnectionStore(db: Database, keys: ProviderKeyStore) {
     const rows = list.all(userId);
     return {
       activePresetId: rows.find((row) => row.active)?.id ?? null,
-      presets: rows.map(({ id, name, provider, settings_json, key_id }) => {
-        if (!isProvider(provider)) throw new Error('Invalid provider in the database');
-        const settings = readConnectionSettings(provider, JSON.parse(settings_json));
-        if (!settings) throw new Error('Invalid connection preset in the database');
-        return { ...settings, id, name, provider, keyId: key_id };
-      }),
+      presets: rows.map(readPreset),
       keys: keys.list(userId),
     };
   }
@@ -51,7 +51,18 @@ export function createConnectionStore(db: Database, keys: ProviderKeyStore) {
 
   return {
     read,
+    find(userId: number, id?: string) {
+      const row = id === undefined ? findActive.get(userId) : find.get(userId, id);
+      return row ? readPreset(row) : null;
+    },
     save: save.immediate,
     remove: (userId: number, id: string) => remove.run(userId, id).changes !== 0,
   };
+}
+
+function readPreset({ id, name, provider, settings_json, key_id }: Row): ConnectionPreset {
+  if (!isProvider(provider)) throw new Error('Invalid provider in the database');
+  const settings = readConnectionSettings(provider, JSON.parse(settings_json));
+  if (!settings) throw new Error('Invalid connection preset in the database');
+  return { ...settings, id, name, provider, keyId: key_id };
 }

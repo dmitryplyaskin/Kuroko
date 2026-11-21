@@ -35,7 +35,7 @@ export function createApp({ db, vaultKey, secureCookie, trustProxy, webDir }: Ap
       return;
     }
     next();
-  }, express.json({ limit: '128kb' }), createApiRouter(db, vaultKey, secureCookie), (_request, response) => {
+  }, createApiRouter(db, vaultKey, secureCookie), (_request, response) => {
     response.status(404).json({ error: 'API route not found' });
   });
 

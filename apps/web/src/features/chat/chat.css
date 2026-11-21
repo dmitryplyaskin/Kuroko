@@ -232,7 +232,7 @@
 
 .chat-composer {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: end;
   gap: 4px;
   padding: 6px;
@@ -259,12 +259,9 @@
 :is(.chat-composer-input, .chat-editor-input):focus-visible { outline: 0; }
 :is(.chat-composer-input, .chat-editor-input)::placeholder { color: var(--kr-muted); opacity: 1; }
 
-.chat-composer-action.icon-button, .chat-send-button.icon-button {
+.chat-send-button.icon-button {
   min-block-size: 40px;
   min-inline-size: 40px;
-}
-
-.chat-send-button.icon-button {
   border-radius: var(--kr-radius-panel);
   background: var(--kr-accent);
   color: var(--kr-accent-text);
@@ -280,21 +277,6 @@
   .chat-send-button.icon-button[data-stop]:hover { color: var(--kr-text); }
 }
 
-.chat-attachment {
-  grid-column: 1 / -1;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  justify-self: start;
-  max-inline-size: 100%;
-  padding-inline-start: 10px;
-  background: var(--kr-hover);
-  border-radius: var(--kr-radius-control);
-  font-size: .875rem;
-  overflow-wrap: anywhere;
-}
-
-.chat-attachment button { flex: none; }
 .chat-input-error { grid-column: 1 / -1; margin-inline: 8px; color: var(--kr-danger); font-size: .875rem; }
 .chat-sr-only {
   position: absolute;

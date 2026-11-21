@@ -3,12 +3,15 @@ import {
   isApiKey, isProvider, readConnectionName, readConnectionSettings,
 } from '@kuroko/contracts/connectionSettings';
 import type { createConnectionStore } from './connectionStore';
+import type { ProviderConnections } from './providerConnections';
 import { listProviderModels } from './providerModels';
 import type { ProviderKeyStore } from './providerKeyStore';
 
 const missingKey = { error: 'Ключ не найден. Выберите другой ключ для этого провайдера.' };
 
-export function createConnectionRouter(store: ReturnType<typeof createConnectionStore>, keys: ProviderKeyStore) {
+export function createConnectionRouter(
+  store: ReturnType<typeof createConnectionStore>, keys: ProviderKeyStore, connections: ProviderConnections,
+) {
   const router = Router();
   const save: RequestHandler<{ id?: string }> = (request, response) => {
     const provider: unknown = request.body?.provider;
@@ -91,7 +94,7 @@ export function createConnectionRouter(store: ReturnType<typeof createConnection
       return;
     }
 
-    const result = await listProviderModels(provider, apiKey);
+    const result = await listProviderModels(provider, apiKey, connections);
     if ('error' in result) response.status(result.status).json({ error: result.error });
     else response.json({ models: result.models.filter(({ id }) => !id.includes(apiKey)) });
   });

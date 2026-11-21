@@ -4,6 +4,7 @@ import { once } from 'node:events';
 import type { Server } from 'node:http';
 import { defaultChatSettings } from '@kuroko/contracts/chatSettings';
 import { defaultConnectionSettings, type ProviderKey } from '@kuroko/contracts/connectionSettings';
+import type { LlmRequest } from '@kuroko/contracts/llm';
 import { createApp } from './app';
 import { openDatabase } from './storage/database';
 
@@ -302,6 +303,235 @@ test('loads models with the selected provider’s stored key without echoing pro
     expect(db.query('SELECT id FROM secrets').all()).toHaveLength(4);
   } finally {
     mocked.mockRestore();
+  }
+});
+
+const generatePath = '/llm/generate';
+const greeting = [{ role: 'user', content: 'Привет' }] satisfies LlmRequest['messages'];
+
+async function saveGenerationPreset(cookie: string, provider: string, apiKey: string) {
+  const key = await (await addKey(cookie, provider, 'Generation key', apiKey)).json() as ProviderKey;
+  const saved = await request(`${connectionPath}/presets`, { method: 'POST', cookie, body: {
+    name: provider, provider, keyId: key.id,
+    settings: { ...defaultConnectionSettings, model: 'test-model', responseTokens: 100, contextTokens: 12, temperature: 0.5 },
+  } });
+  expect(saved.status).toBe(201);
+  const { activePresetId } = await saved.json() as { activePresetId: string };
+  return activePresetId;
+}
+
+function mockGeneration(respond: (url: URL, init?: RequestInit) => Response | Promise<Response>) {
+  const genuineFetch = fetch;
+  return spyOn(globalThis, 'fetch').mockImplementation(Object.assign(
+    (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+      return typeof input === 'string' && input.startsWith(baseUrl)
+        ? genuineFetch(input, init)
+        : Promise.resolve(respond(new URL(String(input)), init));
+    },
+    { preconnect: genuineFetch.preconnect },
+  ));
+}
+
+test('generates JSON with the active or selected owned preset and applies per-request parameters', async () => {
+  await register('llm-owner');
+  await register('llm-other');
+  const cookie = sessionCookie(await login('llm-owner')).token;
+  const other = sessionCookie(await login('llm-other')).token;
+  const body: LlmRequest = { messages: greeting, parameters: { temperature: null, responseTokens: 80, topP: 0 } };
+  const post = (cookie?: string, content = body) => request(generatePath, { method: 'POST', cookie, body: content });
+  expect((await post()).status).toBe(401);
+  expect(await (await post(cookie)).json()).toMatchObject({ code: 'missing_preset' });
+
+  const apiKey = 'key-for-generation-test';
+  const openai = await saveGenerationPreset(cookie, 'openai', apiKey);
+  const openrouter = await saveGenerationPreset(cookie, 'openrouter', apiKey);
+  const upstream: { url: string; authorization: string | null; body: object; redirect?: RequestInit['redirect'] }[] = [];
+  const mock = mockGeneration((url, init) => {
+    upstream.push({
+      url: url.href, authorization: new Headers(init?.headers).get('Authorization'),
+      body: JSON.parse(String(init?.body)), redirect: init?.redirect,
+    });
+    return Response.json({
+      choices: [{ message: { role: 'assistant', content: 'Привет!' }, finish_reason: 'stop' }],
+      usage: { prompt_tokens: 15, completion_tokens: 4, total_tokens: 19 },
+    });
+  });
+  try {
+    expect(await (await post(other, { ...body, presetId: openai })).json()).toMatchObject({ code: 'missing_preset' });
+    expect((await post(cookie, { ...body, presetId: openai, parameters: { topK: 2 } })).status).toBe(400);
+    expect((await post(cookie, { ...body, messages: [...greeting, { role: 'tool', callId: 'unmatched', content: 'bad' }] })).status).toBe(400);
+    const invalidUrl = { ...body, baseUrl: 'http://127.0.0.1' };
+    expect((await post(cookie, invalidUrl)).status).toBe(400);
+    expect(upstream).toHaveLength(0);
+
+    const active = await post(cookie);
+    expect(active.status).toBe(200);
+    expect(await active.json()).toEqual({
+      presetId: openrouter, provider: 'openrouter', model: 'test-model',
+      message: { role: 'assistant', parts: [{ type: 'text', text: 'Привет!' }] },
+      finishReason: 'stop', providerFinishReason: 'stop', usage: { inputTokens: 15, outputTokens: 4, totalTokens: 19 },
+      contextTokens: 12, contextLimitExceeded: true,
+    });
+    expect(await (await post(cookie, { ...body, presetId: openai })).json()).toMatchObject({ presetId: openai, provider: 'openai' });
+    expect(upstream.map(({ url }) => url)).toEqual(['https://openrouter.ai/api/v1/chat/completions', 'https://api.openai.com/v1/chat/completions']);
+    for (const call of upstream) {
+      expect(call.authorization).toBe(`Bearer ${apiKey}`);
+      expect(call.redirect).toBe('error');
+      expect(call.body).toEqual({ model: 'test-model', messages: greeting, stream: false, max_completion_tokens: 80, top_p: 0 });
+    }
+  } finally {
+    mock.mockRestore();
+  }
+});
+
+test('streams text before completion and assembles and replays OpenRouter tool calls', async () => {
+  await register('stream-owner');
+  const cookie = sessionCookie(await login('stream-owner')).token;
+  await saveGenerationPreset(cookie, 'openrouter', 'stream-key');
+  const tools = [{ name: 'weather', parameters: { type: 'object', properties: { city: { type: 'string' } } } }];
+  const encoder = new TextEncoder();
+  const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>();
+  const writer = writable.getWriter();
+  const downstream = new AbortController();
+  let continuation: unknown;
+  const mock = mockGeneration((_url, init) => {
+    const body = JSON.parse(String(init?.body));
+    if (body.stream) {
+      expect(body.tool_choice).toEqual({ type: 'function', function: { name: 'weather' } });
+      return new Response(readable, { headers: { 'Content-Type': 'text/event-stream' } });
+    }
+    continuation = body.messages;
+    return Response.json({ choices: [{ message: { content: '18 °C' }, finish_reason: 'stop' }] });
+  });
+  try {
+    const response = fetch(`${baseUrl}${generatePath}`, {
+      method: 'POST', signal: downstream.signal,
+      headers: { Cookie: cookie, 'X-Kuroko-Request': '1', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messages: greeting, tools, toolChoice: { name: 'weather' }, stream: true }),
+    });
+    const first = encoder.encode(': ping\r\ndata: {"choices":[\r\ndata: {"delta":{"content":"Привет"}}]}\r\n\r\n');
+    const firstText = first.findIndex((byte) => byte > 127);
+    const firstWrites = (async () => {
+      await writer.write(first.subarray(0, firstText + 1));
+      await writer.write(first.subarray(firstText + 1, -1));
+      await writer.write(first.subarray(-1));
+    })();
+    const streamed = await response;
+    expect(streamed.headers.get('Content-Type')).toContain('text/event-stream');
+    const reader = streamed.body!.getReader();
+    const firstEvent = new TextDecoder().decode((await reader.read()).value);
+    expect(firstEvent).toContain('event: text_delta');
+    expect(firstEvent).toContain('Привет');
+    await firstWrites;
+    const chunks = [
+      { choices: [{ delta: { tool_calls: [{ index: 0, id: 'call_1', function: { name: 'weather', arguments: '{"city":' } }],
+        reasoning_details: [{ type: 'reasoning.text', index: 0, text: 'a' }] } }] },
+      { choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: '"Москва"}' } }],
+        reasoning_details: [{ type: 'reasoning.text', index: 0, text: 'b', signature: 'opaque' }] }, finish_reason: 'tool_calls' }] },
+      { choices: [{ delta: {}, finish_reason: 'tool_calls' }], usage: { prompt_tokens: 8, completion_tokens: 4, total_tokens: 12 } },
+    ];
+    await writer.write(encoder.encode(chunks.map((chunk) => `data: ${JSON.stringify(chunk)}\n\n`).join('') + 'data: [DONE]\n\n'));
+    void writer.close().catch(() => undefined);
+    const tail = await new Response(new ReadableStream({
+      async pull(controller) {
+        const { done, value } = await reader.read();
+        if (done) controller.close();
+        else controller.enqueue(value);
+      },
+    })).text();
+    const events = tail.split('\n').filter((line) => line.startsWith('data: ')).map((line) => JSON.parse(line.slice(6)));
+    expect(events.map(({ type }) => type)).toEqual(['tool_call', 'done']);
+    expect(events[0]?.call).toEqual({ type: 'toolCall', id: 'call_1', name: 'weather', arguments: { city: 'Москва' } });
+    expect(events[1]?.completion).toMatchObject({ finishReason: 'tool_calls', usage: { totalTokens: 12 } });
+
+    const followUp = await request(generatePath, { method: 'POST', cookie, body: {
+      messages: [...greeting, events[1]?.completion.message, { role: 'tool', callId: 'call_1', content: { temperature: 18 } }], tools,
+    } });
+    expect(followUp.status).toBe(200);
+    expect(continuation).toEqual([
+      ...greeting,
+      { role: 'assistant', content: 'Привет', tool_calls: [
+        { id: 'call_1', type: 'function', function: { name: 'weather', arguments: '{"city":"Москва"}' } },
+      ], reasoning_details: [{ type: 'reasoning.text', index: 0, text: 'ab', signature: 'opaque' }] },
+      { role: 'tool', tool_call_id: 'call_1', content: '{"temperature":18}' },
+    ]);
+  } finally {
+    downstream.abort();
+    void writer.abort().catch(() => undefined);
+    mock.mockRestore();
+  }
+});
+
+test('maps upstream HTTP and streaming failures without exposing provider payloads', async () => {
+  await register('error-owner');
+  const cookie = sessionCookie(await login('error-owner')).token;
+  const key = 'do-not-echo-this-key';
+  await saveGenerationPreset(cookie, 'openai', key);
+  const mock = mockGeneration((_url, init) => {
+    const input = JSON.parse(String(init?.body));
+    if (!input.stream) return Response.json({ error: { message: key } }, { status: 429 });
+    const content = 'data: {"choices":[{"delta":{"content":"partial"}}]}\n\n';
+    const errorEvent = `event: error\ndata: ${JSON.stringify({ error: { message: key } })}\n\n`;
+    return new Response(input.top_p ? content : content + errorEvent, { headers: { 'Content-Type': 'text/event-stream' } });
+  });
+  try {
+    const post = (extra: Partial<LlmRequest>) => request(generatePath, { method: 'POST', cookie, body: { messages: greeting, ...extra } });
+    const beforeStream = await post({});
+    expect(beforeStream.status).toBe(429);
+    expect(await beforeStream.json()).toEqual({ code: 'provider_rate_limit', error: 'Провайдер ограничил запросы. Повторите позже.' });
+    const afterStart = await (await post({ stream: true })).text();
+    expect(afterStart).toContain('event: text_delta');
+    expect(afterStart).toContain('event: error');
+    expect(afterStart).toContain('"code":"provider_unavailable"');
+    expect(afterStart).not.toContain(key);
+    expect(afterStart).not.toContain('event: done');
+    const truncated = await (await post({ stream: true, parameters: { topP: 0.5 } })).text();
+    expect(truncated).toContain('"code":"provider_protocol"');
+    expect(truncated).not.toContain('event: done');
+  } finally {
+    mock.mockRestore();
+  }
+});
+
+test('cancels the upstream stream when the client disconnects', async () => {
+  await register('cancel-owner');
+  const cookie = sessionCookie(await login('cancel-owner')).token;
+  await saveGenerationPreset(cookie, 'openai', 'key-for-cancellation');
+  const cancelled = Promise.withResolvers<void>();
+  const release = new AbortController();
+  let upstreamSignal: AbortSignal | null | undefined;
+  const mock = mockGeneration((_url, init) => {
+    upstreamSignal = init?.signal;
+    return new Response(new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('data: {"choices":[{"delta":{"content":"hello"}}]}\n\n'));
+        release.signal.addEventListener('abort', () => {
+          if (!upstreamSignal?.aborted) controller.close();
+        }, { once: true });
+      },
+      cancel() { cancelled.resolve(); },
+    }), { headers: { 'Content-Type': 'text/event-stream' } });
+  });
+  const client = new AbortController();
+  try {
+    const reply = await fetch(`${baseUrl}${generatePath}`, {
+      method: 'POST', signal: client.signal,
+      headers: { Cookie: cookie, 'X-Kuroko-Request': '1', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messages: greeting, stream: true }),
+    });
+    const event = await reply.body!.getReader().read();
+    expect(new TextDecoder().decode(event.value)).toContain('event: text_delta');
+    client.abort();
+    const timeout = AbortSignal.timeout(2000);
+    await Promise.race([
+      cancelled.promise,
+      new Promise<never>((_, reject) => timeout.addEventListener('abort', () => reject(timeout.reason), { once: true })),
+    ]);
+    expect(upstreamSignal?.aborted).toBe(true);
+  } finally {
+    client.abort();
+    release.abort();
+    mock.mockRestore();
   }
 });
 

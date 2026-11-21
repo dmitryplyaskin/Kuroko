@@ -1,22 +1,17 @@
-import { combine, createEffect, createEvent, createStore, sample, type StoreValue } from 'effector';
+import { combine, createEffect, createEvent, createStore, sample, scopeBind, type StoreValue } from 'effector';
 import { abortFx } from '../../shared/async/abort';
-import { $activeSession, sessionEnded, type ActiveSession } from '../../platform/session/model';
-import type { ChatImage, Message, ReplyPhase } from './message';
-import { createMockHistory, getMockReply } from './mock';
+import { errorMessage } from '../../shared/http/api';
+import { $activeSession, protectedRequestFailed, sessionEnded, type ActiveSession } from '../../platform/session/model';
+import { inActiveSession } from '../../platform/session/request';
+import { streamChatReply } from './chatApi';
+import type { Message } from './message';
 
-type Visibility = { session: ActiveSession; controller: AbortController };
-type Reply = {
-  message: Message & { reasoning: string };
-  phase: ReplyPhase;
-  visible: number;
-  controller: AbortController;
-};
+type Generation = { session: ActiveSession; controller: AbortController };
+type Reply = { generation: Generation; message: Message };
 
 export const chatShown = createEvent();
 export const chatHidden = createEvent();
 export const chatDraftChanged = createEvent<string>();
-export const chatAttachmentSelected = createEvent<File>();
-export const chatAttachmentRemoved = createEvent();
 export const chatSendRequested = createEvent();
 export const chatStopRequested = createEvent();
 export const messageEditRequested = createEvent<number>();
@@ -26,165 +21,88 @@ export const messageEditSubmitted = createEvent<number>();
 export const messageDeleteRequested = createEvent<number>();
 export const reasoningToggled = createEvent<{ id: number; open: boolean }>();
 
-const $visibility = createStore<Visibility | null>(null);
-const chatActivated = sample({
-  clock: chatShown,
-  source: { session: $activeSession, visibility: $visibility },
-  filter: ({ session, visibility }) => session !== null && visibility === null,
-  fn: ({ session }): Visibility => ({ session: session!, controller: new AbortController() }),
-});
-$visibility.on(chatActivated, (_, visibility) => visibility);
-const chatDeactivated = sample({
-  clock: [chatHidden, sessionEnded],
-  source: $visibility,
-  filter: (visibility): visibility is Visibility => visibility !== null,
-});
-$visibility.reset(chatDeactivated);
-sample({ clock: chatDeactivated, fn: (visibility) => visibility.controller, target: abortFx });
-
-const loadHistoryFx = createEffect((session: ActiveSession) => ({ session, messages: createMockHistory() }));
-const historyLoaded = sample({
-  clock: loadHistoryFx.doneData,
-  source: $activeSession,
-  filter: (session, result) => session === result.session,
-  fn: (_, result) => result.messages,
-});
-export const $chatInitialized = createStore(false).on(historyLoaded, () => true).reset(sessionEnded);
-
-sample({
-  clock: chatActivated,
-  filter: combine($chatInitialized, loadHistoryFx.pending, (initialized, pending) => !initialized && !pending),
-  fn: ({ session }) => session,
-  target: loadHistoryFx,
-});
-
-const $messages = createStore<Message[]>([]).on(historyLoaded, (_, messages) => messages).reset(sessionEnded);
+const $visible = createStore(false).on(chatShown, () => true).reset(chatHidden, sessionEnded);
+const $messages = createStore<Message[]>([]).reset(sessionEnded);
 const $reply = createStore<Reply | null>(null).reset(sessionEnded);
-const $nextId = createStore(1).on(historyLoaded, (_, messages) => (messages.at(-1)?.id ?? 0) + 1).reset(sessionEnded);
-
-const attachmentChecked = chatAttachmentSelected.map((file) => ({
-  file, valid: file.type.startsWith('image/') && file.size <= 10 * 1024 * 1024,
-}));
-const attachmentAccepted = attachmentChecked.filterMap(({ file, valid }) => valid ? file : undefined);
+const $nextId = createStore(1).reset(sessionEnded);
 
 export const $chatDraft = createStore('').on(chatDraftChanged, (_, draft) => draft).reset(sessionEnded);
-export const $chatAttachment = createStore<File | null>(null)
-  .on(attachmentAccepted, (_, file) => file)
-  .reset(chatAttachmentRemoved, sessionEnded);
-export const $chatAttachmentError = createStore('')
-  .on(attachmentChecked, (_, { valid }) => valid ? '' : 'Выберите изображение размером до 10 МБ.')
-  .reset(chatAttachmentRemoved, sessionEnded);
-
-const createMessagesFx = createEffect(({ session, nextId, text, file }: {
-  session: ActiveSession; nextId: number; text: string; file: File | null;
-}) => {
-  const image: ChatImage | undefined = file ? { file } : undefined;
-  const time = Date.now();
-  const user: Message = { id: nextId, role: 'user', text, time, image };
-  const reply: Reply = {
-    message: { ...getMockReply(user), id: nextId + 1, role: 'assistant', time },
-    phase: 'reasoning', visible: 0, controller: new AbortController(),
-  };
-  return { session, user, reply };
-});
 
 const $composer = combine({
-  initialized: $chatInitialized, visibility: $visibility, draft: $chatDraft, file: $chatAttachment,
-  reply: $reply, pending: createMessagesFx.pending, nextId: $nextId,
+  session: $activeSession, visible: $visible, draft: $chatDraft, reply: $reply, nextId: $nextId,
 });
-function canSend({ initialized, visibility, draft, file, reply, pending }: StoreValue<typeof $composer>) {
-  return initialized && visibility !== null && !reply && !pending && Boolean(draft.trim() || file);
+function canSend({ session, visible, draft, reply }: StoreValue<typeof $composer>) {
+  return session !== null && visible && reply === null && Boolean(draft.trim());
 }
 
 export const $chatCanSend = $composer.map(canSend);
-sample({
+export const messageSent = sample({
   clock: chatSendRequested,
   source: $composer,
   filter: canSend,
-  fn: ({ visibility, nextId, draft, file }) => ({ session: visibility!.session, nextId, text: draft.trim(), file }),
-  target: createMessagesFx,
-});
-
-export const messageSent = sample({
-  clock: createMessagesFx.doneData,
-  source: $activeSession,
-  filter: (session, result) => session === result.session,
-  fn: (_, { user, reply }) => ({ user, reply }),
+  fn: ({ session, nextId, draft }) => {
+    const time = Date.now();
+    const user: Message = { id: nextId, role: 'user', text: draft.trim(), time };
+    const reply: Reply = {
+      generation: { session: session!, controller: new AbortController() },
+      message: { id: nextId + 1, role: 'assistant', text: '', time },
+    };
+    return { user, reply };
+  },
 });
 $messages.on(messageSent, (messages, { user }) => [...messages, user]);
 $reply.on(messageSent, (_, { reply }) => reply);
 $nextId.on(messageSent, (_, { reply }) => reply.message.id + 1);
 $chatDraft.reset(messageSent);
-$chatAttachment.reset(messageSent);
-$chatAttachmentError.reset(messageSent);
 
-function partialReply({ message, phase, visible }: Reply): Message {
-  return {
-    ...message,
-    reasoning: phase === 'reasoning' ? message.reasoning.slice(0, visible) : message.reasoning,
-    text: phase === 'answer' ? message.text.slice(0, visible) : '',
-    image: undefined,
-  };
-}
-
-type Tick = { visibility: Visibility; reply: Reply };
-export const waitForReplyTickFx = createEffect(({ visibility, reply }: Tick) => {
-  const signal = AbortSignal.any([visibility.controller.signal, reply.controller.signal, visibility.session.signal]);
-  const delay = reply.phase === 'reasoning' && reply.visible === 0 ? 350 : 75;
-  return new Promise<void>((resolve) => {
-    if (signal.aborted) {
-      resolve();
-      return;
-    }
-    const timer = setTimeout(finish, delay);
-    signal.addEventListener('abort', finish, { once: true });
-    function finish() {
-      clearTimeout(timer);
-      signal.removeEventListener('abort', finish);
-      resolve();
-    }
-  });
+const replyDelta = createEvent<{ generation: Generation; text: string }>();
+const streamReplyFx = createEffect(({ generation, text }: { generation: Generation; text: string }) => {
+  const publish = scopeBind(replyDelta, { safe: true });
+  return streamChatReply(generation.session, text, generation.controller.signal, (delta) => publish({ generation, text: delta }));
 });
 
-const $tick = combine({ visibility: $visibility, reply: $reply });
 sample({
-  clock: [chatActivated, $reply.updates],
-  source: $tick,
-  filter: ({ visibility, reply }) => visibility !== null && reply !== null,
-  fn: ({ visibility, reply }): Tick => ({ visibility: visibility!, reply: reply! }),
-  target: waitForReplyTickFx,
+  clock: messageSent,
+  fn: ({ reply, user }) => ({ generation: reply.generation, text: user.text }),
+  target: streamReplyFx,
 });
 
-const tickElapsed = sample({
-  clock: waitForReplyTickFx.done,
-  source: $tick,
-  filter: ({ visibility, reply }, { params }) => visibility === params.visibility && reply === params.reply,
-  fn: (_, { params }) => params.reply,
+const replyUpdated = sample({
+  clock: replyDelta,
+  source: $reply,
+  filter: (reply, { generation, text }) => reply?.generation === generation && Boolean(text),
+  fn: (reply, { text }): Reply => ({ ...reply!, message: { ...reply!.message, text: reply!.message.text + text } }),
 });
-const replyAdvanced = tickElapsed.map((reply) => {
-  const thinking = reply.phase === 'reasoning';
-  const visible = reply.visible + (thinking ? 24 : 18);
-  const content = thinking ? reply.message.reasoning : reply.message.text;
-  if (visible < content.length) return { reply: { ...reply, visible } };
-  if (thinking) return { reply: { ...reply, phase: 'answer' as const, visible: 0 }, announcement: 'Модель отвечает.' };
-  return { reply: null, completed: reply.message, announcement: 'Ответ модели готов.' };
+$reply.on(replyUpdated, (_, reply) => reply);
+
+const replyCompleted = sample({
+  clock: inActiveSession(streamReplyFx.done, ({ generation }) => generation.session),
+  source: $reply,
+  filter: (reply, { params }) => reply?.generation === params.generation,
+  fn: (reply, { result }) => ({ message: { ...reply!.message, text: result } }),
 });
+const replyFailed = sample({
+  clock: inActiveSession(streamReplyFx.fail, ({ generation }) => generation.session),
+  source: $reply,
+  filter: (reply, { params }) => reply?.generation === params.generation,
+  fn: (reply, { error, params }) => ({ message: reply!.message, error, session: params.generation.session }),
+});
+sample({ clock: replyFailed, fn: ({ session, error }) => ({ session, error }), target: protectedRequestFailed });
 
 const replyStopped = sample({
-  clock: chatStopRequested,
+  clock: [chatStopRequested, chatHidden],
   source: $reply,
   filter: (reply): reply is Reply => reply !== null,
-  fn: (reply) => {
-    const partial = partialReply(reply!);
-    return { partial, discarded: !partial.text && !partial.reasoning, controller: reply!.controller };
-  },
+  fn: (reply) => ({ message: reply!.message, controller: reply!.generation.controller }),
 });
 
 sample({ clock: replyStopped, fn: ({ controller }) => controller, target: abortFx });
-$reply.on(replyAdvanced, (_, { reply }) => reply).reset(replyStopped);
-$messages
-  .on(replyAdvanced, (messages, { completed }) => completed ? [...messages, completed] : messages)
-  .on(replyStopped, (messages, { partial, discarded }) => discarded ? messages : [...messages, partial]);
+$reply.reset(replyCompleted, replyFailed, replyStopped);
+$messages.on([replyCompleted, replyFailed, replyStopped], (messages, { message }) => message.text ? [...messages, message] : messages);
+
+export const $chatError = createStore('')
+  .on(replyFailed, (_, { error }) => errorMessage(error))
+  .reset(messageSent, sessionEnded);
 
 type Editor = { id: number; text: string };
 const editOpened = sample({
@@ -225,7 +143,6 @@ $editor
   .reset(messageEdited)
   .on(messageDeleted, (editor, id) => editor?.id === id ? null : editor);
 
-const reasoningCleared = replyStopped.filterMap(({ partial, discarded }) => discarded ? partial.id : undefined);
 export const $expandedReasoning = createStore<ReadonlySet<number>>(new Set())
   .on(reasoningToggled, (expanded, { id, open }) => {
     if (expanded.has(id) === open) return expanded;
@@ -234,7 +151,7 @@ export const $expandedReasoning = createStore<ReadonlySet<number>>(new Set())
     else next.delete(id);
     return next;
   })
-  .on([reasoningCleared, messageDeleted], (expanded, id) => {
+  .on(messageDeleted, (expanded, id) => {
     if (!expanded.has(id)) return expanded;
     const next = new Set(expanded);
     next.delete(id);
@@ -243,14 +160,16 @@ export const $expandedReasoning = createStore<ReadonlySet<number>>(new Set())
   .reset(sessionEnded);
 
 export const $chatAnnouncement = createStore('')
-  .on(messageSent, () => 'Модель рассуждает.')
-  .on(replyAdvanced, (current, { announcement }) => announcement ?? current)
+  .on(messageSent, () => 'Модель отвечает.')
+  .on(replyCompleted, () => 'Ответ модели готов.')
+  .reset(replyFailed)
   .on(replyStopped, () => 'Ответ модели остановлен.')
   .on(messageEdited, () => 'Сообщение изменено.')
   .on(messageDeleted, () => 'Сообщение удалено.')
   .reset(sessionEnded);
 
 export const $replyId = $reply.map((reply) => reply?.message.id ?? null);
-export const $replyPhase = $reply.map((reply) => reply?.phase ?? null);
-export const $chatRows = combine($messages, $reply, (messages, reply) => reply ? [...messages, partialReply(reply)] : messages);
-export const keepHistoryAtEndRequested = sample({ clock: [tickElapsed, replyStopped, messageEdited], fn: () => undefined });
+export const $chatRows = combine($messages, $reply, (messages, reply) => reply ? [...messages, reply.message] : messages);
+export const keepHistoryAtEndRequested = sample({
+  clock: [replyUpdated, replyCompleted, replyFailed, replyStopped, messageEdited], fn: () => undefined,
+});

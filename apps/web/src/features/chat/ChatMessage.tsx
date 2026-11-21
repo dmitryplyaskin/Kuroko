@@ -51,7 +51,7 @@ export const ChatMessage = memo(function ChatMessage({
 }: Props) {
   const { id, text, time, image, edited, reasoning } = message;
   const assistant = message.role === 'assistant';
-  const author = assistant ? 'Мок-модель' : username;
+  const author = assistant ? 'Модель' : username;
   const editing = editor !== undefined;
   const actions = useModuleExtensions('chat.message.actions');
   const actionContext: MessageActionContext = { text };

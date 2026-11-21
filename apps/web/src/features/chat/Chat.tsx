@@ -10,7 +10,7 @@ import { $activeSession } from '../../platform/session/model';
 import { chatDisplayStyle } from './chatDisplayStyle';
 import type { ChatImage, Message } from './message';
 import {
-  $chatAnnouncement, $chatInitialized, $chatRows, $expandedReasoning, $messageEditor, $replyId, $replyPhase,
+  $chatAnnouncement, $chatRows, $expandedReasoning, $messageEditor, $replyId,
   chatHidden, chatShown, keepHistoryAtEndRequested, messageDeleteRequested, messageEditCancelled,
   messageEditChanged, messageEditRequested, messageEditSubmitted, messageSent, reasoningToggled,
 } from './model';
@@ -29,11 +29,11 @@ export default function Chat() {
   const [dialog, setDialog] = useState<Preview | Delete>();
   const scope = useProvidedScope();
   const {
-    session, settings, initialized, rows, replyId, replyPhase, announcement, editor, expandedReasoning, show, hide, openEditor,
+    session, settings, rows, replyId, announcement, editor, expandedReasoning, show, hide, openEditor,
     changeDraft, closeEditor, saveEdit, remove, toggleReasoning,
   } = useUnit({
     session: $activeSession, settings: $appliedChatSettings,
-    initialized: $chatInitialized, rows: $chatRows, replyId: $replyId, replyPhase: $replyPhase, announcement: $chatAnnouncement,
+    rows: $chatRows, replyId: $replyId, announcement: $chatAnnouncement,
     editor: $messageEditor, expandedReasoning: $expandedReasoning, show: chatShown, hide: chatHidden,
     openEditor: messageEditRequested, changeDraft: messageEditChanged, closeEditor: messageEditCancelled,
     saveEdit: messageEditSubmitted, remove: messageDeleteRequested, toggleReasoning: reasoningToggled,
@@ -49,12 +49,12 @@ export default function Chat() {
   const setReasoningOpen = useCallback((id: number, open: boolean) => toggleReasoning({ id, open }), [toggleReasoning]);
   const updateMessageDraft = useCallback((id: number, text: string) => changeDraft({ id, text }), [changeDraft]);
   const renderMessage = useCallback((message: Message) => (
-    <ChatMessage message={message} username={username} phase={message.id === replyId ? replyPhase ?? undefined : undefined}
+    <ChatMessage message={message} username={username} phase={message.id === replyId ? 'answer' : undefined}
       editor={editor?.id === message.id ? editor : undefined}
       reasoningOpen={expandedReasoning.has(message.id)} onToggleReasoning={setReasoningOpen}
       onEdit={openEditor} onDraftChange={updateMessageDraft} onCancelEdit={closeEditor} onSaveEdit={saveEdit}
       onDelete={openDelete} onPreview={openPreview} />
-  ), [username, replyId, replyPhase, editor, expandedReasoning, setReasoningOpen, openEditor, updateMessageDraft, closeEditor, saveEdit, openDelete, openPreview]);
+  ), [username, replyId, editor, expandedReasoning, setReasoningOpen, openEditor, updateMessageDraft, closeEditor, saveEdit, openDelete, openPreview]);
 
   useEffect(() => {
     if (!scope) return;
@@ -87,7 +87,7 @@ export default function Chat() {
         <div className="chat-header-inner chat-column">
           <div>
             <h1 id="chat-title" ref={title} tabIndex={-1}>Тестовый чат</h1>
-            <p>Мок-модель <span aria-hidden="true">·</span> {number.format(rows.length)} {messageForms[plural.select(rows.length)]}</p>
+            <p>{number.format(rows.length)} {messageForms[plural.select(rows.length)]}</p>
           </div>
           <div className="chat-navigation">
             <button type="button" className="icon-button" aria-label="К началу истории" title="К началу истории"
@@ -103,7 +103,7 @@ export default function Chat() {
       </header>
       {rows.length ? (
         <ChatHistory ref={history} messages={rows} renderMessage={renderMessage} />
-      ) : initialized ? <p className="chat-empty">История пуста. Напишите сообщение, чтобы начать диалог.</p> : <output className="chat-loading">Загрузка чата…</output>}
+      ) : <p className="chat-empty">Напишите сообщение, чтобы проверить активный пресет подключения.</p>}
       <ChatComposer />
       <output className="chat-sr-only">{announcement}</output>
 

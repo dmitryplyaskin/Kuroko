@@ -6,6 +6,7 @@
   "exports": {
     "./auth": "./src/auth.ts",
     "./chatSettings": "./src/chatSettings.ts",
-    "./connectionSettings": "./src/connectionSettings.ts"
+    "./connectionSettings": "./src/connectionSettings.ts",
+    "./llm": "./src/llm.ts"
   }
 }

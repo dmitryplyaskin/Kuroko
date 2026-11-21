@@ -1,27 +1,24 @@
 import { isModelId, type Provider, type ProviderModel } from '@kuroko/contracts/connectionSettings';
+import type { ProviderConnections } from './providerConnections';
 
 type JsonObject = Record<string, unknown>;
 type CatalogResult = { models: ProviderModel[] } | { status: number; error: string };
 type CatalogProvider = {
-  endpoint: string;
-  headers: (apiKey: string) => Record<string, string>;
+  path: string;
   readPage: (page: JsonObject) => { items: unknown; cursor?: unknown };
   cursorParam?: string;
   readModel: (item: JsonObject) => ProviderModel | undefined;
 };
 
-const bearer = (apiKey: string) => ({ Authorization: `Bearer ${apiKey}` });
 const dataPage = (page: JsonObject) => ({ items: page.data });
 const catalogProviders: Record<Provider, CatalogProvider> = {
   openai: {
-    endpoint: 'https://api.openai.com/v1/models',
-    headers: bearer,
+    path: 'models',
     readPage: dataPage,
     readModel: ({ id }) => isModelId(id) ? { id } : undefined,
   },
   openrouter: {
-    endpoint: 'https://openrouter.ai/api/v1/models/user',
-    headers: bearer,
+    path: 'models/user',
     readPage: dataPage,
     readModel: ({ id, context_length, top_provider }) => {
       if (!isModelId(id)) return;
@@ -29,8 +26,7 @@ const catalogProviders: Record<Provider, CatalogProvider> = {
     },
   },
   anthropic: {
-    endpoint: 'https://api.anthropic.com/v1/models?limit=1000',
-    headers: (apiKey) => ({ 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' }),
+    path: 'models?limit=1000',
     readPage: (page) => ({ items: page.data, cursor: page.has_more ? page.last_id : undefined }),
     cursorParam: 'after_id',
     readModel: ({ id, max_input_tokens, max_tokens }) => {
@@ -39,8 +35,7 @@ const catalogProviders: Record<Provider, CatalogProvider> = {
     },
   },
   gemini: {
-    endpoint: 'https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000',
-    headers: (apiKey) => ({ 'x-goog-api-key': apiKey }),
+    path: 'models?pageSize=1000',
     readPage: (page) => ({ items: page.models, cursor: page.nextPageToken }),
     cursorParam: 'pageToken',
     readModel: ({ name, supportedGenerationMethods, inputTokenLimit, outputTokenLimit }) => {
@@ -52,10 +47,11 @@ const catalogProviders: Record<Provider, CatalogProvider> = {
   },
 };
 
-export async function listProviderModels(provider: Provider, apiKey: string): Promise<CatalogResult> {
-  const { endpoint, headers: authHeaders, readPage, cursorParam, readModel } = catalogProviders[provider];
-  const headers = new Headers({ Accept: 'application/json', ...authHeaders(apiKey) });
-  const url = new URL(endpoint);
+export async function listProviderModels(provider: Provider, apiKey: string, connections: ProviderConnections): Promise<CatalogResult> {
+  const { path, readPage, cursorParam, readModel } = catalogProviders[provider];
+  const connection = connections[provider];
+  const headers = new Headers({ Accept: 'application/json', ...connection.headers(apiKey) });
+  const url = connection.catalogUrl(path);
   const signal = AbortSignal.timeout(10_000);
   const models = new Map<string, ProviderModel>();
   const cursors = new Set<string>();

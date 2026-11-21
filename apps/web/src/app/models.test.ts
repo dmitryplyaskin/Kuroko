@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { allSettled, fork, scopeBind } from 'effector';
+import { allSettled, createWatch, fork, scopeBind } from 'effector';
 import { defaultChatSettings } from '@kuroko/contracts/chatSettings';
 import { defaultConnectionSettings, type ConnectionState } from '@kuroko/contracts/connectionSettings';
 import { appStarted } from '../platform/lifecycle';
@@ -19,9 +19,8 @@ import {
 } from '../features/connection/model';
 import { $modelCatalog, loadModelCatalogFx } from '../features/connection/modelCatalog';
 import {
-  $chatAnnouncement, $chatAttachmentError, $chatCanSend, $chatRows, $replyId, chatAttachmentSelected,
-  chatDraftChanged, chatHidden, chatSendRequested, chatShown, chatStopRequested, messageDeleteRequested, messageEditChanged,
-  messageEditRequested, messageEditSubmitted, waitForReplyTickFx,
+  $chatAnnouncement, $chatError, $chatRows, $replyId, chatDraftChanged, chatSendRequested, chatShown, chatStopRequested,
+  messageDeleteRequested, messageEditChanged, messageEditRequested, messageEditSubmitted,
 } from '../features/chat/model';
 
 const user = { id: 1, username: 'Лина' };
@@ -220,72 +219,132 @@ test('re-entering the connection tab waits for a write before loading its new sn
   assert.equal(scope.getState($connectionSelection).draft.model, 'saved-model');
 });
 
-test('mock replies pause when hidden, resume from the same position and retain visible text when stopped', async () => {
-  const ticks: (() => void)[] = [];
-  const scope = fork({
-    handlers: [
-      [loadChatSettingsFx, noChatSettings],
-      [waitForReplyTickFx, () => new Promise<void>((resolve) => ticks.push(resolve))],
-    ],
-  });
-  await allSettled(chatSettingsInitialized, { scope });
-  await allSettled(sessionUserReceived, { scope, params: user });
-  await allSettled(chatShown, { scope });
-  await allSettled(chatDraftChanged, { scope, params: 'Привет' });
-
-  const send = scopeBind(chatSendRequested, { scope });
-  send();
-  send();
-  assert.equal(ticks.length, 1);
-  assert.equal(scope.getState($chatRows).at(-2)?.text, 'Привет');
-  const replyId = scope.getState($replyId);
-  ticks.shift()!();
-  await Promise.resolve();
-  const visible = scope.getState($chatRows).at(-1)?.reasoning;
-  assert.equal(visible?.length, 24);
-  assert.equal(ticks.length, 1);
-
-  scopeBind(chatHidden, { scope })();
-  ticks.shift()!();
-  await allSettled(scope);
-  assert.equal(scope.getState($chatRows).at(-1)?.reasoning, visible);
-  assert.equal(ticks.length, 0);
-
-  scopeBind(chatShown, { scope })();
-  assert.equal(ticks.length, 1);
-  scopeBind(chatStopRequested, { scope })();
-  ticks.shift()!();
-  await allSettled(scope);
-
-  assert.equal(scope.getState($replyId), null);
-  assert.partialDeepStrictEqual(scope.getState($chatRows).at(-1), { id: replyId, reasoning: visible, text: '' });
-  assert.equal(scope.getState($chatAnnouncement), 'Ответ модели остановлен.');
+const sseHeaders = { 'Content-Type': 'text/event-stream' };
+const encode = (text: string) => new TextEncoder().encode(text);
+const sse = (value: object) => `data: ${JSON.stringify(value)}\r\n\r\n`;
+const completed = (text: string) => sse({
+  type: 'done', completion: { message: { role: 'assistant', parts: [{ type: 'text', text }] }, finishReason: 'stop' },
 });
 
-test('chat validates attachments and supports editing and deleting a sent message', async () => {
-  const scope = fork({ handlers: [[loadChatSettingsFx, noChatSettings]] });
-  await allSettled(chatSettingsInitialized, { scope });
+async function openChat() {
+  const scope = fork();
   await allSettled(sessionUserReceived, { scope, params: user });
   await allSettled(chatShown, { scope });
+  return scope;
+}
 
-  const invalid = new File(['data'], 'example.txt', { type: 'text/plain' });
-  const image = new File(['data'], 'example.png', { type: 'image/png' });
-  await allSettled(chatAttachmentSelected, { scope, params: invalid });
-  assert.equal(scope.getState($chatCanSend), false);
-  assert.notEqual(scope.getState($chatAttachmentError), '');
-  await allSettled(chatAttachmentSelected, { scope, params: image });
-  assert.equal(scope.getState($chatCanSend), true);
+test('chat renders streamed text before completion and sends only the new message for the active preset', async () => {
+  const scope = await openChat();
+  const payloads: unknown[] = [];
+  const stream = new TransformStream<Uint8Array, Uint8Array>();
+  const writer = stream.writable.getWriter();
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input, init) => {
+    assert.equal(input, '/api/llm/generate');
+    assert.equal(init?.method, 'POST');
+    const headers = new Headers(init?.headers);
+    assert.equal(headers.get('Accept'), 'text/event-stream');
+    assert.equal(headers.get('X-Kuroko-Request'), '1');
+    assert.equal(headers.get('X-Kuroko-Account'), String(user.id));
+    payloads.push(JSON.parse(String(init?.body)));
+    return new Response(payloads.length === 1 ? stream.readable : completed('Второй ответ.'), { headers: sseHeaders });
+  };
+  const partial = Promise.withResolvers<void>();
+  const unwatch = createWatch({
+    scope, unit: $chatRows, fn: (rows) => { if (rows.at(-1)?.text === 'При') partial.resolve(); },
+  });
+  try {
+    assert.deepEqual(scope.getState($chatRows), []);
+    await allSettled(chatDraftChanged, { scope, params: '  Привет  ' });
+    scopeBind(chatSendRequested, { scope })();
+    const bytes = encode(': ping\r\n\r\n' + sse({ type: 'text_delta', text: 'При' }));
+    const split = bytes.findIndex((byte) => byte > 127) + 1;
+    await writer.write(bytes.subarray(0, split));
+    await writer.write(bytes.subarray(split));
+    await partial.promise;
+    assert.notEqual(scope.getState($replyId), null);
+    assert.deepEqual(scope.getState($chatRows).map(({ text }) => text), ['Привет', 'При']);
 
-  scopeBind(chatSendRequested, { scope })();
-  scopeBind(chatStopRequested, { scope })();
-  await allSettled(scope);
-  const message = scope.getState($chatRows).at(-1)!;
-  assert.partialDeepStrictEqual(message, { role: 'user', image: { file: image }, text: '' });
+    await writer.write(encode(completed('Привет!')));
+    void writer.close().catch(() => undefined);
+    await allSettled(scope);
+    assert.equal(scope.getState($replyId), null);
+    await allSettled(chatDraftChanged, { scope, params: 'Второй запрос' });
+    await allSettled(chatSendRequested, { scope });
+    assert.deepEqual(scope.getState($chatRows).map(({ text }) => text), ['Привет', 'Привет!', 'Второй запрос', 'Второй ответ.']);
+    assert.deepEqual(payloads, [
+      { stream: true, messages: [{ role: 'user', content: 'Привет' }] },
+      { stream: true, messages: [{ role: 'user', content: 'Второй запрос' }] },
+    ]);
+  } finally {
+    unwatch();
+    globalThis.fetch = originalFetch;
+    void writer.abort().catch(() => undefined);
+  }
+});
 
-  await allSettled(messageEditRequested, { scope, params: message.id });
-  await allSettled(messageEditChanged, { scope, params: { id: message.id, text: '  Подпись  ' } });
-  await allSettled(messageEditSubmitted, { scope, params: message.id });
-  assert.partialDeepStrictEqual(scope.getState($chatRows).at(-1), { text: 'Подпись', edited: true });
-  await allSettled(messageDeleteRequested, { scope, params: message.id });
-  assert.equal(scope.getState($chatRows).some(({ id }) => id === message.id), false);
+test('chat stops the request, retains the visible answer and ignores late frames', async () => {
+  const scope = await openChat();
+  const stream = new TransformStream<Uint8Array, Uint8Array>();
+  const writer = stream.writable.getWriter();
+  const originalFetch = globalThis.fetch;
+  let signal: AbortSignal | null | undefined;
+  globalThis.fetch = async (_input, init) => {
+    signal = init?.signal;
+    return new Response(stream.readable, { headers: sseHeaders });
+  };
+  const partial = Promise.withResolvers<void>();
+  const unwatch = createWatch({
+    scope, unit: $chatRows, fn: (rows) => { if (rows.at(-1)?.text === 'Начало') partial.resolve(); },
+  });
+  try {
+    await allSettled(chatDraftChanged, { scope, params: 'Привет' });
+    scopeBind(chatSendRequested, { scope })();
+    await writer.write(encode(sse({ type: 'text_delta', text: 'Начало' })));
+    await partial.promise;
+    scopeBind(chatStopRequested, { scope })();
+    assert.equal(signal?.aborted, true);
+    assert.equal(scope.getState($replyId), null);
+    assert.equal(scope.getState($chatAnnouncement), 'Ответ модели остановлен.');
+
+    await writer.write(encode(sse({ type: 'text_delta', text: ' и продолжение' }) + completed('Поздний ответ')));
+    void writer.close().catch(() => undefined);
+    await allSettled(scope);
+    assert.equal(scope.getState($chatRows).at(-1)?.text, 'Начало');
+    assert.equal(scope.getState($chatError), '');
+    const message = scope.getState($chatRows)[0]!;
+    await allSettled(messageEditRequested, { scope, params: message.id });
+    await allSettled(messageEditChanged, { scope, params: { id: message.id, text: '  Правка  ' } });
+    await allSettled(messageEditSubmitted, { scope, params: message.id });
+    assert.partialDeepStrictEqual(scope.getState($chatRows)[0], { text: 'Правка', edited: true });
+    await allSettled(messageDeleteRequested, { scope, params: message.id });
+    assert.deepEqual(scope.getState($chatRows).map(({ text }) => text), ['Начало']);
+  } finally {
+    unwatch();
+    globalThis.fetch = originalFetch;
+    void writer.abort().catch(() => undefined);
+  }
+});
+
+test('chat displays connection and stream errors and keeps partial text', async () => {
+  const scope = await openChat();
+  const originalFetch = globalThis.fetch;
+  let requests = 0;
+  globalThis.fetch = async () => {
+    if (++requests === 1) return Response.json({ error: 'Пресет подключения не найден.' }, { status: 404 });
+    return new Response(sse({ type: 'text_delta', text: 'Начало' }) +
+      sse({ type: 'error', code: 'provider_unavailable', error: 'Провайдер прервал ответ.' }), { headers: sseHeaders });
+  };
+  try {
+    await allSettled(chatDraftChanged, { scope, params: 'Первое сообщение' });
+    await allSettled(chatSendRequested, { scope });
+    assert.equal(scope.getState($chatError), 'Пресет подключения не найден.');
+    assert.deepEqual(scope.getState($chatRows).map(({ text }) => text), ['Первое сообщение']);
+    await allSettled(chatDraftChanged, { scope, params: 'Второе сообщение' });
+    await allSettled(chatSendRequested, { scope });
+    assert.equal(scope.getState($chatError), 'Провайдер прервал ответ.');
+    assert.equal(scope.getState($chatRows).at(-1)?.text, 'Начало');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
