@@ -1,5 +1,6 @@
 import type { ChatMessage, ChatToolCall } from '@kuroko/contracts/chat';
 import type { LlmMessage } from '@kuroko/contracts/llm';
+import { toolHistoryResult } from '../tools/getRollDetails';
 
 export type ChatImage = {
   src: string;
@@ -71,8 +72,8 @@ export function toLlmMessages(messages: ChatMessage[]): LlmMessage[] {
       // Earlier calls travel as text so the conversation can continue with a different provider or with tools disabled.
       const content = messageBlocks(message).map((block) => {
         if (block.kind === 'text') return block.text;
-        const calls = block.calls.map(({ name, arguments: args, result, modelResult, isError }) =>
-          `${name}(${JSON.stringify(args)}) ${isError ? 'failed' : 'returned'} ${JSON.stringify(modelResult === undefined ? result : modelResult)}`);
+        const calls = block.calls.map((call) =>
+          `${call.name}(${JSON.stringify(call.arguments)}) ${call.isError ? 'failed' : 'returned'} ${JSON.stringify(toolHistoryResult(call))}`);
         return `Tool calls:\n${calls.join('\n')}`;
       }).filter((block) => block.trim()).join('\n\n');
       history.push({ role, parts: [{ type: 'text', text: content }] });

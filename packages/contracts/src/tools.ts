@@ -1,4 +1,4 @@
-export const toolIds = ['roll_dice', 'test_echo'] as const;
+export const toolIds = ['roll_dice', 'resolveCheck', 'getRollDetails', 'test_echo'] as const;
 
 export type ToolId = (typeof toolIds)[number];
 export type ToolsResponse = { enabled: ToolId[] };

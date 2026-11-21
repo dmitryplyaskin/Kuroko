@@ -8,7 +8,7 @@ import { $activeSession, protectedRequestFailed, sessionEnded, type ActiveSessio
 import { inActiveSession } from '../../platform/session/request';
 import { $enabledTools, $toolSettingsBusy } from '../tools/model';
 import { chatApi, streamChatReply } from './chatApi';
-import { editMessageText, hasMessageContent, toLlmMessages, type Message } from './message';
+import { editMessageText, hasMessageContent, type Message } from './message';
 
 type Generation = { session: ActiveSession; controller: AbortController; enabledTools: readonly ToolId[] };
 type Reply = { generation: Generation; message: Message };
@@ -164,7 +164,7 @@ const replyContentReceived = createEvent<{ generation: Generation; text: string;
 const streamReplyFx = createEffect(({ reply: { generation }, messages }: { reply: Reply; messages: ChatSnapshot['messages'] }) => {
   const publish = scopeBind(replyDelta, { safe: true });
   const report = scopeBind(replyContentReceived, { safe: true });
-  return streamChatReply(generation.session, toLlmMessages(messages), generation.enabledTools, generation.controller.signal,
+  return streamChatReply(generation.session, messages, generation.enabledTools, generation.controller.signal,
     (delta) => publish({ generation, text: delta }), (text, toolCalls) => report({ generation, text, toolCalls }));
 });
 

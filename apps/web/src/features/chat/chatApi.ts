@@ -6,6 +6,7 @@ import type { ActiveSession } from '../../platform/session/model';
 import { sessionRequest, sessionResponse } from '../../platform/session/request';
 import { ApiError } from '../../shared/http/api';
 import { runToolCall, toolDeclarations } from '../tools/catalog';
+import { toLlmMessages } from './message';
 
 export const chatApi = {
   list: (session: ActiveSession) => sessionRequest<ChatSummary[]>(session, '/chats'),
@@ -30,13 +31,14 @@ function readEvent(frame: string): LlmEvent | undefined {
 }
 
 export async function streamChatReply(
-  session: ActiveSession, messages: LlmMessage[], enabledTools: readonly ToolId[], signal: AbortSignal,
+  session: ActiveSession, messages: ChatSnapshot['messages'], enabledTools: readonly ToolId[], signal: AbortSignal,
   onText: (delta: string) => void, onContent: (text: string, calls: ChatToolCall[]) => void,
 ): Promise<string> {
   const tools = enabledTools.length ? toolDeclarations(enabledTools) : undefined;
-  const history = [...messages];
+  const history: LlmMessage[] = toLlmMessages(messages);
+  const savedCalls = messages.flatMap(({ toolCalls }) => toolCalls ?? []);
   const toolCalls: ChatToolCall[] = [];
-  const recordedIds = new Set<string>();
+  const recordedIds = new Set(savedCalls.map(({ id }) => id));
   let nextRecordNumber = 1;
   let presetId: string | undefined;
   let text = '';
@@ -72,11 +74,12 @@ export async function streamChatReply(
     signal.throwIfAborted();
     if (typeof completion.presetId !== 'string') throw new ApiError(502, 'invalid_response');
     presetId ??= completion.presetId;
+    const recordedCalls = [...savedCalls, ...toolCalls];
     const results = await Promise.all(calls.map(async ({ call, textOffset }) => {
       let recordId = call.id;
       while (recordedIds.has(recordId)) recordId = `call_${nextRecordNumber++}`;
       recordedIds.add(recordId);
-      const { entry, message } = await runToolCall(call, enabledTools, signal, recordId);
+      const { entry, message } = await runToolCall(call, enabledTools, { signal, id: recordId, history: recordedCalls });
       return { entry: { ...entry, textOffset: start + textOffset }, message };
     }));
     signal.throwIfAborted();

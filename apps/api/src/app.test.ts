@@ -73,6 +73,8 @@ test('persists independently enabled tools for the signed-in account', async () 
   expect(await (await set('test_echo', true)).json()).toEqual({ enabled: ['roll_dice', 'test_echo'] });
   expect(await (await set('roll_dice', false)).json()).toEqual({ enabled: ['test_echo'] });
   expect(await (await request(path, { cookie })).json()).toEqual({ enabled: ['test_echo'] });
+  expect(await (await set('resolveCheck', true)).json()).toEqual({ enabled: ['resolveCheck', 'test_echo'] });
+  expect(await (await set('getRollDetails', true)).json()).toEqual({ enabled: ['getRollDetails', 'resolveCheck', 'test_echo'] });
   expect(await (await request(path, { cookie: other })).json()).toEqual({ enabled: [] });
 });
 

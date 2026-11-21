@@ -2,8 +2,7 @@
 import { DiceError, fail, checked, boolean, compare, calculate, mathFunction, parseExpression, matchesPool } from './expression.mjs'
 import { projectDiceGroup, diceObservations } from './pool.mjs'
 import { resolveDiceConfig } from './config.mjs'
-
-const diceResultVersion = 3
+import { DICE_RESULT_VERSION } from './result.mjs'
 
 function randomFace(sides) {
   const range = 2 ** 32
@@ -218,6 +217,6 @@ export class CryptoDiceProvider {
       ? Object.fromEntries(node.children.map(([key, child]) => [key, visit(child)])) : resolve(node).value ?? null
     const values = visit(tree), details = fields.map(field => traces.get(field))
     const errors = details.filter(detail => detail.error).map(detail => ({ path: detail.path, code: detail.code, message: detail.error }))
-    return { schemaVersion: diceResultVersion, ...(purpose === undefined ? {} : { purpose: purpose.trim() }), values, errors, observations: diceObservations(details), details }
+    return { schemaVersion: DICE_RESULT_VERSION, ...(purpose === undefined ? {} : { purpose: purpose.trim() }), values, errors, observations: diceObservations(details), details }
   }
 }

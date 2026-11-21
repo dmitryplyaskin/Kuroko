@@ -1,1 +1,1 @@
-Dice expression parser, evaluator, configuration, and pool projection adapted from Mayori revision `3103cfc`. The Cordis service layer was removed and Node's random draw was replaced with unbiased Web Crypto draws. The original MIT notice is in [LICENSE](LICENSE).
+The dice engine and numeric rules under `tools` are adapted from Mayori revision `3103cfc`. Kuroko uses its own chat storage and draws with Web Crypto. The original [MIT notice](../LICENSE.mayori) applies to the adapted Mayori code.

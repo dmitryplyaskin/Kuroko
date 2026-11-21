@@ -1,7 +1,7 @@
 import type { JsonObject, JsonValue } from '@kuroko/contracts/llm';
 
 type DiceError = { path: (string | number)[]; code: string; message: string };
-type DiceResult = JsonObject & {
+export type DiceResult = JsonObject & {
   schemaVersion: number;
   values: JsonObject | JsonValue[];
   errors: DiceError[];
