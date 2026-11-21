@@ -1,14 +1,16 @@
 import type { MessageKey } from '../../shared/i18n/i18n';
 import { combine, createEffect, createEvent, createStore, sample, scopeBind, type StoreValue } from 'effector';
 import type { ChatSnapshot, ChatSummary, ChatToolCall, SavedChat } from '@kuroko/contracts/chat';
+import type { ToolId } from '@kuroko/contracts/tools';
 import { abortFx } from '../../shared/async/abort';
 import { errorCode, type ErrorCode } from '../../shared/http/api';
 import { $activeSession, protectedRequestFailed, sessionEnded, type ActiveSession } from '../../platform/session/model';
 import { inActiveSession } from '../../platform/session/request';
+import { $enabledTools, $toolSettingsBusy } from '../tools/model';
 import { chatApi, streamChatReply } from './chatApi';
-import { hasMessageContent, toLlmMessages, type Message } from './message';
+import { editMessageText, hasMessageContent, toLlmMessages, type Message } from './message';
 
-type Generation = { session: ActiveSession; controller: AbortController; toolsEnabled: boolean };
+type Generation = { session: ActiveSession; controller: AbortController; enabledTools: readonly ToolId[] };
 type Reply = { generation: Generation; message: Message };
 type Navigation = { session: ActiveSession; action: 'initial' | 'create' | 'open'; id?: string };
 type Save = ChatSnapshot & { session: ActiveSession; id: string; reply?: Reply };
@@ -22,7 +24,6 @@ export const chatCreateRequested = createEvent();
 export const chatOpenRequested = createEvent<string>();
 export const chatLoadRetryRequested = createEvent();
 export const chatSaveRetryRequested = createEvent();
-export const chatTestToolsChanged = createEvent<boolean>();
 export const messageEditRequested = createEvent<number>();
 export const messageEditChanged = createEvent<{ id: number; text: string }>();
 export const messageEditCancelled = createEvent();
@@ -130,14 +131,13 @@ sample({
 });
 
 export const $chatDraft = createStore('').on(chatDraftChanged, (_, draft) => draft).reset(chatOpened, sessionEnded);
-export const $chatTestToolsEnabled = createStore(false).on(chatTestToolsChanged, (_, enabled) => enabled).reset(sessionEnded);
 
 const $composer = combine({
   session: $activeSession, visible: $visible, draft: $chatDraft, locked: $chatLocked, chatId: $chatId, nextId: $nextId,
-  toolsEnabled: $chatTestToolsEnabled,
+  enabledTools: $enabledTools, toolSettingsBusy: $toolSettingsBusy,
 });
-function canSend({ session, visible, draft, locked, chatId }: StoreValue<typeof $composer>) {
-  return session !== null && visible && !locked && Boolean(chatId && draft.trim());
+function canSend({ session, visible, draft, locked, chatId, toolSettingsBusy }: StoreValue<typeof $composer>) {
+  return session !== null && visible && !locked && !toolSettingsBusy && Boolean(chatId && draft.trim());
 }
 
 export const $chatCanSend = $composer.map(canSend);
@@ -145,11 +145,11 @@ export const messageSent = sample({
   clock: chatSendRequested,
   source: $composer,
   filter: canSend,
-  fn: ({ session, nextId, draft, toolsEnabled }) => {
+  fn: ({ session, nextId, draft, enabledTools }) => {
     const time = Date.now();
     const user: Message = { id: nextId, role: 'user', text: draft.trim(), time };
     const reply: Reply = {
-      generation: { session: session!, controller: new AbortController(), toolsEnabled },
+      generation: { session: session!, controller: new AbortController(), enabledTools },
       message: { id: nextId + 1, role: 'assistant', text: '', time },
     };
     return { user, reply };
@@ -160,21 +160,23 @@ $nextId.on(messageSent, (_, { reply }) => reply.message.id + 1);
 $chatDraft.reset(messageSent);
 
 const replyDelta = createEvent<{ generation: Generation; text: string }>();
-const toolsReported = createEvent<{ generation: Generation; toolCalls: ChatToolCall[] }>();
+const replyContentReceived = createEvent<{ generation: Generation; text: string; toolCalls: ChatToolCall[] }>();
 const streamReplyFx = createEffect(({ reply: { generation }, messages }: { reply: Reply; messages: ChatSnapshot['messages'] }) => {
   const publish = scopeBind(replyDelta, { safe: true });
-  const report = scopeBind(toolsReported, { safe: true });
-  return streamChatReply(generation.session, toLlmMessages(messages), generation.controller.signal,
-    (delta) => publish({ generation, text: delta }), generation.toolsEnabled ? (toolCalls) => report({ generation, toolCalls }) : undefined);
+  const report = scopeBind(replyContentReceived, { safe: true });
+  return streamChatReply(generation.session, toLlmMessages(messages), generation.enabledTools, generation.controller.signal,
+    (delta) => publish({ generation, text: delta }), (text, toolCalls) => report({ generation, text, toolCalls }));
 });
 
-const toolsRecorded = sample({
-  clock: toolsReported,
+const replyContentUpdated = sample({
+  clock: replyContentReceived,
   source: $reply,
   filter: (reply, { generation }) => reply?.generation === generation,
-  fn: (reply, { toolCalls }): Reply => ({ ...reply!, message: { ...reply!.message, toolCalls } }),
+  fn: (reply, { text, toolCalls }): Reply => ({
+    ...reply!, message: { ...reply!.message, text, toolCalls: toolCalls.length ? toolCalls : undefined },
+  }),
 });
-$reply.on(toolsRecorded, (_, reply) => reply);
+$reply.on(replyContentUpdated, (_, reply) => reply);
 
 const replyPrepared = saveSucceeded.filterMap(({ params, result }) => params.reply && { reply: params.reply, messages: result.messages });
 sample({
@@ -198,7 +200,7 @@ const replyCompleted = sample({
   filter: (reply, { params }) => reply?.generation === params.reply.generation,
   fn: (reply, { result }) => ({
     message: { ...reply!.message, text: result },
-    noToolsCalled: reply!.generation.toolsEnabled && !reply!.message.toolCalls?.length,
+    noToolsCalled: Boolean(reply!.generation.enabledTools.length && !reply!.message.toolCalls?.length),
   }),
 });
 const replyFailed = sample({
@@ -262,7 +264,7 @@ const messageDeleted = sample({
 });
 
 $messages
-  .on(messageEdited, (messages, { id, text }) => messages.map((message) => message.id === id ? { ...message, text, edited: true } : message))
+  .on(messageEdited, (messages, { id, text }) => messages.map((message) => message.id === id ? editMessageText(message, text) : message))
   .on(messageDeleted, (messages, id) => messages.filter((message) => message.id !== id));
 $editor
   .reset(messageEdited)
@@ -313,5 +315,5 @@ export const $chatAnnouncement = createStore<MessageKey | null>(null)
 export const $replyId = $reply.map((reply) => reply?.message.id ?? null);
 export const $chatRows = combine($messages, $reply, (messages, reply) => reply ? [...messages, reply.message] : messages);
 export const keepHistoryAtEndRequested = sample({
-  clock: [replyUpdated, toolsRecorded, replyCompleted, replyFailed, replyStopped, messageEdited], fn: () => undefined,
+  clock: [replyUpdated, replyContentUpdated, replyCompleted, replyFailed, replyStopped, messageEdited], fn: () => undefined,
 });

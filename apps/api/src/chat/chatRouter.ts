@@ -37,29 +37,35 @@ function readSnapshot(value: unknown): ChatSnapshot | undefined {
     const message = record(value);
     if (!message) return;
     const { id, role, text, time, edited } = message;
-    const toolCalls = readToolCalls(message.toolCalls);
     if (!nonNegativeInteger(id) || id <= previousId || id >= Number.MAX_SAFE_INTEGER - 1 ||
       (role !== 'user' && role !== 'assistant') || !nonNegativeInteger(time) || time > 8.64e15 ||
-      typeof text !== 'string' || !text.isWellFormed() || (!text && !toolCalls?.length) ||
-      (message.toolCalls !== undefined && (role !== 'assistant' || !toolCalls)) ||
+      typeof text !== 'string' || !text.isWellFormed() ||
       (edited !== undefined && typeof edited !== 'boolean')) return;
+    const toolCalls = readToolCalls(message.toolCalls, text);
+    if ((!text && !toolCalls) || (message.toolCalls !== undefined && (role !== 'assistant' || !toolCalls))) return;
     messages.push({ id, role, text, time, edited, toolCalls });
     previousId = id;
   }
   return { revision: snapshot.revision, messages };
 }
 
-function readToolCalls(value: unknown): ChatToolCall[] | undefined {
+function readToolCalls(value: unknown, text: string): ChatToolCall[] | undefined {
   if (!Array.isArray(value) || !value.length) return;
   const calls: ChatToolCall[] = [];
   const ids = new Set<string>();
+  let previousOffset = 0;
   for (const raw of value as unknown[]) {
     const call = record(raw);
     if (!call) return;
-    const { id, name, arguments: args, result, isError } = call;
+    const { id, name, arguments: args, result, modelResult, isError, textOffset } = call;
     if (!isToolCallId(id) || ids.has(id) || !isToolName(name) || !jsonObject(args) || !jsonValue(result) ||
-      (isError !== undefined && typeof isError !== 'boolean')) return;
-    calls.push({ id, name, arguments: args, result, isError });
+      (modelResult !== undefined && !jsonValue(modelResult)) || (isError !== undefined && typeof isError !== 'boolean')) return;
+    const offset = textOffset === undefined ? 0 : textOffset;
+    if (!nonNegativeInteger(offset) || offset < previousOffset || offset > text.length) return;
+    const code = text.charCodeAt(offset);
+    if (code >= 0xdc00 && code <= 0xdfff) return;
+    previousOffset = offset;
+    calls.push({ id, name, arguments: args, result, modelResult, isError, textOffset: textOffset === undefined ? undefined : offset });
     ids.add(id);
   }
   return calls;

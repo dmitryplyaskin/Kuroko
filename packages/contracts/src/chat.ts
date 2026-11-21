@@ -5,7 +5,10 @@ export type ChatToolCall = {
   name: string;
   arguments: JsonObject;
   result: JsonValue;
+  modelResult?: JsonValue;
   isError?: boolean;
+  /** UTF-16 offset in the assistant message's text. Older messages omit this. */
+  textOffset?: number;
 };
 
 export type ChatMessage = {

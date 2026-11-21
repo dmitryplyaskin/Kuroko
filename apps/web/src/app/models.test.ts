@@ -4,6 +4,7 @@ import { allSettled, createWatch, fork, scopeBind } from 'effector';
 import type { ChatSnapshot, SavedChat } from '@kuroko/contracts/chat';
 import { defaultChatSettings } from '@kuroko/contracts/chatSettings';
 import { defaultConnectionSettings, type ConnectionState } from '@kuroko/contracts/connectionSettings';
+import { isToolId, type ToolId } from '@kuroko/contracts/tools';
 import { appStarted } from '../platform/lifecycle';
 import { ApiError } from '../shared/http/api';
 import {
@@ -19,9 +20,10 @@ import {
   presetCopyRequested, presetSelected,
 } from '../features/connection/model';
 import { $modelCatalog, loadModelCatalogFx } from '../features/connection/modelCatalog';
+import { $enabledTools, toolsInitialized, toolSettingChanged } from '../features/tools/model';
 import {
   $chatAnnouncement, $chatError, $chatId, $chatRows, $replyId, chatCreateRequested, chatDraftChanged,
-  chatOpenRequested, chatSendRequested, chatShown, chatStopRequested, chatTestToolsChanged,
+  chatOpenRequested, chatSendRequested, chatShown, chatStopRequested,
   messageDeleteRequested, messageEditChanged, messageEditRequested, messageEditSubmitted,
 } from '../features/chat/model';
 
@@ -230,6 +232,7 @@ const completed = (text: string) => sse({
 
 async function openChat() {
   const scope = fork();
+  await allSettled(toolsInitialized, { scope });
   await allSettled(sessionUserReceived, { scope, params: user });
   await allSettled(chatShown, { scope });
   return scope;
@@ -237,7 +240,17 @@ async function openChat() {
 
 function withSavedChats(generate: typeof fetch): typeof fetch {
   const chats: SavedChat[] = [];
+  const enabled = new Set<ToolId>();
   return async (input, init) => {
+    if (input === '/api/settings/tools') return Response.json({ enabled: [...enabled] });
+    if (typeof input === 'string' && input.startsWith('/api/settings/tools/')) {
+      const id = input.split('/').at(-1);
+      assert.ok(isToolId(id));
+      assert.equal(init?.method, 'PUT');
+      if (JSON.parse(String(init.body)).enabled) enabled.add(id);
+      else enabled.delete(id);
+      return Response.json({ enabled: [...enabled] });
+    }
     if (input === '/api/chats') {
       if (init?.method === 'GET') return Response.json(chats.map(({ id, title, updatedAt }) => ({ id, title, updatedAt })));
       assert.equal(init?.method, 'POST');
@@ -375,6 +388,9 @@ test('chat displays connection and stream errors and keeps partial text', async 
   let requests = 0;
   globalThis.fetch = withSavedChats(async () => {
     if (++requests === 1) return Response.json({ code: 'missing_preset' }, { status: 404 });
+    if (requests === 3) return new Response(sse({
+      type: 'done', completion: { message: { role: 'assistant', parts: [{ type: 'text', text: 'Текст до лимита' }] }, finishReason: 'length' },
+    }), { headers: sseHeaders });
     return new Response(sse({ type: 'text_delta', text: 'Начало' }) +
       sse({ type: 'error', code: 'provider_unavailable' }), { headers: sseHeaders });
   });
@@ -388,24 +404,90 @@ test('chat displays connection and stream errors and keeps partial text', async 
     await allSettled(chatSendRequested, { scope });
     assert.equal(scope.getState($chatError), 'provider_unavailable');
     assert.equal(scope.getState($chatRows).at(-1)?.text, 'Начало');
+    await allSettled(chatDraftChanged, { scope, params: 'Третье сообщение' });
+    await allSettled(chatSendRequested, { scope });
+    assert.equal(scope.getState($chatError), 'response_length');
+    const reloaded = await openChat();
+    assert.equal(reloaded.getState($chatRows).at(-1)?.text, 'Текст до лимита');
   } finally {
     globalThis.fetch = originalFetch;
   }
 });
 
-test('test tools return their results to the model and keep every invocation in order after reopening', async () => {
+test('chat keeps tools available after each batch and records successive rolls in the same reply', async () => {
+  const originalFetch = globalThis.fetch;
+  const presetId = 'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa';
+  const prompt = { role: 'user', content: 'Проведи боевой раунд' };
+  const initiative = 'Бросаю инициативу. 🎲';
+  const attack = 'Морвен ходит первой, бросаю атаку.';
+  const roll = (text: string, expression: string) => ({
+    role: 'assistant', parts: [
+      { type: 'text', text },
+      { type: 'toolCall', id: 'call_same', name: 'roll_dice', arguments: { rolls: { total: expression } } },
+    ],
+  });
+  const first = roll(initiative, 'd1 + 6');
+  const second = roll(attack, 'd1 + 16');
+  const result = (total: number, rollId: string) => ({ role: 'tool', callId: 'call_same', content: { rollId, values: { total } } });
+  const toolReply = (message: typeof first, text: string) => new Response(sse({ type: 'text_delta', text }) + sse({
+    type: 'done', completion: { presetId, message, finishReason: 'tool_calls' },
+  }), { headers: sseHeaders });
+  let requests = 0;
+  globalThis.fetch = withSavedChats(async (input, init) => {
+    assert.equal(input, '/api/llm/generate');
+    const body = JSON.parse(String(init?.body));
+    assert.deepEqual(body.tools.map(({ name }: { name: string }) => name), ['roll_dice']);
+    if (++requests === 1) {
+      assert.deepEqual(body.messages, [prompt]);
+      return toolReply(first, initiative);
+    }
+    assert.equal(body.presetId, presetId);
+    assert.equal(body.toolChoice, 'auto');
+    const expected = [prompt, first, result(7, 'call_same')];
+    if (requests === 2) {
+      assert.deepEqual(body.messages, expected);
+      return toolReply(second, attack);
+    }
+    assert.equal(requests, 3);
+    const recordId = body.messages[4].content.rollId;
+    assert.notEqual(recordId, 'call_same');
+    assert.deepEqual(body.messages, [...expected, second, result(17, recordId)]);
+    return new Response(completed('Атака попала.'), { headers: sseHeaders });
+  });
+  try {
+    const scope = await openChat();
+    await allSettled(toolSettingChanged, { scope, params: { id: 'roll_dice', enabled: true } });
+    await allSettled(chatDraftChanged, { scope, params: prompt.content });
+    await allSettled(chatSendRequested, { scope });
+    assert.equal(requests, 3);
+    assert.equal(scope.getState($chatError), null);
+    const reloaded = await openChat();
+    const answer = reloaded.getState($chatRows).at(-1);
+    assert.equal(answer?.text, `${initiative}\n\n${attack}\n\nАтака попала.`);
+    assert.deepEqual(answer.toolCalls?.map(({ textOffset }) => textOffset), [initiative.length, initiative.length + 2 + attack.length]);
+    assert.equal(new Set(answer.toolCalls?.map(({ id }) => id)).size, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('account tool settings control chat declarations and keep full dice traces in saved history', async () => {
   const originalFetch = globalThis.fetch;
   const presetId = 'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa';
   const echoArgs = { text: 'Проверка 🐸' };
   const echo = { type: 'toolCall', id: 'echo-1', name: 'test_echo', arguments: echoArgs };
   const dice = { type: 'toolCall', id: 'dice-1', name: 'roll_dice', arguments: { sides: 20 } };
   const invalid = { ...dice, id: 'dice-2', arguments: { sides: 0 } };
-  const defaultDice = { ...dice, id: 'dice-3', arguments: {} };
-  const toolRequest = { role: 'assistant', parts: [echo, dice, invalid, defaultDice], openrouterReasoning: [{ type: 'reasoning.encrypted', data: 'signed-data' }] };
+  const batch = { ...dice, id: 'dice-3', arguments: { purpose: 'Проверка', rolls: { base: 'd1', total: 'if($base == 1,$base + 4,d20)' } } };
+  const intro = 'Проверю инструменты. 🎲';
+  const between = 'Теперь броски.';
+  const toolRequest = {
+    role: 'assistant', parts: [{ type: 'text', text: intro }, echo, { type: 'text', text: between }, dice, invalid, batch],
+    openrouterReasoning: [{ type: 'reasoning.encrypted', data: 'signed-data' }],
+  };
   const prompt = { role: 'user', content: 'Вызови test_echo и брось кубики' };
   const followUp = { role: 'user', content: 'Что выпало на d20?' };
   let roll = 0;
-  let defaultRoll = 0;
   let requests = 0;
   globalThis.fetch = withSavedChats(async (input, init) => {
     assert.equal(input, '/api/llm/generate');
@@ -413,48 +495,65 @@ test('test tools return their results to the model and keep every invocation in 
     assert.equal(body.stream, true);
     requests++;
     if (requests === 3) {
-      assert.equal(body.tools, undefined);
+      assert.deepEqual(body.tools.map(({ name }: { name: string }) => name), ['roll_dice']);
       assert.deepEqual(body.messages[0], prompt);
-      assert.ok(body.messages[1].parts[0].text.includes(`roll_dice({"sides":20}) returned {"sides":20,"roll":${roll}}`));
+      const previousText = body.messages[1].parts[0].text as string;
+      const ordered = [intro, 'test_echo', between, `roll_dice({"sides":20}) returned {"sides":20,"roll":${roll}}`, 'Готово'];
+      let position = -1;
+      for (const fragment of ordered) {
+        const next = previousText.indexOf(fragment);
+        assert.ok(next > position, fragment);
+        position = next;
+      }
+      assert.ok(body.messages[1].parts[0].text.includes('returned {"rollId":"dice-3","values":{"base":1,"total":5}}'));
+      assert.ok(!body.messages[1].parts[0].text.includes('schemaVersion'));
       assert.deepEqual(body.messages[2], followUp);
       return new Response(completed(`${roll}`), { headers: sseHeaders });
     }
-    assert.deepEqual(body.tools.map(({ name }: { name: string }) => name), ['test_echo', 'roll_dice']);
+    assert.deepEqual(body.tools.map(({ name }: { name: string }) => name), ['roll_dice', 'test_echo']);
     if (requests === 1) {
       assert.deepEqual(body.messages, [prompt]);
       assert.equal(body.presetId, undefined);
-      return new Response(sse({ type: 'tool_call', call: echo }) + sse({
+      return new Response(sse({ type: 'text_delta', text: intro }) + sse({ type: 'text_delta', text: between }) + sse({
         type: 'done', completion: { presetId, message: toolRequest, finishReason: 'tool_calls' },
       }), { headers: sseHeaders });
     }
     assert.equal(body.presetId, presetId);
-    assert.equal(body.toolChoice, 'none');
-    const [, , echoResult, diceResult, invalidResult, defaultResult] = body.messages;
+    assert.equal(body.toolChoice, 'auto');
+    const [, , echoResult, diceResult, invalidResult, batchResult] = body.messages;
     roll = diceResult.content.roll;
-    defaultRoll = defaultResult.content.roll;
     assert.ok(Number.isInteger(roll) && roll >= 1 && roll <= 20);
-    assert.ok(Number.isInteger(defaultRoll) && defaultRoll >= 1 && defaultRoll <= 6);
     assert.deepEqual(body.messages.slice(0, 2), [prompt, toolRequest]);
     assert.deepEqual(echoResult, { role: 'tool', callId: echo.id, content: echoArgs });
     assert.deepEqual(diceResult, { role: 'tool', callId: dice.id, content: { sides: 20, roll } });
     assert.deepEqual(invalidResult, { role: 'tool', callId: invalid.id, content: 'Set sides to an integer between 2 and 1000.', isError: true });
-    assert.deepEqual(defaultResult, { role: 'tool', callId: defaultDice.id, content: { sides: 6, roll: defaultRoll } });
+    assert.deepEqual(batchResult, { role: 'tool', callId: batch.id, content: { rollId: batch.id, values: { base: 1, total: 5 } } });
     return new Response(completed('Готово'), { headers: sseHeaders });
   });
   try {
     const scope = await openChat();
-    await allSettled(chatTestToolsChanged, { scope, params: true });
+    assert.deepEqual(scope.getState($enabledTools), []);
+    await allSettled(toolSettingChanged, { scope, params: { id: 'roll_dice', enabled: true } });
+    await allSettled(toolSettingChanged, { scope, params: { id: 'test_echo', enabled: true } });
     await allSettled(chatDraftChanged, { scope, params: prompt.content });
     await allSettled(chatSendRequested, { scope });
     assert.equal(requests, 2);
-    assert.deepEqual(scope.getState($chatRows).map(({ text }) => text), [prompt.content, 'Готово']);
+    assert.deepEqual(scope.getState($chatRows).map(({ text }) => text), [prompt.content, `${intro}${between}\n\nГотово`]);
     const reloaded = await openChat();
-    assert.deepEqual(reloaded.getState($chatRows).at(-1)?.toolCalls, [
-      { id: echo.id, name: echo.name, arguments: echo.arguments, result: echoArgs },
-      { id: dice.id, name: dice.name, arguments: dice.arguments, result: { sides: 20, roll } },
-      { id: invalid.id, name: invalid.name, arguments: invalid.arguments, result: 'Set sides to an integer between 2 and 1000.', isError: true },
-      { id: defaultDice.id, name: defaultDice.name, arguments: {}, result: { sides: 6, roll: defaultRoll } },
+    assert.deepEqual(reloaded.getState($enabledTools), ['roll_dice', 'test_echo']);
+    const toolCalls = reloaded.getState($chatRows).at(-1)?.toolCalls;
+    assert.deepEqual(toolCalls?.slice(0, 3), [
+      { id: echo.id, name: echo.name, arguments: echo.arguments, result: echoArgs, textOffset: intro.length },
+      { id: dice.id, name: dice.name, arguments: dice.arguments, result: { sides: 20, roll }, textOffset: intro.length + between.length },
+      { id: invalid.id, name: invalid.name, arguments: invalid.arguments, result: 'Set sides to an integer between 2 and 1000.', isError: true,
+        textOffset: intro.length + between.length },
     ]);
+    assert.partialDeepStrictEqual(toolCalls?.[3], {
+      id: batch.id, textOffset: intro.length + between.length,
+      result: { schemaVersion: 3, purpose: 'Проверка', values: { base: 1, total: 5 }, details: [{ dice: [{ results: [1] }] }] },
+      modelResult: { rollId: batch.id, values: { base: 1, total: 5 } },
+    });
+    await allSettled(toolSettingChanged, { scope: reloaded, params: { id: 'test_echo', enabled: false } });
     await allSettled(chatDraftChanged, { scope: reloaded, params: followUp.content });
     await allSettled(chatSendRequested, { scope: reloaded });
     assert.equal(requests, 3);

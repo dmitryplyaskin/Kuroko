@@ -5,6 +5,7 @@ import { defaultChatSettings } from '@kuroko/contracts/chatSettings';
 import { corePlugin } from '../core';
 import { chatModule } from '../features/chat/module';
 import { $appliedChatSettings, loadChatSettingsFx } from '../features/chat/settings/model';
+import { loadToolSettingsFx } from '../features/tools/model';
 import { createModuleRegistry } from '../modules/registry';
 import { $activeSession, checkSessionFx, type ActiveSession } from '../platform/session/model';
 import { startApplication } from './startApplication';
@@ -16,6 +17,7 @@ test('restoring a session loads chat settings once and only in an application wi
   const createScope = () => fork({
     handlers: [
       [checkSessionFx, () => user],
+      [loadToolSettingsFx, () => ({ enabled: [] })],
       [loadChatSettingsFx, (session: ActiveSession) => {
         requests.push(session);
         return { settings, legacy: undefined };

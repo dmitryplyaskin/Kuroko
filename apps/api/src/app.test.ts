@@ -57,6 +57,25 @@ function sessionCookie(response: Response) {
   return { header: cookie, token: cookie.split(';', 1)[0]! };
 }
 
+test('persists independently enabled tools for the signed-in account', async () => {
+  await register('tools-owner');
+  await register('tools-other');
+  const cookie = sessionCookie(await login('tools-owner')).token;
+  const other = sessionCookie(await login('tools-other')).token;
+  const path = '/settings/tools';
+  const set = (id: string, enabled: unknown) => request(`${path}/${id}`, { method: 'PUT', cookie, body: { enabled } });
+
+  expect((await request(path)).status).toBe(401);
+  expect(await (await request(path, { cookie })).json()).toEqual({ enabled: [] });
+  expect((await set('unknown', true)).status).toBe(400);
+  expect((await set('roll_dice', 'true')).status).toBe(400);
+  expect(await (await set('roll_dice', true)).json()).toEqual({ enabled: ['roll_dice'] });
+  expect(await (await set('test_echo', true)).json()).toEqual({ enabled: ['roll_dice', 'test_echo'] });
+  expect(await (await set('roll_dice', false)).json()).toEqual({ enabled: ['test_echo'] });
+  expect(await (await request(path, { cookie })).json()).toEqual({ enabled: ['test_echo'] });
+  expect(await (await request(path, { cookie: other })).json()).toEqual({ enabled: [] });
+});
+
 test('stores chats by account and rejects stale writes without losing the saved history', async () => {
   await register('chat-owner');
   await register('chat-other');
@@ -69,8 +88,10 @@ test('stores chats by account and rejects stale writes without losing the saved 
   const snapshot: ChatSnapshot = { revision: 0, messages: [
     { id: 1, role: 'user', text: 'Первая строка\nвторая строка', time: 1 },
     { id: 2, role: 'assistant', text: 'Ответ', time: 2 },
-    { id: 3, role: 'assistant', text: '', time: 3, toolCalls: [
-      { id: 'dice-1', name: 'roll_dice', arguments: { sides: 20 }, result: { roll: 13, sides: 20 } },
+    { id: 3, role: 'assistant', text: '🎲', time: 3, toolCalls: [
+      { id: 'dice-1', name: 'roll_dice', arguments: { rolls: { attack: 'd20' } },
+        result: { rollId: 'dice-1', values: { attack: 13 }, details: [{ dice: [{ results: [13] }] }] },
+        modelResult: { rollId: 'dice-1', values: { attack: 13 } }, textOffset: 2 },
     ] },
   ] };
   const path = `/chats/${first.id}`;
@@ -79,6 +100,9 @@ test('stores chats by account and rejects stale writes without losing the saved 
   expect((await save(other)).status).toBe(404);
   expect(await (await request('/chats', { cookie: other })).json()).toEqual([]);
   expect((await save(cookie, { ...snapshot, messages: [{ ...snapshot.messages[2]!, role: 'user' }] })).status).toBe(400);
+  const splitEmoji = structuredClone(snapshot);
+  splitEmoji.messages[2]!.toolCalls![0]!.textOffset = 1;
+  expect((await save(cookie, splitEmoji)).status).toBe(400);
   const stored = await (await save(cookie)).json() as SavedChat;
   expect(stored).toMatchObject({ revision: 1, title: 'Первая строка вторая строка', messages: snapshot.messages });
   expect(await (await save(cookie)).json()).toEqual(stored);

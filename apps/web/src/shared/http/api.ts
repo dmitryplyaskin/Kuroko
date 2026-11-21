@@ -2,6 +2,7 @@ import { CodedError, isApiErrorCode, type ApiErrorCode } from '@kuroko/contracts
 
 export type ErrorCode = ApiErrorCode
   | 'network_error' | 'request_timeout' | 'invalid_response' | 'stream_interrupted' | 'response_blocked' | 'response_empty'
+  | 'response_length' | 'tool_round_limit'
   | 'session_check_failed' | 'password_confirmation_mismatch' | 'model_catalog_key_required'
   | 'model_id_invalid' | 'number_integer_min' | 'number_range' | 'message_action_failed' | 'image_load_failed'
   | 'clipboard_write_failed' | 'module_load_failed';

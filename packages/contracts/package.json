@@ -9,6 +9,7 @@
     "./chatSettings": "./src/chatSettings.ts",
     "./connectionSettings": "./src/connectionSettings.ts",
     "./errors": "./src/errors.ts",
-    "./llm": "./src/llm.ts"
+    "./llm": "./src/llm.ts",
+    "./tools": "./src/tools.ts"
   }
 }

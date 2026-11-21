@@ -9,6 +9,24 @@ async function* frames(values: object[]) {
   for (const value of values) yield { data: JSON.stringify(value) };
 }
 
+test('OpenRouter keeps tool calls at the position of their first delta', async () => {
+  const output = new ProviderOutput();
+  const chunk = (delta: object, finish_reason?: string) => ({ data: JSON.stringify({ choices: [{ delta, finish_reason }] }) });
+  async function* stream() {
+    yield chunk({ content: 'Before.' });
+    yield chunk({ tool_calls: [{ index: 0, id: 'call_1', function: { name: 'weather', arguments: '{' } }] });
+    yield chunk({ content: 'Between.' });
+    yield chunk({ tool_calls: [{ index: 0, function: { arguments: '}' } },
+      { index: 1, id: 'call_2', function: { name: 'weather', arguments: '{}' } }] }, 'tool_calls');
+    yield { data: '[DONE]' };
+  }
+  expect(await Array.fromAsync(providerAdapters.openrouter.read(stream(), output, true))).toEqual(['Before.', 'Between.']);
+  expect(output.parts).toMatchObject([
+    { type: 'text', text: 'Before.' }, { type: 'toolCall', id: 'call_1' },
+    { type: 'text', text: 'Between.' }, { type: 'toolCall', id: 'call_2' },
+  ]);
+});
+
 const tool = { name: 'weather', parameters: { type: 'object' } };
 const messages: LlmMessage[] = [
   { role: 'system', content: 'Use Celsius.' },

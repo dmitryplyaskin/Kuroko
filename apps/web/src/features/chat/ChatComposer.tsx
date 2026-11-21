@@ -1,18 +1,18 @@
 import { useI18n } from '../../shared/i18n/i18n';
-import { Checkbox, Textarea } from '@mantine/core';
+import { Textarea } from '@mantine/core';
 import { ArrowUp, Square } from 'lucide-react';
 import { useUnit } from 'effector-react';
 import { useRef, type SubmitEvent } from 'react';
 import {
-  $chatError, $chatCanSend, $chatDraft, $chatNoToolsCalled, $chatTestToolsEnabled, $replyId,
-  chatDraftChanged, chatSendRequested, chatStopRequested, chatTestToolsChanged,
+  $chatError, $chatCanSend, $chatDraft, $chatNoToolsCalled, $replyId,
+  chatDraftChanged, chatSendRequested, chatStopRequested,
 } from './model';
 
 export function ChatComposer() {
   const { t } = useI18n();
-  const { draft, error, canSend, replyId, toolsEnabled, noToolsCalled, setDraft, send, stop, setToolsEnabled } = useUnit({
+  const { draft, error, canSend, replyId, noToolsCalled, setDraft, send, stop } = useUnit({
     draft: $chatDraft, error: $chatError, canSend: $chatCanSend, replyId: $replyId,
-    toolsEnabled: $chatTestToolsEnabled, noToolsCalled: $chatNoToolsCalled, setToolsEnabled: chatTestToolsChanged,
+    noToolsCalled: $chatNoToolsCalled,
     setDraft: chatDraftChanged, send: chatSendRequested, stop: chatStopRequested,
   });
   const textarea = useRef<HTMLTextAreaElement>(null);
@@ -57,9 +57,7 @@ export function ChatComposer() {
         )}
         {error && <p className="chat-input-error" role="alert">{t(`error.${error}`)}</p>}
       </form>
-      <div className="chat-tools chat-column">
-        <Checkbox size="xs" label={t('chat.testTools')} checked={toolsEnabled} disabled={replyId !== null}
-          onChange={(event) => setToolsEnabled(event.currentTarget.checked)} />
+      <div className="chat-tool-feedback chat-column">
         <output>{noToolsCalled && t('chat.noToolsCalled')}</output>
       </div>
     </footer>

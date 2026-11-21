@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { openDatabase } from './database';
 import { createProviderKeyStore } from '../connection/providerKeyStore';
 
-test.each([1, 2, 4])('upgrades a version %i SQLite database without losing user data', (version) => {
+test.each([1, 2, 4, 5])('upgrades a version %i SQLite database without losing user data', (version) => {
   const directory = mkdtempSync(join(tmpdir(), 'kuroko-sqlite-test-'));
   const path = join(directory, 'test.sqlite');
   const vaultKey = randomBytes(32);
@@ -15,7 +15,9 @@ test.each([1, 2, 4])('upgrades a version %i SQLite database without losing user 
     const old = openDatabase(path, vaultKey);
     try {
       old.run('INSERT INTO users (username, username_key, password_hash) VALUES (?, ?, ?)', ['Лина', 'лина', 'test-hash']);
-      old.exec('DROP TABLE chats');
+      old.exec('DROP TABLE enabled_tools');
+      if (version < 5) old.exec('DROP TABLE chats');
+      else old.run("INSERT INTO chats VALUES ('old-chat', 1, 'Prior conversation', 1, 1, '[]')");
       if (version < 4) old.exec('DROP TABLE connection_presets; DROP TABLE provider_keys');
       if (version === 1) {
         old.exec('DROP TABLE chat_settings; PRAGMA user_version = 1');
@@ -29,11 +31,12 @@ test.each([1, 2, 4])('upgrades a version %i SQLite database without losing user 
 
     const migrated = openDatabase(path, vaultKey);
     try {
-      expect(migrated.query('PRAGMA user_version').get()).toEqual({ user_version: 5 });
+      expect(migrated.query('PRAGMA user_version').get()).toEqual({ user_version: 6 });
       expect(migrated.query('SELECT username FROM users').all()).toEqual([{ username: 'Лина' }]);
       expect(migrated.query('SELECT settings_json FROM chat_settings').all()).toEqual(version === 1 ? [] : [{ settings_json: '{"fontSize":20}' }]);
       expect(migrated.query('SELECT * FROM connection_presets').all()).toEqual([]);
-      expect(migrated.query('SELECT * FROM chats').all()).toEqual([]);
+      expect(migrated.query('SELECT id FROM chats').all()).toEqual(version === 5 ? [{ id: 'old-chat' }] : []);
+      expect(migrated.query('SELECT * FROM enabled_tools').all()).toEqual([]);
     } finally {
       migrated.close();
     }
@@ -56,6 +59,7 @@ test('imports a previously shared encrypted key into separate provider managers 
       if (!shared) throw new Error('Missing legacy key');
       store.create(1, 'openai', 'Unlinked key', 'test-unlinked-value');
       old.exec(`
+        DROP TABLE enabled_tools;
         DROP TABLE chats;
         DROP TABLE connection_presets;
         DROP TABLE provider_keys;

@@ -12,6 +12,7 @@ import { createProviderConnections } from '../connection/providerConnections';
 import { createProviderKeyStore } from '../connection/providerKeyStore';
 import { createLlmRouter } from '../llm/llmRouter';
 import { createLlmService } from '../llm/llmService';
+import { createToolsRouter } from '../tools/toolsRouter';
 
 export function createApiRouter(db: Database, vaultKey: Buffer, secureCookie: boolean) {
   const router = Router();
@@ -28,6 +29,7 @@ export function createApiRouter(db: Database, vaultKey: Buffer, secureCookie: bo
   });
   router.use('/auth', authRouter);
   router.use('/settings/chat', requireUser, createChatSettingsRouter(createChatSettingsStore(db)));
+  router.use('/settings/tools', requireUser, createToolsRouter(db));
   router.use('/settings/connection', requireUser, createConnectionRouter(presets, keys, connections));
 
   return router;

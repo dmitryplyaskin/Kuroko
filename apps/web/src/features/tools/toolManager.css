@@ -1,0 +1,26 @@
+.tool-manager { --page-container-width: 54rem; }
+.tool-manager-list { display: grid; gap: 12px; }
+
+.tool-manager-card {
+  display: grid;
+  gap: 12px;
+  padding: clamp(14px, 3vw, 22px);
+  border: 1px solid var(--kr-border);
+  border-radius: var(--kr-radius-panel);
+  background: var(--kr-surface);
+}
+
+.tool-manager-card header { display: flex; align-items: start; justify-content: space-between; gap: 12px; }
+.tool-manager-card h2 { font-size: 1.15rem; line-height: 1.25; }
+.tool-manager-card header code, .tool-manager-card dd, .tool-manager-card p { color: var(--kr-muted); }
+.tool-manager-card summary { inline-size: fit-content; padding-block: 6px; cursor: pointer; }
+.tool-manager-card dl { display: grid; gap: 8px; margin: 8px 0 12px; }
+.tool-manager-card dl div { display: grid; grid-template-columns: 6rem minmax(0, 1fr); gap: 4px 12px; }
+.tool-manager-card dd { margin: 0; }
+.tool-manager-card pre { margin: 0; padding: 10px; background: var(--kr-hover); border-radius: var(--kr-radius-control); white-space: pre-wrap; overflow-wrap: anywhere; }
+.tool-manager-status { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-block-end: 12px; }
+.tool-manager-status [role='alert'] { color: var(--kr-danger); }
+
+@media (max-width: 420px) {
+  .tool-manager-card dl div { grid-template-columns: minmax(0, 1fr); }
+}

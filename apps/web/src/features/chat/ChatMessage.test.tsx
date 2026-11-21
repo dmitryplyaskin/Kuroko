@@ -90,12 +90,22 @@ test('dispatches registered menu actions for the selected message', async () => 
                   reasoningOpen={false} onToggleReasoning={noop} onEdit={noop} onDraftChange={noop}
                   onCancelEdit={noop} onSaveEdit={noop} onDelete={noop} onPreview={noop} />
               ))}
+              <ChatMessage message={{ id: 3, role: 'assistant', text: 'До 🎲После', time: 0, toolCalls: [
+                { id: 'dice-1', name: 'roll_dice', arguments: {}, result: 4, textOffset: 'До 🎲'.length },
+                { id: 'dice-2', name: 'roll_dice', arguments: {}, result: 6, textOffset: 'До 🎲'.length },
+              ] }} username="Пользователь" reasoningOpen={false} onToggleReasoning={noop} onEdit={noop}
+                onDraftChange={noop} onCancelEdit={noop} onSaveEdit={noop} onDelete={noop} onPreview={noop} />
             </ModuleExtensionsProvider>
             <NoticeOutput />
           </MantineProvider>
         </Provider>,
       );
     });
+    const blocks = container.querySelector('.chat-message-blocks')?.children;
+    assert.equal(blocks?.length, 3);
+    assert.equal(blocks[0]?.textContent, 'До 🎲');
+    assert.deepEqual(Array.from(blocks[1]?.querySelectorAll('summary code') ?? [], (name) => name.textContent), ['roll_dice', 'roll_dice']);
+    assert.equal(blocks[2]?.textContent, 'После');
     await act(async () => buttonFor(1).click());
     assert.deepEqual(menuItems().map((item) => item.textContent), ['Редактировать', 'Текст сообщения', 'Копировать текст', 'Удалить']);
     await clickItem('Текст сообщения');

@@ -82,7 +82,7 @@ function chatReason(reason: string): LlmFinishReason {
 
 async function* readChat(frames: AsyncIterable<ProviderFrame>, output: ProviderOutput, stream: boolean, provider: 'openai' | 'openrouter' | 'custom' = 'openai') {
   const openrouter = provider === 'openrouter';
-  const calls = new Map<number, { id?: string; name?: string; args: string }>();
+  const calls = new Map<number, { id?: string; name?: string; args: string; position: number }>();
   const reasoning: JsonObject[] = [];
   const reasoningByIndex = new Map<number, JsonObject>();
   let done = false;
@@ -123,7 +123,7 @@ async function* readChat(frames: AsyncIterable<ProviderFrame>, output: ProviderO
       const fn = record(call?.function);
       const index = stream ? tokenCount(call?.index) : position;
       if (!fn || index === undefined) invalidResponse();
-      const pending = calls.get(index) ?? { args: '' };
+      const pending = calls.get(index) ?? { args: '', position: output.reserveCall() };
       if (typeof call?.id === 'string' && call.id) pending.id = call.id;
       if (typeof fn.name === 'string' && fn.name) pending.name = fn.name;
       if (typeof fn.arguments === 'string') pending.args += fn.arguments;
@@ -136,8 +136,8 @@ async function* readChat(frames: AsyncIterable<ProviderFrame>, output: ProviderO
   if ((stream && !done && provider !== 'custom') || !output.finish) invalidResponse();
   if (reasoning.length) output.openrouterReasoning = reasoning;
   if (output.finish.reason === 'length' || output.finish.reason === 'content_filter') return;
-  for (const [, call] of [...calls].sort(([a], [b]) => a - b)) {
-    output.call(readCall(call.id, call.name, parseObject(call.args)));
+  for (const call of calls.values()) {
+    output.call(readCall(call.id, call.name, parseObject(call.args)), call.position);
   }
 }
 

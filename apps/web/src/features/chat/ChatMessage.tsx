@@ -1,11 +1,12 @@
 import { useI18n } from '../../shared/i18n/i18n';
+import type { ChatToolCall } from '@kuroko/contracts/chat';
 import { Button, Menu, Textarea } from '@mantine/core';
 import { Bot, ChevronRight, Ellipsis, Pencil, Trash2 } from 'lucide-react';
 import { memo, useCallback, useLayoutEffect, useRef, useState } from 'react';
 import { useModuleExtensions } from '../../modules/ModuleExtensions';
 import { notify } from '../../shared/notifications/notifications';
 import { ChatText } from './ChatText';
-import type { ChatImage, Message, ReplyPhase } from './message';
+import { messageBlocks, type ChatImage, type Message, type ReplyPhase } from './message';
 import type { MessageAction, MessageActionContext } from './messageActions';
 
 export function ChatPicture({ image }: { image: ChatImage }) {
@@ -27,6 +28,32 @@ export function ChatPicture({ image }: { image: ChatImage }) {
     return <img ref={setFileSource} alt={image.file.name} className="chat-file-image" loading="lazy" decoding="async" onError={() => setFailed(true)} />;
   }
   return <img src={image.src} alt={image.alt} width={image.width} height={image.height} loading="lazy" decoding="async" onError={() => setFailed(true)} />;
+}
+
+function ToolCalls({ calls }: { calls: ChatToolCall[] }) {
+  const { t } = useI18n();
+  return (
+    <ul className="chat-tool-calls" aria-label={t('chat.toolCalls')}>
+      {calls.map((call) => (
+        <li key={call.id}>
+          <details className="chat-tool-call">
+            <summary>
+              <code>{call.name}</code>{' '}
+              <span className="chat-tool-status" data-error={call.isError || undefined}>
+                {t(call.isError ? 'chat.toolFailed' : 'chat.toolSucceeded')}
+              </span>
+            </summary>
+            <dl>
+              <dt>{t('chat.toolArguments')}</dt>
+              <dd><pre>{JSON.stringify(call.arguments, null, 2)}</pre></dd>
+              <dt>{t('chat.toolResult')}</dt>
+              <dd><pre>{JSON.stringify(call.result, null, 2)}</pre></dd>
+            </dl>
+          </details>
+        </li>
+      ))}
+    </ul>
+  );
 }
 
 type Props = {
@@ -141,28 +168,6 @@ export const ChatMessage = memo(function ChatMessage({
               </div>
             </div>
           )}
-          {!!toolCalls?.length && (
-            <ul className="chat-tool-calls" aria-label={t('chat.toolCalls')}>
-              {toolCalls.map((call) => (
-                <li key={call.id}>
-                  <details className="chat-tool-call">
-                    <summary>
-                      <code>{call.name}</code>{' '}
-                      <span className="chat-tool-status" data-error={call.isError || undefined}>
-                        {t(call.isError ? 'chat.toolFailed' : 'chat.toolSucceeded')}
-                      </span>
-                    </summary>
-                    <dl>
-                      <dt>{t('chat.toolArguments')}</dt>
-                      <dd><pre>{JSON.stringify(call.arguments, null, 2)}</pre></dd>
-                      <dt>{t('chat.toolResult')}</dt>
-                      <dd><pre>{JSON.stringify(call.result, null, 2)}</pre></dd>
-                    </dl>
-                  </details>
-                </li>
-              ))}
-            </ul>
-          )}
           {editing ? (
             <form className="chat-message-editor" onSubmit={(event) => {
               event.preventDefault();
@@ -187,7 +192,14 @@ export const ChatMessage = memo(function ChatMessage({
                 <Button type="submit" size="compact-sm" disabled={!editor?.canSave}>{t('common.save')}</Button>
               </div>
             </form>
+          ) : toolCalls?.length ? (
+            <div className="chat-message-blocks">
+              {messageBlocks(message).map((block, index) => block.kind === 'tools'
+                ? <ToolCalls key={`calls-${block.calls[0]!.id}`} calls={block.calls} />
+                : block.text.trim() && <ChatText key={`text-${index}`}>{block.text}</ChatText>)}
+            </div>
           ) : text ? <ChatText user={!assistant}>{text}</ChatText> : phase === 'answer' && <p className="chat-typing">{t('chat.answering')}</p>}
+          {editing && !!toolCalls?.length && <ToolCalls calls={toolCalls} />}
           {image && (
             <button type="button" className="chat-picture" aria-label={t('chat.openImage')} onClick={() => onPreview(image)}>
               <ChatPicture image={image} />

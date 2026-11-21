@@ -1,10 +1,11 @@
 import { isLlmErrorCode } from '@kuroko/contracts/errors';
 import type { ChatSnapshot, ChatSummary, ChatToolCall, SavedChat } from '@kuroko/contracts/chat';
-import type { LlmAssistantPart, LlmCompletion, LlmEvent, LlmMessage, LlmRequest } from '@kuroko/contracts/llm';
+import type { LlmAssistantPart, LlmCompletion, LlmEvent, LlmMessage, LlmRequest, LlmToolCall } from '@kuroko/contracts/llm';
+import type { ToolId } from '@kuroko/contracts/tools';
 import type { ActiveSession } from '../../platform/session/model';
 import { sessionRequest, sessionResponse } from '../../platform/session/request';
 import { ApiError } from '../../shared/http/api';
-import { runTestTool, testTools } from './testTools';
+import { runToolCall, toolDeclarations } from '../tools/catalog';
 
 export const chatApi = {
   list: (session: ActiveSession) => sessionRequest<ChatSummary[]>(session, '/chats'),
@@ -13,6 +14,8 @@ export const chatApi = {
   save: (session: ActiveSession, id: string, body: ChatSnapshot) =>
     sessionRequest<SavedChat>(session, `/chats/${encodeURIComponent(id)}`, { method: 'PUT', body }),
 };
+
+const maxToolRounds = 16;
 
 function readEvent(frame: string): LlmEvent | undefined {
   const lines = frame.split(/\r?\n/).filter((line) => line.startsWith('data:'));
@@ -27,35 +30,70 @@ function readEvent(frame: string): LlmEvent | undefined {
 }
 
 export async function streamChatReply(
-  session: ActiveSession, messages: LlmMessage[], signal: AbortSignal, onText: (delta: string) => void,
-  onTools?: (calls: ChatToolCall[]) => void,
+  session: ActiveSession, messages: LlmMessage[], enabledTools: readonly ToolId[], signal: AbortSignal,
+  onText: (delta: string) => void, onContent: (text: string, calls: ChatToolCall[]) => void,
 ): Promise<string> {
-  const tools = onTools ? testTools : undefined;
-  const first = await streamCompletion(session, { messages, stream: true, tools }, signal, onText);
-  const calls = first.message.parts.filter((part) => part?.type === 'toolCall');
-  const initialText = completionText(first.message.parts);
-  if (!onTools || !calls.length) return answerText(first, initialText);
+  const tools = enabledTools.length ? toolDeclarations(enabledTools) : undefined;
+  const history = [...messages];
+  const toolCalls: ChatToolCall[] = [];
+  const recordedIds = new Set<string>();
+  let nextRecordNumber = 1;
+  let presetId: string | undefined;
+  let text = '';
 
-  signal.throwIfAborted();
-  if (typeof first.presetId !== 'string') throw new ApiError(502, 'invalid_response');
-  const results = calls.map(runTestTool);
-  onTools(results.map(({ entry }) => entry));
-  const separator = initialText.trim() ? '\n\n' : '';
-  if (separator) onText(separator);
-  const last = await streamCompletion(session, {
-    presetId: first.presetId, messages: [...messages, first.message, ...results.map(({ message }) => message)],
-    stream: true, tools, toolChoice: 'none',
-  }, signal, onText);
-  return (separator ? initialText : '') + separator + answerText(last, completionText(last.message.parts));
+  for (let round = 0; ; round++) {
+    signal.throwIfAborted();
+    const separator = text.trim() ? '\n\n' : '';
+    let startsParagraph = Boolean(separator);
+    const completion = await streamCompletion(session, {
+      presetId, messages: history, stream: true, tools, toolChoice: presetId && tools ? 'auto' : undefined,
+    }, signal, (delta) => {
+      if (!delta) return;
+      onText(startsParagraph ? separator + delta : delta);
+      startsParagraph = false;
+    });
+    const { text: roundText, calls } = readToolTurn(completion.message.parts);
+    const start = text.length + (roundText ? separator.length : 0);
+    if (roundText) text += separator + roundText;
+
+    if (completion.finishReason === 'length') {
+      onContent(text, toolCalls);
+      throw new ApiError(422, 'response_length');
+    }
+    if (!tools || !calls.length) {
+      if (roundText.trim()) return text;
+      throw new ApiError(422, completion.finishReason === 'content_filter' ? 'response_blocked' : 'response_empty');
+    }
+    if (round === maxToolRounds) {
+      onContent(text, toolCalls);
+      throw new ApiError(422, 'tool_round_limit');
+    }
+
+    signal.throwIfAborted();
+    if (typeof completion.presetId !== 'string') throw new ApiError(502, 'invalid_response');
+    presetId ??= completion.presetId;
+    const results = await Promise.all(calls.map(async ({ call, textOffset }) => {
+      let recordId = call.id;
+      while (recordedIds.has(recordId)) recordId = `call_${nextRecordNumber++}`;
+      recordedIds.add(recordId);
+      const { entry, message } = await runToolCall(call, enabledTools, signal, recordId);
+      return { entry: { ...entry, textOffset: start + textOffset }, message };
+    }));
+    signal.throwIfAborted();
+    toolCalls.push(...results.map(({ entry }) => entry));
+    onContent(text, [...toolCalls]);
+    history.push(completion.message, ...results.map(({ message }) => message));
+  }
 }
 
-function completionText(parts: LlmAssistantPart[]) {
-  return parts.flatMap((part) => part?.type === 'text' && typeof part.text === 'string' ? [part.text] : []).join('');
-}
-
-function answerText(completion: LlmCompletion, text: string) {
-  if (text.trim()) return text;
-  throw new ApiError(422, completion.finishReason === 'content_filter' ? 'response_blocked' : 'response_empty');
+function readToolTurn(parts: LlmAssistantPart[]) {
+  let text = '';
+  const calls: { call: LlmToolCall; textOffset: number }[] = [];
+  for (const part of parts) {
+    if (part?.type === 'text' && typeof part.text === 'string') text += part.text;
+    else if (part?.type === 'toolCall') calls.push({ call: part, textOffset: text.length });
+  }
+  return { text, calls };
 }
 
 async function streamCompletion(

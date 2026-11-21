@@ -1,0 +1,1 @@
+Dice expression parser, evaluator, configuration, and pool projection adapted from Mayori revision `3103cfc`. The Cordis service layer was removed and Node's random draw was replaced with unbiased Web Crypto draws. The original MIT notice is in [LICENSE](LICENSE).
