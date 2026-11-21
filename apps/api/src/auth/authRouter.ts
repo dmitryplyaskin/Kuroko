@@ -1,3 +1,4 @@
+import { errorBody } from '@kuroko/contracts/errors';
 import { randomBytes } from 'node:crypto';
 import { Router, type CookieOptions, type Request, type RequestHandler, type Response } from 'express';
 import { rateLimit } from 'express-rate-limit';
@@ -7,8 +8,7 @@ import { hashToken, type createAccountStore } from './accountStore';
 const day = 24 * 60 * 60 * 1000;
 const usernamePattern = /^[\p{L}\p{N}._-]{3,32}$/u;
 const argon2id = { algorithm: 'argon2id', memoryCost: 65_536, timeCost: 2 } as const;
-const signedOut = { error: 'Войдите в аккаунт.' };
-const passwordLengthError = 'Пароль должен содержать от 12 до 128 символов.';
+const signedOut = errorBody('auth_required');
 
 export function createAuthRouter(accounts: ReturnType<typeof createAccountStore>, secureCookie: boolean) {
   const router = Router();
@@ -20,7 +20,7 @@ export function createAuthRouter(accounts: ReturnType<typeof createAccountStore>
     limit: 20,
     standardHeaders: 'draft-8',
     legacyHeaders: false,
-    message: { error: 'Слишком много попыток. Попробуйте через несколько минут.' },
+    message: errorBody('auth_rate_limit'),
   });
 
   function sessionHash(request: Request) {
@@ -47,18 +47,18 @@ export function createAuthRouter(accounts: ReturnType<typeof createAccountStore>
     const { username, password } = request.body ?? {};
     const name = normalizeUsername(username);
     if (!name) {
-      response.status(400).json({ error: 'Имя должно содержать от 3 до 32 букв, цифр или символов . _ -', field: 'username' });
+      response.status(400).json(errorBody('username_invalid', 'username'));
       return;
     }
     if (!validPassword(password) || password.length < 12) {
-      response.status(400).json({ error: passwordLengthError, field: 'password' });
+      response.status(400).json(errorBody('password_length', 'password'));
       return;
     }
 
     const passwordHash = await Bun.password.hash(password, argon2id);
     const user = accounts.createUser(name, passwordHash);
     if (!user) {
-      response.status(409).json({ error: 'Это имя уже занято.', field: 'username' });
+      response.status(409).json(errorBody('username_taken', 'username'));
       return;
     }
 
@@ -68,7 +68,7 @@ export function createAuthRouter(accounts: ReturnType<typeof createAccountStore>
   router.post('/login', limitAttempts, async (request, response) => {
     const { username, password, remember = false } = request.body ?? {};
     const name = normalizeUsername(username);
-    const invalidCredentials = { error: 'Неверное имя пользователя или пароль.' };
+    const invalidCredentials = errorBody('invalid_credentials');
     if (!name || !validPassword(password) || typeof remember !== 'boolean') {
       response.status(400).json(invalidCredentials);
       return;
@@ -102,7 +102,7 @@ export function createAuthRouter(accounts: ReturnType<typeof createAccountStore>
       return;
     }
     if (!validPassword(currentPassword) || !await Bun.password.verify(currentPassword, account.password_hash)) {
-      response.status(400).json({ error: 'Проверьте текущий пароль и попробуйте ещё раз.', field: 'currentPassword' });
+      response.status(400).json(errorBody('current_password_invalid', 'currentPassword'));
       return;
     }
     return account.password_hash;
@@ -111,7 +111,7 @@ export function createAuthRouter(accounts: ReturnType<typeof createAccountStore>
   router.put('/password', limitAttempts, requireUser, async (request, response) => {
     const { currentPassword, newPassword } = request.body ?? {};
     if (!validPassword(newPassword) || newPassword.length < 12) {
-      response.status(400).json({ error: passwordLengthError, field: 'newPassword' });
+      response.status(400).json(errorBody('password_length', 'newPassword'));
       return;
     }
 
@@ -121,7 +121,7 @@ export function createAuthRouter(accounts: ReturnType<typeof createAccountStore>
       return;
     }
     if (newPassword === currentPassword) {
-      response.status(400).json({ error: 'Выберите пароль, отличный от текущего.', field: 'newPassword' });
+      response.status(400).json(errorBody('password_unchanged', 'newPassword'));
       return;
     }
     const newHash = await Bun.password.hash(newPassword, argon2id);
@@ -136,7 +136,7 @@ export function createAuthRouter(accounts: ReturnType<typeof createAccountStore>
     const { currentPassword, username } = request.body ?? {};
     const user: User = response.locals.user;
     if (username !== user.username) {
-      response.status(400).json({ error: 'Введите имя аккаунта точно как указано.', field: 'username' });
+      response.status(400).json(errorBody('account_name_mismatch', 'username'));
       return;
     }
 

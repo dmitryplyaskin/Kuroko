@@ -1,3 +1,5 @@
+import { LanguageSelect } from '../../shared/i18n/LanguageSelect';
+import { useI18n } from '../../shared/i18n/i18n';
 import { useComputedColorScheme, useMantineColorScheme } from '@mantine/core';
 import { Check } from 'lucide-react';
 import { useUnit } from 'effector-react';
@@ -8,14 +10,16 @@ import './appearance.css';
 const accentIds = Object.keys(accents) as AccentId[];
 
 export default function Appearance() {
+  const { t } = useI18n();
   const { colorScheme, setColorScheme } = useMantineColorScheme();
   const activeScheme = useComputedColorScheme('light');
   const [accent, setAccent, theme] = useUnit([$accent, accentChanged, $theme]);
 
   return (
     <>
+      <LanguageSelect />
       <fieldset className="field-group">
-        <legend>Тема</legend>
+        <legend>{t('appearance.theme')}</legend>
         <div className="mode-options">
           {themeModes.map(({ id, label, Icon }) => {
             const previews = id === 'auto' ? [theme.light, theme.dark] : [theme[id]];
@@ -30,7 +34,7 @@ export default function Appearance() {
                     </span>
                   ))}
                 </span>
-                <span className="option-label"><Icon size={17} aria-hidden="true" />{label}</span>
+                <span className="option-label"><Icon size={17} aria-hidden="true" />{t(label)}</span>
                 <Check className="option-check" size={17} aria-hidden="true" />
               </label>
             );
@@ -38,13 +42,13 @@ export default function Appearance() {
         </div>
       </fieldset>
       <fieldset className="field-group">
-        <legend>Цвет акцента</legend>
+        <legend>{t('appearance.accent')}</legend>
         <div className="accent-options">
           {accentIds.map((id) => (
             <label className="choice-option accent-option" key={id}>
               <input type="radio" name="theme-accent" checked={accent === id} onChange={() => setAccent(id)} />
               <span className="accent-swatch" style={{ backgroundColor: accents[id][activeScheme].accent }} aria-hidden="true" />
-              <span>{accents[id].label}</span>
+              <span>{t(accents[id].label)}</span>
               <Check className="option-check" size={17} aria-hidden="true" />
             </label>
           ))}

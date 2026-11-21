@@ -1,12 +1,12 @@
 import { createEffect, createEvent, createStore, sample } from 'effector';
 import type { Provider, ProviderModel } from '@kuroko/contracts/connectionSettings';
 import { abortFx } from '../../shared/async/abort';
-import { errorMessage } from '../../shared/http/api';
+import { errorCode, type ErrorCode } from '../../shared/http/api';
 import { protectedRequestFailed, type ActiveSession } from '../../platform/session/model';
 import { inActiveSession } from '../../platform/session/request';
 import { connectionApi } from './connectionApi';
 
-type Catalog = { status: 'idle' | 'loading' } | { status: 'error'; message: string } | { status: 'ready'; models: ProviderModel[] };
+type Catalog = { status: 'idle' | 'loading' } | { status: 'error'; code: ErrorCode } | { status: 'ready'; models: ProviderModel[] };
 type CatalogQuery = { session: ActiveSession; provider: Provider; keyId: string };
 type CatalogRequest = CatalogQuery & { controller: AbortController };
 
@@ -36,9 +36,9 @@ export const $modelCatalog = createStore<Catalog>({ status: 'idle' })
   .on(loadModelCatalogFx, () => ({ status: 'loading' }))
   .on(catalogFinished, (_, result) => result.status === 'done'
     ? { status: 'ready', models: result.result.models }
-    : { status: 'error', message: errorMessage(result.error) })
+    : { status: 'error', code: errorCode(result.error) })
   .on(catalogMissingKey, () => ({
-    status: 'error', message: 'Выберите ключ или добавьте его в менеджере рядом с полем «API-ключ».',
+    status: 'error', code: 'model_catalog_key_required',
   }))
   .reset(catalogReset);
 

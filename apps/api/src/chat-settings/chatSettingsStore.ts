@@ -1,3 +1,4 @@
+import { CodedError } from '@kuroko/contracts/errors';
 import type { Database } from 'bun:sqlite';
 import { readChatSettings, type ChatSettings } from '@kuroko/contracts/chatSettings';
 
@@ -12,7 +13,7 @@ export function createChatSettingsStore(db: Database) {
     read(userId: number) {
       const stored = find.get(userId);
       const settings = stored ? readChatSettings(JSON.parse(stored.settings_json)) : null;
-      if (settings === undefined) throw new Error('Invalid chat settings in the database');
+      if (settings === undefined) throw new CodedError('database_chat_settings_invalid');
       return settings;
     },
     save: (userId: number, settings: ChatSettings) => save.run(userId, JSON.stringify(settings)),

@@ -1,6 +1,7 @@
+import type { MessageKey } from '../../shared/i18n/i18n';
 import { combine, createEffect, createEvent, createStore, sample, scopeBind, type StoreValue } from 'effector';
 import { abortFx } from '../../shared/async/abort';
-import { errorMessage } from '../../shared/http/api';
+import { errorCode, type ErrorCode } from '../../shared/http/api';
 import { $activeSession, protectedRequestFailed, sessionEnded, type ActiveSession } from '../../platform/session/model';
 import { inActiveSession } from '../../platform/session/request';
 import { streamChatReply } from './chatApi';
@@ -100,8 +101,8 @@ sample({ clock: replyStopped, fn: ({ controller }) => controller, target: abortF
 $reply.reset(replyCompleted, replyFailed, replyStopped);
 $messages.on([replyCompleted, replyFailed, replyStopped], (messages, { message }) => message.text ? [...messages, message] : messages);
 
-export const $chatError = createStore('')
-  .on(replyFailed, (_, { error }) => errorMessage(error))
+export const $chatError = createStore<ErrorCode | null>(null)
+  .on(replyFailed, (_, { error }) => errorCode(error))
   .reset(messageSent, sessionEnded);
 
 type Editor = { id: number; text: string };
@@ -159,13 +160,13 @@ export const $expandedReasoning = createStore<ReadonlySet<number>>(new Set())
   })
   .reset(sessionEnded);
 
-export const $chatAnnouncement = createStore('')
-  .on(messageSent, () => 'Модель отвечает.')
-  .on(replyCompleted, () => 'Ответ модели готов.')
+export const $chatAnnouncement = createStore<MessageKey | null>(null)
+  .on(messageSent, () => 'chat.announcementAnswering')
+  .on(replyCompleted, () => 'chat.announcementReady')
   .reset(replyFailed)
-  .on(replyStopped, () => 'Ответ модели остановлен.')
-  .on(messageEdited, () => 'Сообщение изменено.')
-  .on(messageDeleted, () => 'Сообщение удалено.')
+  .on(replyStopped, () => 'chat.announcementStopped')
+  .on(messageEdited, () => 'chat.announcementEdited')
+  .on(messageDeleted, () => 'chat.announcementDeleted')
   .reset(sessionEnded);
 
 export const $replyId = $reply.map((reply) => reply?.message.id ?? null);

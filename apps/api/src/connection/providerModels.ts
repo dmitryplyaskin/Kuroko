@@ -1,14 +1,17 @@
+import type { ApiErrorCode } from '@kuroko/contracts/errors';
 import { isModelId, type Provider, type ProviderModel } from '@kuroko/contracts/connectionSettings';
 import type { ProviderConnections } from './providerConnections';
 
 type JsonObject = Record<string, unknown>;
-type CatalogResult = { models: ProviderModel[] } | { status: number; error: string };
+type CatalogResult = { models: ProviderModel[] } | { status: number; code: ApiErrorCode };
 type CatalogProvider = {
   path: string;
   readPage: (page: JsonObject) => { items: unknown; cursor?: unknown };
   cursorParam?: string;
   readModel: (item: JsonObject) => ProviderModel | undefined;
 };
+
+const catalogUnavailable = { status: 424, code: 'model_catalog_unavailable' } as const;
 
 const dataPage = (page: JsonObject) => ({ items: page.data });
 const catalogProviders: Record<Provider, CatalogProvider> = {
@@ -62,18 +65,18 @@ export async function listProviderModels(provider: Provider, apiKey: string, con
       if (!response.ok) {
         void response.body?.cancel().catch(() => undefined);
         if ([400, 401, 403].includes(response.status)) {
-          return { status: 422, error: 'Провайдер отклонил запрос. Проверьте API-ключ и его доступ к списку моделей.' };
+          return { status: 422, code: 'model_catalog_rejected' };
         }
         if (response.status === 429) {
-          return { status: 429, error: 'Провайдер ограничил запросы. Повторите загрузку позже.' };
+          return { status: 429, code: 'model_catalog_rate_limit' };
         }
-        throw new Error('Provider request failed');
+        return catalogUnavailable;
       }
 
       const page = asRecord(await response.json());
-      if (!page) throw new Error('Invalid model catalog response');
+      if (!page) return catalogUnavailable;
       const { items, cursor } = readPage(page);
-      if (!Array.isArray(items)) throw new Error('Missing model list');
+      if (!Array.isArray(items)) return catalogUnavailable;
       for (const item of items) {
         const record = asRecord(item);
         const model = record && readModel(record);
@@ -85,7 +88,7 @@ export async function listProviderModels(provider: Provider, apiKey: string, con
       url.searchParams.set(cursorParam, cursor);
     }
   } catch {
-    return { status: 424, error: 'Не удалось загрузить модели у провайдера. Повторите загрузку или введите ID модели вручную.' };
+    return catalogUnavailable;
   }
 
   return { models: [...models.values()].sort((first, second) => first.id.localeCompare(second.id)) };

@@ -1,3 +1,4 @@
+import { useI18n } from '../../shared/i18n/i18n';
 import { Button, Group, Modal, Stack, TextInput } from '@mantine/core';
 import { useUnit } from 'effector-react';
 import { useEffect, useRef, type SubmitEvent } from 'react';
@@ -11,6 +12,7 @@ export function ProviderKeysDialog({ provider, keys, onClose }: {
   keys: ProviderKey[];
   onClose: () => void;
 }) {
+  const { t } = useI18n();
   const [pending, feedback, perform, clearError, deleting, openDelete, dismissDelete] = useUnit([
     $keyPending, $keySubmission, connectionActionRequested, keyErrorCleared, $keyBeingDeleted, keyDeleteOpened, keyDeleteClosed,
   ]);
@@ -35,46 +37,46 @@ export function ProviderKeysDialog({ provider, keys, onClose }: {
   }
 
   return (
-    <Modal opened onClose={onClose} title={`Ключи ${providers[provider].label}`} returnFocus={false} transitionProps={{ transition: 'fade' }}
-      closeButtonProps={{ 'aria-label': 'Закрыть', disabled: pending }} closeOnEscape={!pending} closeOnClickOutside={!pending}>
+    <Modal opened onClose={onClose} title={t('connection.providerKeys', { provider: providers[provider].label })} returnFocus={false} transitionProps={{ transition: 'fade' }}
+      closeButtonProps={{ 'aria-label': t('common.close'), disabled: pending }} closeOnEscape={!pending} closeOnClickOutside={!pending}>
       <Stack gap="lg">
         {keys.length > 0 && (
-          <ul className="provider-key-list" aria-label="Сохранённые ключи">
+          <ul className="provider-key-list" aria-label={t('connection.savedKeys')}>
             {keys.map((key) => (
               <li key={key.id}>
                 <span>{key.name}</span>
                 <Button type="button" variant="subtle" color="red" size="compact-sm" disabled={pending || Boolean(deleting)}
-                  aria-label={`Удалить ключ ${key.name}`} onClick={(event) => {
+                  aria-label={t('connection.deleteKeyNamed', { name: key.name })} onClick={(event) => {
                     deleteTrigger.current = event.currentTarget;
                     openDelete(key);
-                  }}>Удалить</Button>
+                  }}>{t('common.delete')}</Button>
               </li>
             ))}
           </ul>
         )}
         {deleting ? (
           <Stack gap="sm">
-            <p className="connection-modal-copy">Удалить ключ «{deleting.name}»? В пресетах, где он выбран, привязка будет снята.</p>
+            <p className="connection-modal-copy">{t('connection.keyDeleteWarning', { name: deleting.name })}</p>
             <Group justify="flex-end">
               <Button ref={cancel} variant="default" disabled={pending} onClick={() => {
                 dismissDelete();
                 clearError();
                 requestAnimationFrame(() => deleteTrigger.current?.focus());
-              }}>Отмена</Button>
-              <Button color="red" loading={pending} onClick={() => perform({ kind: 'deleteKey', id: deleting.id })}>Удалить ключ</Button>
+              }}>{t('common.cancel')}</Button>
+              <Button color="red" loading={pending} onClick={() => perform({ kind: 'deleteKey', id: deleting.id })}>{t('connection.deleteKey')}</Button>
             </Group>
           </Stack>
         ) : (
           <form className="provider-key-form" method="post" onSubmit={add}>
-            <TextInput ref={nameInput} data-autofocus label="Название ключа" name="name" required maxLength={connectionNameLimit}
+            <TextInput ref={nameInput} data-autofocus label={t('connection.keyName')} name="name" required maxLength={connectionNameLimit}
               autoComplete="off" readOnly={pending} onChange={clearError} />
-            <TextInput type="password" label="API-ключ" name="apiKey" required description="Значение доступно только при вводе."
+            <TextInput type="password" label={t('common.apiKey')} name="apiKey" required description={t('connection.keyHint')}
               autoComplete="off" spellCheck={false} autoCapitalize="none" maxLength={4096} readOnly={pending} onChange={clearError} />
-            <Group justify="flex-end"><Button type="submit" loading={pending}>Добавить ключ</Button></Group>
+            <Group justify="flex-end"><Button type="submit" loading={pending}>{t('connection.addKey')}</Button></Group>
           </form>
         )}
-        {feedback.status === 'error' && <p role="alert" className="connection-error">{feedback.message}</p>}
-        <output className="connection-hint">{feedback.status === 'removed' && 'Ключ удалён.'}</output>
+        {feedback.status === 'error' && <p role="alert" className="connection-error">{t(`error.${feedback.code}`)}</p>}
+        <output className="connection-hint">{feedback.status === 'removed' && t('connection.keyRemoved')}</output>
       </Stack>
     </Modal>
   );

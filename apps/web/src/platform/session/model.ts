@@ -1,3 +1,4 @@
+import type { MessageKey } from '../../shared/i18n/i18n';
 import { createEffect, createEvent, createStore, sample } from 'effector';
 import type { User } from '@kuroko/contracts/auth';
 import { appStarted } from '../lifecycle';
@@ -9,12 +10,12 @@ export type ActiveSession = Readonly<{ user: User; signal: AbortSignal }>;
 
 type SessionState =
   | { status: 'loading' | 'unavailable' }
-  | { status: 'guest'; notice?: string }
+  | { status: 'guest'; notice?: MessageKey }
   | { status: 'authenticated'; session: ActiveSession; controller: AbortController };
 
 export const sessionRetryRequested = createEvent();
 export const sessionUserReceived = createEvent<User>();
-export const sessionEndRequested = createEvent<{ session: ActiveSession; notice?: string }>();
+export const sessionEndRequested = createEvent<{ session: ActiveSession; notice?: MessageKey }>();
 export const protectedRequestFailed = createEvent<{ session: ActiveSession; error: unknown }>();
 
 export const checkSessionFx = createEffect(() => authApi.session());

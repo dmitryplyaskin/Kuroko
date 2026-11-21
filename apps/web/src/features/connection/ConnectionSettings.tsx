@@ -1,3 +1,4 @@
+import { useI18n } from '../../shared/i18n/i18n';
 import { ActionIcon, Autocomplete, Button, Group, Modal, NativeSelect, NumberInput, Stack, TextInput, Tooltip } from '@mantine/core';
 import { ChevronDown, KeyRound } from 'lucide-react';
 import { useUnit } from 'effector-react';
@@ -18,9 +19,9 @@ import { $modelCatalog } from './modelCatalog';
 import './connectionSettings.css';
 
 const providerOptions = Object.entries(providers).map(([value, { label }]) => ({ value, label }));
-const formatter = new Intl.NumberFormat('ru');
 
 export default function ConnectionSettings() {
+  const { t, number, decimalSeparator } = useI18n();
   const {
     load, retry, selection, submission, deleteError, saving, catalog, selectPreset, copyPreset, updateDraft, changeProvider,
     perform, loadModels, keySubmission, open, close, keyManagerOpen, deleteOpen, openKeyManager,
@@ -67,12 +68,12 @@ export default function ConnectionSettings() {
   if (load.status === 'error') {
     return (
       <div className="connection-feedback">
-        <p role="alert">{load.message}</p>
-        <Button variant="default" onClick={retry}>Повторить загрузку</Button>
+        <p role="alert">{t(`error.${load.code}`)}</p>
+        <Button variant="default" onClick={retry}>{t('common.retryLoad')}</Button>
       </div>
     );
   }
-  if (load.status === 'loading') return <output>Загружаем настройки подключения…</output>;
+  if (load.status === 'loading') return <output>{t('connection.loading')}</output>;
 
   const { provider } = draft;
   const providerConfig = providers[provider];
@@ -80,14 +81,14 @@ export default function ConnectionSettings() {
   const models = catalog.status === 'ready' ? catalog.models : [];
   const model = models.find(({ id }) => id === draft.model.trim());
   const modelLimits = [
-    model?.contextLimit && `Контекст целиком: ${formatter.format(model.contextLimit)}`,
-    model?.inputLimit && `Ввод: ${formatter.format(model.inputLimit)}`,
-    model?.outputLimit && `Ответ: ${formatter.format(model.outputLimit)}`,
+    model?.contextLimit && t('connection.contextLimit', { count: number.format(model.contextLimit) }),
+    model?.inputLimit && t('connection.inputLimit', { count: number.format(model.inputLimit) }),
+    model?.outputLimit && t('connection.outputLimit', { count: number.format(model.outputLimit) }),
   ].filter(Boolean).join(' · ');
   const loadingModels = catalog.status === 'loading';
-  const keyOptions = [{ value: '', label: providerKeys.length ? 'Без ключа' : 'Нет сохранённых ключей' },
+  const keyOptions = [{ value: '', label: providerKeys.length ? t('connection.noKey') : t('connection.noSavedKeys') },
     ...providerKeys.map(({ id, name }) => ({ value: id, label: name }))];
-  const presetOptions = [{ value: '', label: 'Новый пресет' }, ...load.data.presets.map(({ id, name }) => ({ value: id, label: name }))];
+  const presetOptions = [{ value: '', label: t('connection.newPreset') }, ...load.data.presets.map(({ id, name }) => ({ value: id, label: name }))];
 
   function submit(event: SubmitEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -102,22 +103,24 @@ export default function ConnectionSettings() {
   function numberField(field: NumericField, label: string, description: string) {
     const { min, max, integer } = ranges[field];
     const invalid = !isOptionalConnectionNumber(numericValue(draft[field]), ranges[field]);
-    const range = integer ? `Введите целое число от ${min}.` : `Введите число от ${min} до ${max}.`;
-    return <NumberInput label={label} description={description} value={draft[field]} placeholder="По умолчанию"
+    const error = invalid ? t(integer ? 'error.number_integer_min' : 'error.number_range', {
+      min: number.format(min), max: number.format(max),
+    }) : undefined;
+    return <NumberInput label={label} description={description} value={draft[field]} placeholder={t('connection.defaultValue')}
       min={min} max={max} step={integer ? 1 : 0.05} allowDecimal={!integer} allowNegative={false} clampBehavior="none" hideControls
-      decimalSeparator="," allowedDecimalSeparators={[',', '.']}
-      error={invalid ? range : undefined} onChange={(value) => updateDraft({ [field]: value })} />;
+      decimalSeparator={decimalSeparator} allowedDecimalSeparators={[',', '.']}
+      error={error} onChange={(value) => updateDraft({ [field]: value })} />;
   }
 
   return (
     <>
       <form className="connection-form" onSubmit={submit}>
         <fieldset className="field-group connection-group connection-preset" disabled={saving}>
-          <legend>Пресеты</legend>
+          <legend>{t('connection.presets')}</legend>
           <div className="connection-preset-fields">
-            <NativeSelect ref={presetSelect} label="Пресет" value={presetId} data={presetOptions}
+            <NativeSelect ref={presetSelect} label={t('connection.preset')} value={presetId} data={presetOptions}
               onChange={(event) => selectPreset(event.currentTarget.value)} />
-            <TextInput ref={presetName} label="Название пресета" value={draft.name} required maxLength={connectionNameLimit}
+            <TextInput ref={presetName} label={t('connection.presetName')} value={draft.name} required maxLength={connectionNameLimit}
               onChange={(event) => updateDraft({ name: event.currentTarget.value })} />
           </div>
           {selectedPreset && (
@@ -125,65 +128,65 @@ export default function ConnectionSettings() {
               <Button type="button" variant="default" onClick={() => {
                 copyPreset();
                 presetName.current?.focus();
-              }}>Создать копию</Button>
-              <Button ref={presetDelete} type="button" variant="subtle" color="red" onClick={openDelete}>Удалить пресет</Button>
+              }}>{t('connection.copyPreset')}</Button>
+              <Button ref={presetDelete} type="button" variant="subtle" color="red" onClick={openDelete}>{t('connection.deletePreset')}</Button>
             </Group>
           )}
         </fieldset>
         <div className="connection-columns">
           <fieldset className="field-group connection-group" disabled={saving}>
-            <legend>Провайдер и модель</legend>
-            <NativeSelect label="Провайдер" value={provider} data={providerOptions} onChange={(event) => {
+            <legend>{t('connection.providerAndModel')}</legend>
+            <NativeSelect label={t('connection.provider')} value={provider} data={providerOptions} onChange={(event) => {
               const next = event.currentTarget.value;
               if (isProvider(next)) changeProvider(next);
             }} />
             <div className="connection-key-control">
-              <NativeSelect label="API-ключ" value={keyId} data={keyOptions}
+              <NativeSelect label={t('common.apiKey')} value={keyId} data={keyOptions}
                 onChange={(event) => updateDraft({ keyId: event.currentTarget.value })} />
-              <Tooltip label={`Ключи ${providerConfig.label}`} events={{ hover: true, focus: true, touch: false }}>
-                <ActionIcon ref={keyManagerTrigger} type="button" variant="default" size={44} aria-label={`Управлять ключами ${providerConfig.label}`}
+              <Tooltip label={t('connection.providerKeys', { provider: providerConfig.label })} events={{ hover: true, focus: true, touch: false }}>
+                <ActionIcon ref={keyManagerTrigger} type="button" variant="default" size={44} aria-label={t('connection.manageKeys', { provider: providerConfig.label })}
                   aria-haspopup="dialog" onClick={openKeyManager}>
                   <KeyRound size={19} aria-hidden="true" />
                 </ActionIcon>
               </Tooltip>
             </div>
-            <Autocomplete label="Модель" required description={models.length
-              ? 'Выберите модель из списка или введите её ID вручную.' : 'Введите ID модели или загрузите список у провайдера.'}
+            <Autocomplete label={t('common.model')} required description={models.length
+              ? t('connection.modelListHint') : t('connection.modelIdHint')}
               maxLength={256} autoComplete="off" spellCheck={false} value={draft.model}
               data={models.map(({ id }) => id)} limit={60} rightSectionPointerEvents="none"
               rightSection={models.length ? <ChevronDown size={15} aria-hidden="true" /> : undefined}
-              error={Boolean(draft.model.trim()) && !isModelId(draft.model.trim()) ? 'Проверьте написание ID модели.' : undefined}
+              error={Boolean(draft.model.trim()) && !isModelId(draft.model.trim()) ? t('error.model_id_invalid') : undefined}
               onChange={(value) => updateDraft({ model: value })} />
-            {modelLimits && <p className="connection-hint">Лимиты модели в токенах · {modelLimits}</p>}
+            {modelLimits && <p className="connection-hint">{t('connection.modelLimits', { limits: modelLimits })}</p>}
             <div className="connection-catalog">
               <Button type="button" variant="default" loading={loadingModels} onClick={loadModels}>
-                {models.length ? 'Обновить список моделей' : 'Загрузить модели'}
+                {models.length ? t('connection.refreshModels') : t('connection.loadModels')}
               </Button>
-              {catalog.status === 'error' && <p className="connection-error" role="alert">{catalog.message}</p>}
+              {catalog.status === 'error' && <p className="connection-error" role="alert">{t(`error.${catalog.code}`)}</p>}
               <output className="connection-hint">
-                {loadingModels && 'Запрашиваем список у провайдера…'}
+                {loadingModels && t('connection.loadingModels')}
                 {catalog.status === 'ready' && (models.length
-                  ? `Найдено моделей: ${formatter.format(models.length)}.`
-                  : 'Провайдер вернул пустой список. Введите ID модели вручную.')}
+                  ? t('connection.modelsFound', { count: number.format(models.length) })
+                  : t('connection.noModels'))}
               </output>
             </div>
           </fieldset>
 
           <div className="connection-parameters">
             <fieldset className="field-group connection-group" disabled={saving}>
-              <legend>Лимиты токенов</legend>
+              <legend>{t('connection.tokenLimits')}</legend>
               <div className="connection-fields">
-                {numberField('contextTokens', 'Контекст', 'Сколько токенов можно передать модели.')}
-                {numberField('responseTokens', 'Ответ', 'Сколько токенов модель может сгенерировать.')}
+                {numberField('contextTokens', t('connection.context'), t('connection.contextHint'))}
+                {numberField('responseTokens', t('connection.response'), t('connection.responseHint'))}
               </div>
             </fieldset>
             <fieldset className="field-group connection-group" disabled={saving}>
-              <legend>Параметры генерации</legend>
-              <p className="connection-hint">Пустые поля оставляют значения по умолчанию. Поддержка параметров зависит от модели.</p>
+              <legend>{t('connection.generation')}</legend>
+              <p className="connection-hint">{t('connection.generationHint')}</p>
               <div className="connection-fields">
-                {numberField('temperature', 'Температура', 'Управляет разбросом вариантов ответа.')}
-                {numberField('topP', 'Top P', 'Ограничивает суммарную вероятность вариантов.')}
-                {providerConfig.topK && numberField('topK', 'Top K', 'Сколько наиболее вероятных вариантов учитывать.')}
+                {numberField('temperature', t('connection.temperature'), t('connection.temperatureHint'))}
+                {numberField('topP', t('connection.topP'), t('connection.topPHint'))}
+                {providerConfig.topK && numberField('topK', t('connection.topK'), t('connection.topKHint'))}
               </div>
             </fieldset>
           </div>
@@ -191,26 +194,28 @@ export default function ConnectionSettings() {
 
         <div className="connection-actions">
           <div className="connection-action-status">
-            {submission.status === 'error' && <p className="connection-error" role="alert">{submission.message}</p>}
+            {submission.status === 'error' && <p className="connection-error" role="alert">{t(`error.${submission.code}`)}</p>}
             <output className="connection-hint">
-              {submission.status === 'saved' || submission.status === 'deleted' ? submission.message : activePreset && `Активный пресет · ${activePreset.name}`}
+              {submission.status === 'saved' || submission.status === 'deleted'
+                ? t(submission.status === 'saved' ? 'connection.presetSaved' : 'connection.presetDeleted')
+                : activePreset && t('connection.activePreset', { name: activePreset.name })}
             </output>
           </div>
-          <Button type="submit" ms="auto" loading={saving && !deleteOpen} disabled={saving || loadingModels}>Сохранить пресет</Button>
+          <Button type="submit" ms="auto" loading={saving && !deleteOpen} disabled={saving || loadingModels}>{t('connection.savePreset')}</Button>
         </div>
       </form>
       {keyManagerOpen && (
         <ProviderKeysDialog provider={provider} keys={providerKeys} onClose={closeKeyManager} />
       )}
       {deleteOpen && selectedPreset && (
-        <Modal opened onClose={closePresetDelete} title="Удалить пресет?" returnFocus={false} transitionProps={{ transition: 'fade' }}
-          closeButtonProps={{ 'aria-label': 'Закрыть', disabled: saving }} closeOnEscape={!saving} closeOnClickOutside={!saving}>
+        <Modal opened onClose={closePresetDelete} title={t('connection.confirmPresetDelete')} returnFocus={false} transitionProps={{ transition: 'fade' }}
+          closeButtonProps={{ 'aria-label': t('common.close'), disabled: saving }} closeOnEscape={!saving} closeOnClickOutside={!saving}>
           <Stack gap="sm">
-            <p className="connection-modal-copy">Пресет «{selectedPreset.name}» будет удалён.</p>
-            {deleteError && <p className="connection-error" role="alert">{deleteError}</p>}
+            <p className="connection-modal-copy">{t('connection.presetDeleteWarning', { name: selectedPreset.name })}</p>
+            {deleteError && <p className="connection-error" role="alert">{t(`error.${deleteError}`)}</p>}
             <Group justify="flex-end">
-              <Button data-autofocus variant="default" disabled={saving} onClick={closePresetDelete}>Отмена</Button>
-              <Button color="red" loading={saving} onClick={() => perform({ kind: 'deletePreset' })}>Удалить пресет</Button>
+              <Button data-autofocus variant="default" disabled={saving} onClick={closePresetDelete}>{t('common.cancel')}</Button>
+              <Button color="red" loading={saving} onClick={() => perform({ kind: 'deletePreset' })}>{t('connection.deletePreset')}</Button>
             </Group>
           </Stack>
         </Modal>

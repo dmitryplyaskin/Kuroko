@@ -1,4 +1,6 @@
 import type { ConnectionSettings, Provider } from './connectionSettings';
+import type { LlmErrorCode } from './errors';
+export type { LlmErrorCode } from './errors';
 
 export type JsonValue = string | number | boolean | null | JsonObject | JsonValue[];
 export type JsonObject = { [key: string]: JsonValue };
@@ -52,10 +54,7 @@ export type LlmCompletion = {
   contextLimitExceeded?: boolean;
 };
 
-export type LlmErrorCode =
-  | 'invalid_request' | 'missing_preset' | 'missing_key' | 'provider_rejected' | 'provider_rate_limit'
-  | 'provider_unavailable' | 'provider_protocol' | 'timeout' | 'internal_error';
-export type LlmErrorBody = { code: LlmErrorCode; error: string };
+export type LlmErrorBody = { code: LlmErrorCode };
 export type LlmEvent =
   | { type: 'text_delta'; text: string }
   | { type: 'tool_call'; call: LlmToolCall }

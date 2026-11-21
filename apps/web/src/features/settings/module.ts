@@ -6,10 +6,10 @@ export const settingsModule = {
     kind: 'workspace.screen',
     id: 'kuroko.settings.index',
     route: '#settings',
-    label: 'Настройки',
+    label: 'settings.label',
     icon: 'settings',
     order: 30,
-    loadingLabel: 'Загрузка настроек…',
+    loadingLabel: 'settings.loading',
   }],
   views: {
     'kuroko.settings.index': () => import('./Settings'),

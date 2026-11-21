@@ -1,3 +1,4 @@
+import { useI18n } from '../../shared/i18n/i18n';
 import { Button, Menu, Textarea } from '@mantine/core';
 import { Bot, ChevronRight, Ellipsis, Pencil, Trash2 } from 'lucide-react';
 import { memo, useCallback, useLayoutEffect, useRef, useState } from 'react';
@@ -7,10 +8,8 @@ import { ChatText } from './ChatText';
 import type { ChatImage, Message, ReplyPhase } from './message';
 import type { MessageAction, MessageActionContext } from './messageActions';
 
-const clock = new Intl.DateTimeFormat('ru', { hour: '2-digit', minute: '2-digit' });
-const date = new Intl.DateTimeFormat('ru', { dateStyle: 'long', timeStyle: 'short' });
-
 export function ChatPicture({ image }: { image: ChatImage }) {
+  const { t } = useI18n();
   const file = 'file' in image ? image.file : undefined;
   const [failed, setFailed] = useState(false);
   const setFileSource = useCallback((element: HTMLImageElement | null) => {
@@ -23,7 +22,7 @@ export function ChatPicture({ image }: { image: ChatImage }) {
     };
   }, [file]);
 
-  if (failed) return <span className="chat-image-error">Не удалось открыть изображение.</span>;
+  if (failed) return <span className="chat-image-error">{t('error.image_load_failed')}</span>;
   if ('file' in image) {
     return <img ref={setFileSource} alt={image.file.name} className="chat-file-image" loading="lazy" decoding="async" onError={() => setFailed(true)} />;
   }
@@ -49,9 +48,10 @@ export const ChatMessage = memo(function ChatMessage({
   message, username, phase, editor, reasoningOpen, onToggleReasoning,
   onEdit, onDraftChange, onSaveEdit, onCancelEdit, onDelete, onPreview,
 }: Props) {
+  const { locale, t, clock, date } = useI18n();
   const { id, text, time, image, edited, reasoning } = message;
   const assistant = message.role === 'assistant';
-  const author = assistant ? 'Модель' : username;
+  const author = assistant ? t('common.model') : username;
   const editing = editor !== undefined;
   const actions = useModuleExtensions('chat.message.actions');
   const actionContext: MessageActionContext = { text };
@@ -77,7 +77,7 @@ export const ChatMessage = memo(function ChatMessage({
     try {
       await action.run(actionContext);
     } catch {
-      notify({ tone: 'error', title: action.label, message: 'Не удалось выполнить действие.' });
+      notify({ tone: 'error', title: action.label, message: 'error.message_action_failed' });
     }
   }
 
@@ -98,17 +98,17 @@ export const ChatMessage = memo(function ChatMessage({
     <article className="chat-message" data-author={message.role} data-editing={editing || undefined} data-image={Boolean(image) || undefined}
       aria-labelledby={`chat-author-${message.id}`}>
       <span className="icon-tile account-avatar chat-avatar" aria-hidden="true">
-        {assistant ? <Bot size={19} strokeWidth={1.8} /> : Array.from(username)[0]?.toLocaleUpperCase('ru')}
+        {assistant ? <Bot size={19} strokeWidth={1.8} /> : Array.from(username)[0]?.toLocaleUpperCase(locale)}
       </span>
       <div className="chat-message-body">
         <header className="chat-message-header">
           <h2 id={`chat-author-${message.id}`}>{author}</h2>
           <time dateTime={new Date(time).toISOString()} title={date.format(time)}>{clock.format(time)}</time>
-          {edited && <span className="chat-edited">Изменено</span>}
+          {edited && <span className="chat-edited">{t('chat.edited')}</span>}
           {!phase && (
             <Menu position="bottom-end" returnFocus={!editing} transitionProps={{ duration: 0 }}>
               <Menu.Target>
-                <button ref={menuButton} type="button" className="icon-button chat-message-menu" aria-label={`Действия с сообщением · ${author}`}>
+                <button ref={menuButton} type="button" className="icon-button chat-message-menu" aria-label={t('chat.actions', { author })}>
                   <Ellipsis size={19} aria-hidden="true" />
                 </button>
               </Menu.Target>
@@ -117,12 +117,12 @@ export const ChatMessage = memo(function ChatMessage({
                   <Menu.Item leftSection={<Pencil size={15} aria-hidden="true" />} onClick={() => {
                     focusEditor.current = true;
                     onEdit(id);
-                  }}>Редактировать</Menu.Item>
+                  }}>{t('chat.edit')}</Menu.Item>
                 )}
                 {!editing && actions.map((action) => (action.isVisible?.(actionContext) ?? true) && (
-                  <Menu.Item key={action.id} onClick={() => void runAction(action)}>{action.label}</Menu.Item>
+                  <Menu.Item key={action.id} onClick={() => void runAction(action)}>{t(action.label)}</Menu.Item>
                 ))}
-                <Menu.Item color="var(--kr-danger)" leftSection={<Trash2 size={15} aria-hidden="true" />} onClick={() => onDelete(message)}>Удалить</Menu.Item>
+                <Menu.Item color="var(--kr-danger)" leftSection={<Trash2 size={15} aria-hidden="true" />} onClick={() => onDelete(message)}>{t('common.delete')}</Menu.Item>
               </Menu.Dropdown>
             </Menu>
           )}
@@ -133,7 +133,7 @@ export const ChatMessage = memo(function ChatMessage({
               <button type="button" className="chat-reasoning-toggle" aria-expanded={reasoningOpen}
                 aria-controls={`chat-reasoning-${id}`} onClick={(event) => toggleReasoning(event.currentTarget)}>
                 <ChevronRight size={16} aria-hidden="true" />
-                {phase === 'reasoning' ? 'Модель рассуждает…' : 'Ход рассуждений'}
+                {phase === 'reasoning' ? t('chat.reasoningPending') : t('chat.reasoning')}
               </button>
               <div id={`chat-reasoning-${id}`} className="chat-reasoning-body" hidden={!reasoningOpen}>
                 {reasoningOpen && reasoning && <ChatText>{reasoning}</ChatText>}
@@ -147,7 +147,7 @@ export const ChatMessage = memo(function ChatMessage({
               onSaveEdit(id);
               menuButton.current?.focus({ preventScroll: true });
             }}>
-              <Textarea ref={editInput} aria-label="Текст сообщения" placeholder="Текст сообщения" variant="unstyled"
+              <Textarea ref={editInput} aria-label={t('chat.messageText')} placeholder={t('chat.messageText')} variant="unstyled"
                 classNames={{ input: 'chat-editor-input' }} autosize minRows={1} maxRows={8}
                 value={editor?.text} onChange={(event) => onDraftChange(message.id, event.currentTarget.value)} onKeyDown={(event) => {
                   if (event.nativeEvent.isComposing) return;
@@ -160,13 +160,13 @@ export const ChatMessage = memo(function ChatMessage({
                   }
                 }} />
               <div className="chat-editor-actions">
-                <Button type="button" variant="subtle" size="compact-sm" onClick={cancelEdit}>Отмена</Button>
-                <Button type="submit" size="compact-sm" disabled={!editor?.canSave}>Сохранить</Button>
+                <Button type="button" variant="subtle" size="compact-sm" onClick={cancelEdit}>{t('common.cancel')}</Button>
+                <Button type="submit" size="compact-sm" disabled={!editor?.canSave}>{t('common.save')}</Button>
               </div>
             </form>
-          ) : text ? <ChatText user={!assistant}>{text}</ChatText> : phase === 'answer' && <p className="chat-typing">Модель отвечает…</p>}
+          ) : text ? <ChatText user={!assistant}>{text}</ChatText> : phase === 'answer' && <p className="chat-typing">{t('chat.answering')}</p>}
           {image && (
-            <button type="button" className="chat-picture" aria-label="Открыть изображение" onClick={() => onPreview(image)}>
+            <button type="button" className="chat-picture" aria-label={t('chat.openImage')} onClick={() => onPreview(image)}>
               <ChatPicture image={image} />
             </button>
           )}

@@ -1,3 +1,4 @@
+import { CodedError } from '@kuroko/contracts/errors';
 import { createContext, useContext } from 'react';
 import type { RegisteredTab } from './registry';
 
@@ -13,6 +14,6 @@ export const SettingsNavigationProvider = context.Provider;
 
 export function useSettingsNavigation() {
   const navigation = useContext(context);
-  if (!navigation) throw new Error('Settings navigation is unavailable');
+  if (!navigation) throw new CodedError('settings_navigation_unavailable');
   return navigation;
 }

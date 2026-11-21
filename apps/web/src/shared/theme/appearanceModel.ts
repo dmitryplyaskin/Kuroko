@@ -1,3 +1,4 @@
+import type { MessageKey } from '../i18n/i18n';
 import { createBrowserPreference } from '../browser/preferences';
 
 type Accent = { accent: string; accentHover: string; accentText: string; accentSurface: string };
@@ -16,21 +17,21 @@ export type ThemeDefinition = {
 
 export const accents = {
   pine: {
-    label: 'Хвойный',
+    label: 'appearance.pine',
     light: { accent: '#205a48', accentHover: '#174837', accentText: '#ffffff', accentSurface: '#e0ece5' },
     dark: { accent: '#a3d9bf', accentHover: '#bce8d2', accentText: '#142b21', accentSurface: '#283c34' },
   },
   ink: {
-    label: 'Чернильный',
+    label: 'appearance.ink',
     light: { accent: '#375b83', accentHover: '#29486d', accentText: '#ffffff', accentSurface: '#e3ebf4' },
     dark: { accent: '#a8c8ed', accentHover: '#c2dbf6', accentText: '#172a43', accentSurface: '#28384d' },
   },
   orchid: {
-    label: 'Сливовый',
+    label: 'appearance.orchid',
     light: { accent: '#6d4a79', accentHover: '#583860', accentText: '#ffffff', accentSurface: '#eee5f1' },
     dark: { accent: '#d4b4e0', accentHover: '#e7caef', accentText: '#302035', accentSurface: '#42314b' },
   },
-} as const satisfies Record<string, { label: string; light: Accent; dark: Accent }>;
+} as const satisfies Record<string, { label: MessageKey; light: Accent; dark: Accent }>;
 
 export type AccentId = keyof typeof accents;
 const defaultAccent: AccentId = 'pine';

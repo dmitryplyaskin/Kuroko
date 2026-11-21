@@ -73,7 +73,7 @@ test('a late 401 after signing in again as the same user leaves the new session 
   assert.deepEqual(scope.getState($chatSettingsDraft), defaultChatSettings);
   scopeBind(sessionUserReceived, { scope })(user);
 
-  oldSave.reject(new ApiError(401, 'Session expired'));
+  oldSave.reject(new ApiError(401, 'auth_required'));
   await allSettled(scope);
 
   assert.equal(scope.getState($session).status, 'authenticated');
@@ -82,7 +82,7 @@ test('a late 401 after signing in again as the same user leaves the new session 
   assert.deepEqual(scope.getState($appliedChatSettings), defaultChatSettings);
 
   await allSettled(protectedRequestFailed, {
-    scope, params: { session: scope.getState($activeSession)!, error: new ApiError(401, 'Session expired') },
+    scope, params: { session: scope.getState($activeSession)!, error: new ApiError(401, 'auth_required') },
   });
   assert.equal(scope.getState($session).status, 'guest');
 });
@@ -305,13 +305,13 @@ test('chat stops the request, retains the visible answer and ignores late frames
     scopeBind(chatStopRequested, { scope })();
     assert.equal(signal?.aborted, true);
     assert.equal(scope.getState($replyId), null);
-    assert.equal(scope.getState($chatAnnouncement), 'Ответ модели остановлен.');
+    assert.equal(scope.getState($chatAnnouncement), 'chat.announcementStopped');
 
     await writer.write(encode(sse({ type: 'text_delta', text: ' и продолжение' }) + completed('Поздний ответ')));
     void writer.close().catch(() => undefined);
     await allSettled(scope);
     assert.equal(scope.getState($chatRows).at(-1)?.text, 'Начало');
-    assert.equal(scope.getState($chatError), '');
+    assert.equal(scope.getState($chatError), null);
     const message = scope.getState($chatRows)[0]!;
     await allSettled(messageEditRequested, { scope, params: message.id });
     await allSettled(messageEditChanged, { scope, params: { id: message.id, text: '  Правка  ' } });
@@ -331,18 +331,18 @@ test('chat displays connection and stream errors and keeps partial text', async 
   const originalFetch = globalThis.fetch;
   let requests = 0;
   globalThis.fetch = async () => {
-    if (++requests === 1) return Response.json({ error: 'Пресет подключения не найден.' }, { status: 404 });
+    if (++requests === 1) return Response.json({ code: 'missing_preset' }, { status: 404 });
     return new Response(sse({ type: 'text_delta', text: 'Начало' }) +
-      sse({ type: 'error', code: 'provider_unavailable', error: 'Провайдер прервал ответ.' }), { headers: sseHeaders });
+      sse({ type: 'error', code: 'provider_unavailable' }), { headers: sseHeaders });
   };
   try {
     await allSettled(chatDraftChanged, { scope, params: 'Первое сообщение' });
     await allSettled(chatSendRequested, { scope });
-    assert.equal(scope.getState($chatError), 'Пресет подключения не найден.');
+    assert.equal(scope.getState($chatError), 'missing_preset');
     assert.deepEqual(scope.getState($chatRows).map(({ text }) => text), ['Первое сообщение']);
     await allSettled(chatDraftChanged, { scope, params: 'Второе сообщение' });
     await allSettled(chatSendRequested, { scope });
-    assert.equal(scope.getState($chatError), 'Провайдер прервал ответ.');
+    assert.equal(scope.getState($chatError), 'provider_unavailable');
     assert.equal(scope.getState($chatRows).at(-1)?.text, 'Начало');
   } finally {
     globalThis.fetch = originalFetch;

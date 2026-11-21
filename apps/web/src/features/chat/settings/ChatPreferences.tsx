@@ -1,3 +1,5 @@
+import { LocalizedText } from '../../../shared/i18n/LocalizedText';
+import { useI18n } from '../../../shared/i18n/i18n';
 import { Button, ColorInput, SegmentedControl, useComputedColorScheme, type ButtonProps } from '@mantine/core';
 import { Bot, Check, UserRound } from 'lucide-react';
 import { useUnit } from 'effector-react';
@@ -20,24 +22,11 @@ const actionButtonStyles: ButtonProps['styles'] = {
   label: { whiteSpace: 'normal' },
 };
 
-const colorLabels: Record<ChatColor, string> = {
-  text: 'Основной текст',
-  speech: 'Прямая речь',
-  emphasis: 'Действия и курсив',
-  quote: 'Блоки цитат',
-};
-
 const previewMessages = [
-  { role: 'user', text: '«Ты слышишь поезд?»' },
-  {
-    role: 'assistant',
-    text: 'На платформе тихо. За туманом виден **один фонарь**, а на табло до сих пор горит время отправления.\n\n«Слышу. Он уже близко».\n\n*Я отступаю от края платформы и ищу билет в кармане.*\n\n> Поезд прибывает на второй путь.',
-  },
-  { role: 'user', text: '— Что нужно проверить перед посадкой?\n\n*Открываю блокнот.*' },
-  {
-    role: 'assistant',
-    text: '### Перед посадкой\n\n1. Сверь номер пути с табло.\n2. Проверь, совпадает ли время на билете с расписанием.\n\n| Путь | Отправление |\n| --- | --- |\n| 2 | 23:47 |\n\nЕсли ведёшь список поездов в коде, эту запись можно сохранить так:\n\n```ts\nconst departure = { platform: 2, time: "23:47" };\n```',
-  },
+  { role: 'user', text: 'chatSettings.previewUser1' },
+  { role: 'assistant', text: 'chatSettings.previewModel1' },
+  { role: 'user', text: 'chatSettings.previewUser2' },
+  { role: 'assistant', text: 'chatSettings.previewModel2' },
 ] as const;
 
 function SizeSlider({ label, value, bounds, onChange }: {
@@ -46,12 +35,14 @@ function SizeSlider({ label, value, bounds, onChange }: {
   bounds: typeof chatWidth;
   onChange: (value: number) => void;
 }) {
+  const { t, number } = useI18n();
   const id = useId();
+  const count = number.format(value);
   return (
     <div className="chat-setting-slider">
       <label htmlFor={id}>{label}</label>
-      <span aria-hidden="true">{value} px</span>
-      <input id={id} type="range" {...bounds} value={value} aria-valuetext={`${value} пикселей`}
+      <span aria-hidden="true">{t('chatSettings.pixelsShort', { count })}</span>
+      <input id={id} type="range" {...bounds} value={value} aria-valuetext={t('chatSettings.pixels', { count })}
         onChange={(event) => onChange(event.currentTarget.valueAsNumber)} />
     </div>
   );
@@ -62,9 +53,10 @@ function ChatColorInput({ role, value, onChange }: {
   value: string;
   onChange: (value: string) => void;
 }) {
+  const { t } = useI18n();
   const [draft, setDraft] = useState<{ text: string; from: string }>();
   return (
-    <ColorInput label={colorLabels[role]} value={draft?.from === value ? draft.text : value}
+    <ColorInput label={t(`chatSettings.${role}`)} value={draft?.from === value ? draft.text : value}
       format="hex" maxLength={7} spellCheck={false} fixOnBlur={false} withEyeDropper={false}
       onChange={(next) => {
         if (isChatColor(next)) {
@@ -78,6 +70,7 @@ function ChatColorInput({ role, value, onChange }: {
 }
 
 export default function ChatPreferences() {
+  const { t } = useI18n();
   const { load, settings, dirty, submission, change, changeColor, reset, retry, save } = useUnit({
     load: $chatSettingsLoad, settings: $chatSettingsDraft, dirty: $chatSettingsDirty, submission: $chatSettingsSubmission,
     change: chatSettingsChanged, changeColor: chatSettingsColorChanged, reset: chatSettingsResetRequested,
@@ -107,37 +100,37 @@ export default function ChatPreferences() {
     '--chat-demo-inset': `${(chatWidth.max - settings.width) / (chatWidth.max - chatWidth.min) * 9}%`,
   } satisfies CSSProperties & Record<`--${string}`, string | undefined>;
 
-  if (load.status === 'loading') return <output>Загружаем настройки чата…</output>;
+  if (load.status === 'loading') return <output>{t('chatSettings.loading')}</output>;
   if (load.status === 'error') {
     return (
       <div className="chat-preferences-feedback">
-        <p role="alert">{load.message}</p>
-        <Button type="button" variant="default" onClick={retry}>Повторить загрузку</Button>
+        <p role="alert">{t(`error.${load.code}`)}</p>
+        <Button type="button" variant="default" onClick={retry}>{t('common.retryLoad')}</Button>
       </div>
     );
   }
 
-  const unsaved = load.fromBrowser ? 'Настройки из этого браузера готовы к сохранению в аккаунте.' : 'Есть несохранённые изменения.';
-  const status = { saving: 'Сохраняем…', idle: dirty ? unsaved : '', error: '' }[submission.status];
+  const unsaved = load.fromBrowser ? t('chatSettings.browserDraft') : t('chatSettings.unsaved');
+  const status = { saving: t('chatSettings.saving'), idle: dirty ? unsaved : '', error: '' }[submission.status];
 
   return (
     <div className="chat-preferences">
       <form onSubmit={(event) => { event.preventDefault(); save(); }}>
         <div className="chat-preferences-controls">
           <fieldset className="field-group chat-size-controls" disabled={saving}>
-            <legend>Размер и расположение</legend>
-            <SizeSlider label="Размер текста" bounds={chatFontSize} value={settings.fontSize}
+            <legend>{t('chatSettings.layout')}</legend>
+            <SizeSlider label={t('chatSettings.fontSize')} bounds={chatFontSize} value={settings.fontSize}
               onChange={(fontSize) => change({ fontSize })} />
-            <SizeSlider label="Ширина чата" bounds={chatWidth} value={settings.width}
+            <SizeSlider label={t('chatSettings.width')} bounds={chatWidth} value={settings.width}
               onChange={(width) => change({ width })} />
             <fieldset className="chat-side-options">
-              <legend>Сообщения пользователя</legend>
+              <legend>{t('chatSettings.userMessages')}</legend>
               <div>
                 {(['left', 'right'] as const).map((side) => (
                   <label className="choice-option" key={side}>
                     <input type="radio" name="chat-user-side" checked={settings.userSide === side}
                       onChange={() => change({ userSide: side })} />
-                    <span>{side === 'left' ? 'Слева' : 'Справа'}</span>
+                    <span>{side === 'left' ? t('chatSettings.left') : t('chatSettings.right')}</span>
                     <Check className="option-check" size={17} aria-hidden="true" />
                   </label>
                 ))}
@@ -145,10 +138,10 @@ export default function ChatPreferences() {
             </fieldset>
           </fieldset>
           <fieldset className="field-group" disabled={saving}>
-            <legend>Цвета текста</legend>
-            <SegmentedControl fullWidth aria-label="Тема цветов чата" value={scheme}
+            <legend>{t('chatSettings.textColors')}</legend>
+            <SegmentedControl fullWidth aria-label={t('chatSettings.colorScheme')} value={scheme}
               onChange={(value) => setSelectedScheme(value === 'dark' ? 'dark' : 'light')}
-              data={[{ label: 'Светлая тема', value: 'light' }, { label: 'Тёмная тема', value: 'dark' }]} />
+              data={[{ label: t('chatSettings.light'), value: 'light' }, { label: t('chatSettings.dark'), value: 'dark' }]} />
             <div className="chat-color-controls">
               {chatColorRoles.map((role) => (
                 <ChatColorInput key={`${scheme}-${role}`} role={role} value={settings.colors[scheme][role] ?? themeColors[role]}
@@ -156,22 +149,24 @@ export default function ChatPreferences() {
               ))}
             </div>
             <p className="chat-color-hint">
-              Прямую речь можно взять в «кавычки» или начать с тире. Для действий используйте <code>*текст*</code>, для цитат — <code>&gt; текст</code>.
+              <LocalizedText id="chatSettings.formattingHint" values={{
+                action: <code>{t('chatSettings.actionExample')}</code>, quote: <code>{t('chatSettings.quoteExample')}</code>,
+              }} />
             </p>
           </fieldset>
         </div>
         <div className="chat-preferences-actions">
           <Button type="button" variant="subtle" styles={actionButtonStyles} disabled={saving || sameChatSettings(settings, defaultChatSettings)}
-            onClick={reset}>Вернуть значения по умолчанию</Button>
-          <Button type="submit" styles={actionButtonStyles} loading={saving} disabled={!dirty}>Сохранить изменения</Button>
+            onClick={reset}>{t('chatSettings.reset')}</Button>
+          <Button type="submit" styles={actionButtonStyles} loading={saving} disabled={!dirty}>{t('chatSettings.save')}</Button>
         </div>
         {submission.status === 'error'
-          ? <p className="chat-preferences-error" role="alert">{submission.message}</p>
+          ? <p className="chat-preferences-error" role="alert">{t(`error.${submission.code}`)}</p>
           : <output className="chat-preferences-status">{status}</output>}
       </form>
 
       <section className="chat-preferences-preview" aria-labelledby="chat-preview-heading">
-        <h2 id="chat-preview-heading">Предпросмотр</h2>
+        <h2 id="chat-preview-heading">{t('chatSettings.preview')}</h2>
         <div className="chat-settings-demo" style={previewStyle} data-user-side={settings.userSide}>
           {previewMessages.map(({ role, text }) => {
             const user = role === 'user';
@@ -179,8 +174,8 @@ export default function ChatPreferences() {
               <article className="chat-demo-turn" data-author={role} key={text}>
                 <span className="icon-tile account-avatar" aria-hidden="true">{user ? <UserRound size={18} /> : <Bot size={18} />}</span>
                 <div className="chat-demo-message">
-                  <h3>{user ? 'Вы' : 'Модель'}</h3>
-                  <div className="chat-message-content"><ChatText user={user}>{text}</ChatText></div>
+                  <h3>{user ? t('chatSettings.you') : t('common.model')}</h3>
+                  <div className="chat-message-content"><ChatText user={user}>{t(text)}</ChatText></div>
                 </div>
               </article>
             );

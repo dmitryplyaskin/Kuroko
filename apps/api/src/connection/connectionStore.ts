@@ -1,3 +1,4 @@
+import { CodedError } from '@kuroko/contracts/errors';
 import type { Database } from 'bun:sqlite';
 import { randomUUID } from 'node:crypto';
 import {
@@ -61,8 +62,8 @@ export function createConnectionStore(db: Database, keys: ProviderKeyStore) {
 }
 
 function readPreset({ id, name, provider, settings_json, key_id }: Row): ConnectionPreset {
-  if (!isProvider(provider)) throw new Error('Invalid provider in the database');
+  if (!isProvider(provider)) throw new CodedError('database_provider_invalid');
   const settings = readConnectionSettings(provider, JSON.parse(settings_json));
-  if (!settings) throw new Error('Invalid connection preset in the database');
+  if (!settings) throw new CodedError('database_preset_invalid');
   return { ...settings, id, name, provider, keyId: key_id };
 }

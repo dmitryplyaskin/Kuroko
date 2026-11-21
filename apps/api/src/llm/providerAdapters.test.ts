@@ -123,5 +123,5 @@ test('generation URLs use the configured server base and the provider protocol',
     .toBe('https://generativelanguage.googleapis.com/v1beta/models/gemini-model:generateContent');
   expect(connections.gemini.generationUrl('gemini-model', true).href)
     .toBe('https://generativelanguage.googleapis.com/v1beta/models/gemini-model:streamGenerateContent?alt=sse');
-  expect(() => createProviderConnections({ OPENAI_GENERATION_PATH: '//another.host/v1' })).toThrow('Invalid OPENAI_GENERATION_PATH');
+  expect(() => createProviderConnections({ OPENAI_GENERATION_PATH: '//another.host/v1' })).toThrow('config_provider_generation_path_invalid');
 });

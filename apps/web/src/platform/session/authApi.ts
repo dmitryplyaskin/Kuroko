@@ -1,5 +1,5 @@
 import { isAuthField, type User } from '@kuroko/contracts/auth';
-import { api, ApiError, errorMessage } from '../../shared/http/api';
+import { api, ApiError, errorCode } from '../../shared/http/api';
 
 export const authApi = {
   session: (signal?: AbortSignal) => api<User>('/auth/session', { signal }),
@@ -16,7 +16,7 @@ export const authApi = {
 
 export function authError(failure: unknown) {
   return {
-    message: errorMessage(failure),
+    code: errorCode(failure),
     field: failure instanceof ApiError && isAuthField(failure.field) ? failure.field : undefined,
   };
 }

@@ -1,3 +1,4 @@
+import { useI18n, type MessageKey } from '../../shared/i18n/i18n';
 import { Button, Checkbox, Stack, Text, TextInput } from '@mantine/core';
 import { ArrowRight } from 'lucide-react';
 import { useEffect, useRef, type SubmitEvent } from 'react';
@@ -7,7 +8,8 @@ import {
 } from './authFormModel';
 import './auth.css';
 
-export function AuthForm({ notice }: { notice?: string }) {
+export function AuthForm({ notice }: { notice?: MessageKey }) {
+  const { t } = useI18n();
   const { registering, username, pending, registered, error, submitCredentials, switchMode, setUsername } = useUnit({
     registering: $registering, username: $username, pending: $authPending, registered: $registered,
     error: $authError, submitCredentials: authSubmitted, switchMode: authModeSwitched, setUsername: usernameChanged,
@@ -16,7 +18,10 @@ export function AuthForm({ notice }: { notice?: string }) {
   const passwordInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    document.title = registering ? 'Регистрация · Kuroko' : 'Вход · Kuroko';
+    document.title = t('common.documentTitle', { title: t(registering ? 'auth.registrationPage' : 'auth.loginPage') });
+  }, [registering, t]);
+
+  useEffect(() => {
     (registered ? passwordInput : usernameInput).current?.focus();
   }, [registering, registered]);
 
@@ -32,28 +37,28 @@ export function AuthForm({ notice }: { notice?: string }) {
     submitCredentials({ password: fields.get('password'), remember: fields.has('remember') });
   }
 
-  const message = registered ? 'Аккаунт создан. Введите пароль, чтобы войти.' : !registering && notice;
+  const message = registered ? t('auth.accountCreated') : !registering && notice && t(notice);
 
   return (
     <div className="auth-panel">
       <Stack gap="xl">
         <div>
-          <h1>{registering ? 'Создать аккаунт' : 'Вход в аккаунт'}</h1>
+          <h1>{registering ? t('auth.createAccount') : t('auth.signInTitle')}</h1>
           <output>{message && <Text component="span" size="sm" c="dimmed">{message}</Text>}</output>
         </div>
         <Stack renderRoot={(props) => <form {...props} onSubmit={submit} />} gap="md">
           <TextInput
             ref={usernameInput}
             name="username"
-            label="Имя пользователя"
-            description={registering ? 'От 3 до 32 букв, цифр или символов . _ -' : undefined}
+            label={t('auth.username')}
+            description={registering ? t('auth.usernameHint') : undefined}
             autoComplete="username"
             autoCapitalize="none"
             spellCheck={false}
             required
             maxLength={64}
             value={username}
-            error={error?.field === 'username' && error.message}
+            error={error?.field === 'username' && t(`error.${error.code}`)}
             onChange={(event) => setUsername(event.currentTarget.value)}
           />
           <TextInput
@@ -61,31 +66,31 @@ export function AuthForm({ notice }: { notice?: string }) {
             ref={passwordInput}
             type="password"
             name="password"
-            label="Пароль"
+            label={t('auth.password')}
             autoComplete={registering ? 'new-password' : 'current-password'}
-            description={registering ? 'Не менее 12 символов' : undefined}
+            description={registering ? t('auth.passwordHint') : undefined}
             required
             minLength={registering ? 12 : undefined}
             maxLength={128}
-            error={error?.field === 'password' && error.message}
+            error={error?.field === 'password' && t(`error.${error.code}`)}
           />
-          {!registering && <Checkbox name="remember" label="Автовход" description="Запомнить вход на 30 дней" />}
+          {!registering && <Checkbox name="remember" label={t('auth.remember')} description={t('auth.rememberHint')} />}
           <div>
             <div role="alert">
-              {error && !error.field && <Text c="var(--kr-danger)" size="sm" mb="sm">{error.message}</Text>}
+              {error && !error.field && <Text c="var(--kr-danger)" size="sm" mb="sm">{t(`error.${error.code}`)}</Text>}
             </div>
             <Button
               type="submit" fullWidth size="md" loading={pending}
               rightSection={<ArrowRight size={17} aria-hidden="true" />}
             >
-              {registering ? 'Зарегистрироваться' : 'Войти'}
+              {registering ? t('auth.register') : t('auth.login')}
             </Button>
           </div>
         </Stack>
         <div className="auth-switch">
-          <span>{registering ? 'Уже есть аккаунт?' : 'Нет аккаунта?'}</span>
+          <span>{registering ? t('auth.haveAccount') : t('auth.noAccount')}</span>
           <button type="button" className="text-button" onClick={switchMode} disabled={pending}>
-            {registering ? 'Войти' : 'Зарегистрироваться'}
+            {registering ? t('auth.login') : t('auth.register')}
           </button>
         </div>
       </Stack>

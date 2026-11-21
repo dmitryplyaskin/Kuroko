@@ -1,3 +1,4 @@
+import { errorBody } from '@kuroko/contracts/errors';
 import { Router, type RequestHandler } from 'express';
 import {
   isApiKey, isProvider, readConnectionName, readConnectionSettings,
@@ -7,7 +8,7 @@ import type { ProviderConnections } from './providerConnections';
 import { listProviderModels } from './providerModels';
 import type { ProviderKeyStore } from './providerKeyStore';
 
-const missingKey = { error: 'Ключ не найден. Выберите другой ключ для этого провайдера.' };
+const missingKey = errorBody('provider_key_not_found');
 
 export function createConnectionRouter(
   store: ReturnType<typeof createConnectionStore>, keys: ProviderKeyStore, connections: ProviderConnections,
@@ -17,22 +18,22 @@ export function createConnectionRouter(
     const provider: unknown = request.body?.provider;
     const name = readConnectionName(request.body?.name);
     if (!name) {
-      response.status(400).json({ error: 'Введите название пресета длиной до 120 символов.' });
+      response.status(400).json(errorBody('preset_name_invalid', 'name'));
       return;
     }
     const settings = isProvider(provider) ? readConnectionSettings(provider, request.body.settings) : undefined;
     const keyId: unknown = request.body?.keyId;
     if (!isProvider(provider) || !settings || (keyId !== null && !isIdentifier(keyId))) {
-      response.status(400).json({ error: 'Проверьте модель, ключ, параметры генерации и лимиты.' });
+      response.status(400).json(errorBody('preset_settings_invalid'));
       return;
     }
 
     const userId: number = response.locals.user.id;
     const id = request.params.id ?? null;
     const result = store.save(userId, id, { name, provider, settings, keyId });
-    if (result === 'missing-preset') response.status(404).json({ error: 'Пресет не найден. Обновите вкладку.' });
+    if (result === 'missing-preset') response.status(404).json(errorBody('preset_not_found'));
     else if (result === 'missing-key') response.status(404).json(missingKey);
-    else if (result === 'duplicate') response.status(409).json({ error: 'Пресет с таким названием уже есть. Введите другое название.' });
+    else if (result === 'duplicate') response.status(409).json(errorBody('preset_name_taken'));
     else response.status(id ? 200 : 201).json(store.read(userId));
   };
 
@@ -43,7 +44,7 @@ export function createConnectionRouter(
   router.delete('/presets/:id', (request, response) => {
     const userId: number = response.locals.user.id;
     if (!store.remove(userId, request.params.id)) {
-      response.status(404).json({ error: 'Пресет не найден. Обновите вкладку.' });
+      response.status(404).json(errorBody('preset_not_found'));
       return;
     }
     response.json(store.read(userId));
@@ -54,13 +55,13 @@ export function createConnectionRouter(
     const name = readConnectionName(request.body?.name);
     const apiKey: unknown = request.body?.apiKey;
     if (!isProvider(provider) || !name || !isApiKey(apiKey) || name.includes(apiKey)) {
-      response.status(400).json({ error: 'Укажите название ключа и введите API-ключ в отдельное поле.' });
+      response.status(400).json(errorBody('provider_key_invalid'));
       return;
     }
 
     const key = keys.create(response.locals.user.id, provider, name, apiKey);
     if (!key) {
-      response.status(409).json({ error: 'Ключ с таким названием уже есть у этого провайдера. Введите другое название.' });
+      response.status(409).json(errorBody('provider_key_name_taken'));
       return;
     }
     response.status(201).json(key);
@@ -80,7 +81,7 @@ export function createConnectionRouter(
     const provider: unknown = request.body?.provider;
     const keyId: unknown = request.body?.keyId;
     if (!isProvider(provider) || !isIdentifier(keyId)) {
-      response.status(400).json({ error: 'Выберите провайдера и сохранённый API-ключ.' });
+      response.status(400).json(errorBody('model_catalog_selection_invalid'));
       return;
     }
 
@@ -90,12 +91,12 @@ export function createConnectionRouter(
       return;
     }
     if (!isApiKey(apiKey)) {
-      response.status(400).json({ error: 'Этот ключ не подходит для подключения. Выберите другой ключ.' });
+      response.status(400).json(errorBody('model_catalog_key_invalid'));
       return;
     }
 
     const result = await listProviderModels(provider, apiKey, connections);
-    if ('error' in result) response.status(result.status).json({ error: result.error });
+    if ('code' in result) response.status(result.status).json(errorBody(result.code));
     else response.json({ models: result.models.filter(({ id }) => !id.includes(apiKey)) });
   });
 

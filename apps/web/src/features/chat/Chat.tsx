@@ -1,3 +1,4 @@
+import { useI18n } from '../../shared/i18n/i18n';
 import { Button, Group, Modal, useComputedColorScheme } from '@mantine/core';
 import { createWatch } from 'effector';
 import { useProvidedScope, useUnit } from 'effector-react';
@@ -20,11 +21,8 @@ import './chat.css';
 type Preview = { kind: 'preview'; image: ChatImage };
 type Delete = { kind: 'delete'; message: Message };
 
-const number = new Intl.NumberFormat('ru');
-const plural = new Intl.PluralRules('ru');
-const messageForms = { one: 'сообщение', few: 'сообщения', many: 'сообщений', other: 'сообщения', zero: 'сообщений', two: 'сообщения' };
-
 export default function Chat() {
+  const { t, number, plural } = useI18n();
   const scheme = useComputedColorScheme('light');
   const [dialog, setDialog] = useState<Preview | Delete>();
   const scope = useProvidedScope();
@@ -74,6 +72,9 @@ export default function Chat() {
     history.current?.scrollToEnd();
   }, [replyId]);
 
+  const countCategory = plural.select(rows.length);
+  const countKey = countCategory === 'one' ? 'chat.countOne' : countCategory === 'few' ? 'chat.countFew' : 'chat.countOther';
+
   function removeMessage(message: Message) {
     focusAfterDelete.current = true;
     remove(message.id);
@@ -86,15 +87,15 @@ export default function Chat() {
       <header className="chat-header">
         <div className="chat-header-inner chat-column">
           <div>
-            <h1 id="chat-title" ref={title} tabIndex={-1}>Тестовый чат</h1>
-            <p>{number.format(rows.length)} {messageForms[plural.select(rows.length)]}</p>
+            <h1 id="chat-title" ref={title} tabIndex={-1}>{t('chat.title')}</h1>
+            <p>{t(countKey, { count: number.format(rows.length) })}</p>
           </div>
           <div className="chat-navigation">
-            <button type="button" className="icon-button" aria-label="К началу истории" title="К началу истории"
+            <button type="button" className="icon-button" aria-label={t('chat.historyStart')} title={t('chat.historyStart')}
               disabled={!rows.length} onClick={() => history.current?.scrollToStart()}>
               <ArrowUpToLine size={18} aria-hidden="true" />
             </button>
-            <button type="button" className="icon-button" aria-label="К концу истории" title="К концу истории"
+            <button type="button" className="icon-button" aria-label={t('chat.historyEnd')} title={t('chat.historyEnd')}
               disabled={!rows.length} onClick={() => history.current?.scrollToEnd()}>
               <ArrowDownToLine size={18} aria-hidden="true" />
             </button>
@@ -103,9 +104,9 @@ export default function Chat() {
       </header>
       {rows.length ? (
         <ChatHistory ref={history} messages={rows} renderMessage={renderMessage} />
-      ) : <p className="chat-empty">Напишите сообщение, чтобы проверить активный пресет подключения.</p>}
+      ) : <p className="chat-empty">{t('chat.empty')}</p>}
       <ChatComposer />
-      <output className="chat-sr-only">{announcement}</output>
+      <output className="chat-sr-only">{announcement && t(announcement)}</output>
 
       <Modal opened={Boolean(dialog)} onClose={() => setDialog(undefined)} onExitTransitionEnd={() => {
         if (!focusAfterDelete.current) return;
@@ -113,15 +114,15 @@ export default function Chat() {
         if (history.current) history.current.focus();
         else title.current?.focus({ preventScroll: true });
       }}
-        title={dialog?.kind === 'delete' ? 'Удалить сообщение?' : 'Изображение'}
-        size={dialog?.kind === 'preview' ? 'xl' : 'md'} centered closeButtonProps={{ 'aria-label': 'Закрыть' }}>
+        title={dialog?.kind === 'delete' ? t('chat.deleteMessage') : t('chat.image')}
+        size={dialog?.kind === 'preview' ? 'xl' : 'md'} centered closeButtonProps={{ 'aria-label': t('common.close') }}>
         {dialog?.kind === 'preview' && <div className="chat-preview"><ChatPicture image={dialog.image} /></div>}
         {dialog?.kind === 'delete' && (
           <>
-            <p>Сообщение исчезнет из истории этого чата.</p>
+            <p>{t('chat.deleteWarning')}</p>
             <Group justify="flex-end" mt="md">
-              <Button type="button" variant="default" data-autofocus onClick={() => setDialog(undefined)}>Отмена</Button>
-              <Button type="button" color="red" onClick={() => removeMessage(dialog.message)}>Удалить</Button>
+              <Button type="button" variant="default" data-autofocus onClick={() => setDialog(undefined)}>{t('common.cancel')}</Button>
+              <Button type="button" color="red" onClick={() => removeMessage(dialog.message)}>{t('common.delete')}</Button>
             </Group>
           </>
         )}

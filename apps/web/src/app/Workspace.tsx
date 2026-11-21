@@ -1,3 +1,4 @@
+import { useI18n } from '../shared/i18n/i18n';
 import { Activity, useCallback, useEffect, useMemo, useRef } from 'react';
 import { Tooltip } from '@mantine/core';
 import { useMediaQuery } from '@mantine/hooks';
@@ -35,6 +36,7 @@ export function Workspace({ user, registry, model }: {
   registry: ModuleRegistry;
   model: WorkspaceModel;
 }) {
+  const { t } = useI18n();
   const [screen, retainedScreens, selectedKey, selectTab, menuCollapsed, toggleMenu] = useUnit([
     model.$screen, model.$retainedScreens, model.$settingsTab, model.settingsTabChanged, $menuCollapsed, menuToggled,
   ]);
@@ -42,12 +44,12 @@ export function Workspace({ user, registry, model }: {
     [registry, selectedKey, selectTab]);
   const narrowLayout = useMediaQuery('(max-width: 740px)');
   const main = useRef<HTMLElement>(null);
-  const menuLabel = menuCollapsed ? 'Развернуть меню' : 'Свернуть меню';
+  const menuLabel = menuCollapsed ? t('workspace.expandMenu') : t('workspace.collapseMenu');
   const MenuIcon = menuCollapsed ? PanelLeftOpen : PanelLeftClose;
 
   useEffect(() => {
-    document.title = `${screen.title ?? screen.label} · Kuroko`;
-  }, [screen]);
+    document.title = t('common.documentTitle', { title: t(screen.title ?? screen.label) });
+  }, [screen, t]);
 
   function focusContent() {
     const heading = main.current?.querySelector<HTMLHeadingElement>('h1:not([hidden] h1)');
@@ -56,7 +58,7 @@ export function Workspace({ user, registry, model }: {
 
   return (
     <div className="workspace" data-menu-collapsed={menuCollapsed || undefined}>
-      <button type="button" className="skip-link" onClick={focusContent}>К содержимому</button>
+      <button type="button" className="skip-link" onClick={focusContent}>{t('workspace.skipContent')}</button>
       <aside className="workspace-sidebar">
         <div className="workspace-sidebar-header">
           <Brand />
@@ -66,13 +68,13 @@ export function Workspace({ user, registry, model }: {
             <MenuIcon size={16} aria-hidden="true" />
           </button>
         </div>
-        <nav id="workspace-menu" className="workspace-nav" aria-label="Рабочее пространство">
+        <nav id="workspace-menu" className="workspace-nav" aria-label={t('workspace.navigation')}>
           {registry.screens.map(({ id, icon, label, route }) => (
-            <Tooltip key={id} label={label} disabled={!menuCollapsed} interactive openDelay={150}
+            <Tooltip key={id} label={t(label)} disabled={!menuCollapsed} interactive openDelay={150}
               position={narrowLayout ? 'bottom' : 'right'} events={{ hover: true, focus: true, touch: false }}>
-              <a href={route} aria-label={label} aria-current={screen.id === id ? 'page' : undefined}>
+              <a href={route} aria-label={t(label)} aria-current={screen.id === id ? 'page' : undefined}>
                 <ModuleIcon name={icon ?? 'panels'} size={18} />
-                <span className="workspace-nav-label">{label}</span>
+                <span className="workspace-nav-label">{t(label)}</span>
               </a>
             </Tooltip>
           ))}

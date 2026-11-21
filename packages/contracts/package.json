@@ -7,6 +7,7 @@
     "./auth": "./src/auth.ts",
     "./chatSettings": "./src/chatSettings.ts",
     "./connectionSettings": "./src/connectionSettings.ts",
+    "./errors": "./src/errors.ts",
     "./llm": "./src/llm.ts"
   }
 }

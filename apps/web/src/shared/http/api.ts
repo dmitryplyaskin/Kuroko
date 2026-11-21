@@ -1,6 +1,14 @@
-export class ApiError extends Error {
-  constructor(public readonly status: number, message: string, public readonly field?: string) {
-    super(message);
+import { CodedError, isApiErrorCode, type ApiErrorCode } from '@kuroko/contracts/errors';
+
+export type ErrorCode = ApiErrorCode
+  | 'network_error' | 'request_timeout' | 'invalid_response' | 'stream_interrupted' | 'response_blocked' | 'response_empty'
+  | 'session_check_failed' | 'password_confirmation_mismatch' | 'model_catalog_key_required'
+  | 'model_id_invalid' | 'number_integer_min' | 'number_range' | 'message_action_failed' | 'image_load_failed'
+  | 'clipboard_write_failed' | 'module_load_failed';
+
+export class ApiError extends CodedError<ErrorCode> {
+  constructor(public readonly status: number, code: ErrorCode, public readonly field?: string) {
+    super(code);
   }
 }
 
@@ -34,23 +42,29 @@ export async function apiResponse(
     headers,
     body: body && JSON.stringify(body),
     signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
+  }).catch((error: unknown) => {
+    if (signal?.aborted) throw error;
+    throw new ApiError(0, timeout.aborted ? 'request_timeout' : 'network_error');
   });
   if (!response.ok) {
     const result = await response.json().catch(() => null);
     const field = typeof result?.field === 'string' ? result.field : undefined;
-    const message = response.status < 500 && typeof result?.error === 'string'
-      ? result.error
-      : 'Сервер не смог выполнить запрос.';
-    throw new ApiError(response.status, message, field);
+    const code = isApiErrorCode(result?.code) ? result.code : response.status >= 500 ? 'server_error' : 'request_failed';
+    throw new ApiError(response.status, code, field);
   }
   return response;
 }
 
 export async function api<T>(path: string, options?: Options): Promise<T> {
   const response = await apiResponse(path, options);
-  return response.status === 204 ? undefined as T : response.json();
+  return response.status === 204 ? undefined as T : response.json().catch((error: unknown) => {
+    if (error instanceof DOMException && (error.name === 'AbortError' || error.name === 'TimeoutError')) throw error;
+    throw new ApiError(response.status, 'invalid_response');
+  });
 }
 
-export function errorMessage(error: unknown) {
-  return error instanceof ApiError ? error.message : 'Не удалось связаться с сервером. Попробуйте ещё раз.';
+export function errorCode(error: unknown): ErrorCode {
+  if (error instanceof ApiError) return error.code;
+  if (error instanceof DOMException && error.name === 'TimeoutError') return 'request_timeout';
+  return 'network_error';
 }

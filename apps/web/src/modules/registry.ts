@@ -1,3 +1,4 @@
+import { CodedError } from '@kuroko/contracts/errors';
 import { lazy, type ComponentType, type LazyExoticComponent } from 'react';
 import { scopeBind, type Scope } from 'effector';
 import type { ExtensionContribution, ExtensionKind, ModuleBundle, SettingsTab, WebModule, WorkspaceScreen } from './contracts';
@@ -13,7 +14,7 @@ export type RegisteredTab = RegisteredView<SettingsTab>;
 type WorkspaceRoute = Readonly<{ screen: RegisteredScreen; settingsTab?: string }>;
 
 function addUnique<T>(entries: Map<string, T>, key: string, entry: T, kind: string) {
-  if (entries.has(key)) throw new Error(`Duplicate ${kind}: ${key}`);
+  if (entries.has(key)) throw new CodedError('module_key_duplicate', { kind, key });
   entries.set(key, entry);
 }
 
@@ -31,13 +32,13 @@ export function createModuleRegistry(bundle: ModuleBundle, additionalModules: re
   const initializers: NonNullable<WebModule['initialize']>[] = [];
 
   for (const module of [...bundle.modules, ...additionalModules]) {
-    if (moduleIds.has(module.id)) throw new Error(`Duplicate module ID: ${module.id}`);
+    if (moduleIds.has(module.id)) throw new CodedError('module_id_duplicate', { moduleId: module.id });
     moduleIds.add(module.id);
     if (module.initialize) initializers.push(module.initialize);
 
     for (const contribution of module.contributions) {
       const { id } = contribution;
-      if (contributionIds.has(id)) throw new Error(`Duplicate contribution ID: ${id}`);
+      if (contributionIds.has(id)) throw new CodedError('contribution_id_duplicate', { id });
       contributionIds.add(id);
 
       if (contribution.kind !== 'workspace.screen' && contribution.kind !== 'settings.tab') {
@@ -48,32 +49,32 @@ export function createModuleRegistry(bundle: ModuleBundle, additionalModules: re
       }
 
       const load = module.views && Object.hasOwn(module.views, id) ? module.views[id] : undefined;
-      if (!load) throw new Error(`Missing view loader for ${id} in ${module.id}`);
+      if (!load) throw new CodedError('module_view_loader_missing', { id, moduleId: module.id });
       const view = { moduleId: module.id, View: lazy(load) };
 
       if (contribution.kind === 'workspace.screen') {
         const screen = { ...contribution, ...view };
         screens.set(id, screen);
-        addUnique(routes, screen.route, { screen }, 'workspace route');
+        addUnique(routes, screen.route, { screen }, 'workspace_route');
       } else {
-        addUnique(tabs, contribution.key, { ...contribution, ...view }, 'settings tab key');
+        addUnique(tabs, contribution.key, { ...contribution, ...view }, 'settings_tab_key');
       }
     }
   }
 
   const defaultScreen = screens.get(bundle.defaultScreen);
-  if (!defaultScreen) throw new Error(`Unknown default screen in ${bundle.id}: ${bundle.defaultScreen}`);
+  if (!defaultScreen) throw new CodedError('default_screen_unknown', { bundleId: bundle.id, screen: bundle.defaultScreen });
   if (!tabs.has(bundle.defaultSettingsTab)) {
-    throw new Error(`Unknown default settings tab in ${bundle.id}: ${bundle.defaultSettingsTab}`);
+    throw new CodedError('default_settings_tab_unknown', { bundleId: bundle.id, tab: bundle.defaultSettingsTab });
   }
 
   for (const alias of bundle.routeAliases) {
     const screen = screens.get(alias.screen);
-    if (!screen) throw new Error(`Unknown screen for ${alias.route}: ${alias.screen}`);
+    if (!screen) throw new CodedError('route_screen_unknown', { route: alias.route, screen: alias.screen });
     if (alias.settingsTab !== undefined && !tabs.has(alias.settingsTab)) {
-      throw new Error(`Unknown settings tab for ${alias.route}: ${alias.settingsTab}`);
+      throw new CodedError('route_settings_tab_unknown', { route: alias.route, tab: alias.settingsTab });
     }
-    addUnique(routes, alias.route, { screen, settingsTab: alias.settingsTab }, 'workspace route');
+    addUnique(routes, alias.route, { screen, settingsTab: alias.settingsTab }, 'workspace_route');
   }
 
   const defaultRoute: WorkspaceRoute = { screen: defaultScreen };

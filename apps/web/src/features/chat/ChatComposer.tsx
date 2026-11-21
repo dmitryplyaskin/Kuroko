@@ -1,3 +1,4 @@
+import { useI18n } from '../../shared/i18n/i18n';
 import { Textarea } from '@mantine/core';
 import { ArrowUp, Square } from 'lucide-react';
 import { useUnit } from 'effector-react';
@@ -7,6 +8,7 @@ import {
 } from './model';
 
 export function ChatComposer() {
+  const { t } = useI18n();
   const { draft, error, canSend, replyId, setDraft, send, stop } = useUnit({
     draft: $chatDraft, error: $chatError, canSend: $chatCanSend, replyId: $replyId,
     setDraft: chatDraftChanged, send: chatSendRequested, stop: chatStopRequested,
@@ -24,8 +26,8 @@ export function ChatComposer() {
       <form className="chat-composer chat-column" onSubmit={submit}>
         <Textarea
           ref={textarea}
-          aria-label="Сообщение"
-          placeholder="Сообщение"
+          aria-label={t('chat.message')}
+          placeholder={t('chat.message')}
           variant="unstyled"
           classNames={{ input: 'chat-composer-input' }}
           autosize minRows={1} maxRows={6}
@@ -39,7 +41,7 @@ export function ChatComposer() {
           }}
         />
         {replyId !== null ? (
-          <button type="button" className="icon-button chat-send-button" data-stop aria-label="Остановить" title="Остановить"
+          <button type="button" className="icon-button chat-send-button" data-stop aria-label={t('chat.stop')} title={t('chat.stop')}
             onClick={() => {
               stop();
               textarea.current?.focus({ preventScroll: true });
@@ -47,11 +49,11 @@ export function ChatComposer() {
             <Square size={14} aria-hidden="true" />
           </button>
         ) : (
-          <button type="submit" className="icon-button chat-send-button" disabled={!canSend} aria-label="Отправить" title="Отправить">
+          <button type="submit" className="icon-button chat-send-button" disabled={!canSend} aria-label={t('chat.send')} title={t('chat.send')}>
             <ArrowUp size={19} aria-hidden="true" />
           </button>
         )}
-        {error && <p className="chat-input-error" role="alert">{error}</p>}
+        {error && <p className="chat-input-error" role="alert">{t(`error.${error}`)}</p>}
       </form>
     </footer>
   );

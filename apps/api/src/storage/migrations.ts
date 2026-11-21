@@ -1,3 +1,4 @@
+import { CodedError } from '@kuroko/contracts/errors';
 import type { Database } from 'bun:sqlite';
 import { createHash } from 'node:crypto';
 
@@ -89,7 +90,7 @@ export function migrateDatabase(db: Database, vaultKey: Buffer) {
   db.transaction(() => {
     const version = db.query<{ user_version: number }, []>('PRAGMA user_version').get()?.user_version;
     if (version === undefined || version < 0 || version > latestVersion) {
-      throw new Error(`Unsupported SQLite schema version: ${version}`);
+      throw new CodedError('database_schema_unsupported', { version });
     }
 
     if (version < 1) {
@@ -101,7 +102,7 @@ export function migrateDatabase(db: Database, vaultKey: Buffer) {
       'SELECT key_fingerprint FROM vault_settings WHERE id = 1',
     ).get();
     if (stored?.key_fingerprint !== fingerprint) {
-      throw new Error('The vault key does not match this SQLite database');
+      throw new CodedError('database_vault_key_mismatch');
     }
 
     if (version < 2) db.exec(chatSettingsSchema);

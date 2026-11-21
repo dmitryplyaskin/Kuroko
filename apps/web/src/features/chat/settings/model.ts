@@ -6,11 +6,11 @@ import {
 import { $activeSession, protectedRequestFailed, sessionEnded, sessionStarted, type ActiveSession } from '../../../platform/session/model';
 import { inActiveSession, sessionRequest } from '../../../platform/session/request';
 import { readBrowserStorage } from '../../../shared/browser/storage';
-import { errorMessage } from '../../../shared/http/api';
+import { ApiError, errorCode, type ErrorCode } from '../../../shared/http/api';
 import { notify } from '../../../shared/notifications/notifications';
 
-type LoadState = { status: 'loading' } | { status: 'error'; message: string } | { status: 'ready'; settings: ChatSettings; fromBrowser: boolean };
-type Submission = { status: 'idle' | 'saving' } | { status: 'error'; message: string };
+type LoadState = { status: 'loading' } | { status: 'error'; code: ErrorCode } | { status: 'ready'; settings: ChatSettings; fromBrowser: boolean };
+type Submission = { status: 'idle' | 'saving' } | { status: 'error'; code: ErrorCode };
 type DraftChange = Partial<Pick<ChatSettings, 'fontSize' | 'width' | 'userSide'>>;
 type ColorChange = { scheme: ChatColorScheme; role: ChatColor; color: string };
 
@@ -41,7 +41,7 @@ export const saveChatSettingsFx = createEffect(async ({ session, draft }: { sess
   const { settings } = await sessionRequest<ChatSettingsResponse>(session, '/settings/chat', {
     method: 'PUT', body: draft,
   });
-  if (!settings) throw new Error('The server did not return the saved chat settings');
+  if (!settings) throw new ApiError(200, 'invalid_response');
   return settings;
 });
 
@@ -55,14 +55,14 @@ const saveFailed = inActiveSession(saveChatSettingsFx.fail, ({ session }) => ses
 export const $chatSettingsLoad = createStore<LoadState>({ status: 'loading' })
   .on(loadChatSettingsFx, () => ({ status: 'loading' }))
   .on(loadDone, (_, { settings, legacy }) => ({ status: 'ready', settings: settings ?? defaultChatSettings, fromBrowser: Boolean(legacy) }))
-  .on(loadFailed, (_, { error }) => ({ status: 'error', message: errorMessage(error) }))
+  .on(loadFailed, (_, { error }) => ({ status: 'error', code: errorCode(error) }))
   .on(saveDone, (_, settings) => ({ status: 'ready', settings, fromBrowser: false }))
   .reset(sessionEnded);
 export const $appliedChatSettings = $chatSettingsLoad.map((load) => load.status === 'ready' ? load.settings : defaultChatSettings);
 
 export const $chatSettingsSubmission = createStore<Submission>({ status: 'idle' })
   .on(saveChatSettingsFx, () => ({ status: 'saving' }))
-  .on(saveFailed, (_, { error }) => ({ status: 'error', message: errorMessage(error) }))
+  .on(saveFailed, (_, { error }) => ({ status: 'error', code: errorCode(error) }))
   .reset(saveDone, sessionEnded);
 const $canChange = combine($chatSettingsLoad, $chatSettingsSubmission,
   (load, submission) => load.status === 'ready' && submission.status !== 'saving');
@@ -99,5 +99,5 @@ sample({
 });
 sample({ clock: [loadFailed, saveFailed], target: protectedRequestFailed });
 
-const notifySettingsSavedFx = createEffect(() => notify({ tone: 'success', message: 'Настройки чата сохранены' }));
+const notifySettingsSavedFx = createEffect(() => notify({ tone: 'success', message: 'chatSettings.saved' }));
 sample({ clock: saveDone, fn: () => undefined, target: notifySettingsSavedFx });

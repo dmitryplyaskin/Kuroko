@@ -6,10 +6,10 @@ export const scenesModule = {
     kind: 'workspace.screen',
     id: 'kuroko.scenes.index',
     route: '#scenes',
-    label: 'Сцены',
+    label: 'scenes.label',
     icon: 'panels',
     order: 10,
-    loadingLabel: 'Загрузка сцен…',
+    loadingLabel: 'scenes.loading',
   }],
   views: {
     'kuroko.scenes.index': () => import('./Scenes'),

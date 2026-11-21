@@ -12,7 +12,7 @@ const notesScreen = {
   kind: 'workspace.screen',
   id: 'test.notes.index',
   route: '#notes',
-  label: 'Заметки',
+  label: 'scenes.label',
   order: 20,
 } as const;
 
@@ -20,7 +20,7 @@ const notesTab = {
   kind: 'settings.tab',
   id: 'test.notes.preferences',
   key: 'notes',
-  label: 'Заметки',
+  label: 'scenes.label',
   order: 20,
 } as const;
 
@@ -82,13 +82,13 @@ test('unknown addresses fall back and legacy aliases retain their existing setti
 
 test('registration rejects conflicting contributions and incomplete view bindings', () => {
   const module = notesModule();
-  assert.throws(() => createModuleRegistry(corePlugin, [module, module]), /Duplicate module ID/);
-  assert.throws(() => createModuleRegistry(corePlugin, [module, { ...module, id: 'test.other' }]), /Duplicate contribution ID/);
-  assert.throws(() => createModuleRegistry(corePlugin, [{ ...module, views: {} }]), /Missing view loader/);
+  assert.throws(() => createModuleRegistry(corePlugin, [module, module]), { code: 'module_id_duplicate' });
+  assert.throws(() => createModuleRegistry(corePlugin, [module, { ...module, id: 'test.other' }]), { code: 'contribution_id_duplicate' });
+  assert.throws(() => createModuleRegistry(corePlugin, [{ ...module, views: {} }]), { code: 'module_view_loader_missing' });
   assert.throws(() => createModuleRegistry(corePlugin, [{
     ...module, contributions: [{ ...notesScreen, route: '#secrets' }],
-  }]), /Duplicate workspace route/);
+  }]), { code: 'module_key_duplicate', details: { kind: 'workspace_route', key: '#secrets' } });
   assert.throws(() => createModuleRegistry(corePlugin, [{
     ...module, contributions: [{ ...notesTab, key: 'chat' }],
-  }]), /Duplicate settings tab key/);
+  }]), { code: 'module_key_duplicate', details: { kind: 'settings_tab_key', key: 'chat' } });
 });

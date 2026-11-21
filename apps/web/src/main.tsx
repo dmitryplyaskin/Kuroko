@@ -1,3 +1,4 @@
+import { CodedError } from '@kuroko/contracts/errors';
 import '@mantine/core/styles.css';
 import '@fontsource-variable/onest';
 import '@fontsource-variable/literata';
@@ -21,7 +22,7 @@ const AppNotifications = lazy(() => import('./shared/notifications/AppNotificati
 
 const root = document.getElementById('root');
 if (!root) {
-  throw new Error('Root element missing');
+  throw new CodedError('app_root_missing');
 }
 
 const registry = createModuleRegistry(corePlugin);

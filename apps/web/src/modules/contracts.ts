@@ -1,3 +1,4 @@
+import type { MessageKey } from '../shared/i18n/i18n';
 import type { ComponentType } from 'react';
 import type { EventCallable } from 'effector';
 
@@ -5,16 +6,16 @@ export type ModuleIconName = 'panels' | 'message' | 'settings' | 'palette' | 'pl
 
 type ViewContribution = {
   id: string;
-  label: string;
+  label: MessageKey;
   order: number;
   icon?: ModuleIconName;
-  loadingLabel?: string;
+  loadingLabel?: MessageKey;
 };
 
 export type WorkspaceScreen = ViewContribution & {
   kind: 'workspace.screen';
   route: `#${string}`;
-  title?: string;
+  title?: MessageKey;
   layout?: 'page' | 'viewport';
   retainAfterVisit?: boolean;
 };
@@ -22,7 +23,7 @@ export type WorkspaceScreen = ViewContribution & {
 export type SettingsTab = ViewContribution & {
   kind: 'settings.tab';
   key: string;
-  description?: string;
+  description?: MessageKey;
 };
 
 export type ViewLoader = () => Promise<{ default: ComponentType }>;

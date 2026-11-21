@@ -1,3 +1,4 @@
+import type { ErrorCode } from '../../shared/http/api';
 import {
   defaultConnectionSettings, readConnectionName, readConnectionSettings,
   type ConnectionPreset, type ConnectionSettings, type Provider, type SaveConnectionPreset,
@@ -27,9 +28,9 @@ export function numericValue(value: NumericValue) {
 }
 
 export function validateDraft(draft: ConnectionDraft, keyId: string):
-  { preset: SaveConnectionPreset } | { error: string; field?: 'name' } {
+  { preset: SaveConnectionPreset } | { code: ErrorCode; field?: 'name' } {
   const name = readConnectionName(draft.name);
-  if (!name) return { error: 'Введите название пресета длиной до 120 символов.', field: 'name' };
+  if (!name) return { code: 'preset_name_invalid', field: 'name' };
 
   const settings = readConnectionSettings(draft.provider, {
     model: draft.model.trim(),
@@ -39,7 +40,7 @@ export function validateDraft(draft: ConnectionDraft, keyId: string):
     topP: numericValue(draft.topP),
     topK: numericValue(draft.topK),
   });
-  if (!settings) return { error: 'Проверьте ID модели и значения в полях генерации и лимитов.' };
+  if (!settings) return { code: 'preset_settings_invalid' };
 
   return { preset: { name, provider: draft.provider, settings, keyId: keyId || null } };
 }

@@ -1,26 +1,26 @@
-import type { LlmErrorBody, LlmErrorCode } from '@kuroko/contracts/llm';
+import { CodedError, type LlmErrorCode } from '@kuroko/contracts/errors';
+import type { LlmErrorBody } from '@kuroko/contracts/llm';
 
 const errors = {
-  invalid_request: [400, 'Проверьте сообщения, инструменты и параметры генерации.'],
-  missing_preset: [404, 'Пресет подключения не найден.'],
-  missing_key: [422, 'Выберите сохранённый API-ключ в пресете подключения.'],
-  provider_rejected: [422, 'Провайдер отклонил запрос. Проверьте API-ключ, модель и параметры.'],
-  provider_rate_limit: [429, 'Провайдер ограничил запросы. Повторите позже.'],
-  provider_unavailable: [502, 'Не удалось получить ответ от провайдера.'],
-  provider_protocol: [502, 'Провайдер вернул некорректный или неполный ответ.'],
-  timeout: [504, 'Провайдер не ответил за отведённое время.'],
-  internal_error: [500, 'Не удалось выполнить генерацию.'],
-} as const satisfies Record<LlmErrorCode, readonly [number, string]>;
+  invalid_request: 400,
+  missing_preset: 404,
+  missing_key: 422,
+  provider_rejected: 422,
+  provider_rate_limit: 429,
+  provider_unavailable: 502,
+  provider_protocol: 502,
+  timeout: 504,
+  internal_error: 500,
+} as const satisfies Record<LlmErrorCode, number>;
 
-export class LlmError extends Error {
+export class LlmError extends CodedError<LlmErrorCode> {
   readonly status: number;
   readonly body: LlmErrorBody;
 
   constructor(code: LlmErrorCode) {
-    const [status, error] = errors[code];
-    super(error);
-    this.status = status;
-    this.body = { code, error };
+    super(code);
+    this.status = errors[code];
+    this.body = { code };
   }
 }
 

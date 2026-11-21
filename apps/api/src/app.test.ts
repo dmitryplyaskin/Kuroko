@@ -60,10 +60,14 @@ test('registers, issues a revocable session and persists it only with auto-login
   const registration = await register('Алиса');
   expect(registration.status).toBe(201);
   expect(registration.headers.get('Set-Cookie')).toBeNull();
-  expect((await register('АЛИСА')).status).toBe(409);
+  const duplicate = await register('АЛИСА');
+  expect(duplicate.status).toBe(409);
+  expect(await duplicate.json()).toEqual({ code: 'username_taken', field: 'username' });
   const account = db.query<{ password_hash: string }, []>('SELECT password_hash FROM users').get();
   expect(account?.password_hash).toStartWith('$argon2id$');
-  expect((await request('/auth/session')).status).toBe(401);
+  const guest = await request('/auth/session');
+  expect(guest.status).toBe(401);
+  expect(await guest.json()).toEqual({ code: 'auth_required' });
   expect((await request('/auth/login', { method: 'POST', body: { username: 'Алиса', password: 'wrong password' } })).status).toBe(401);
   expect((await request('/auth/login', {
     method: 'POST', withHeader: false, body: { username: 'Алиса', password },
@@ -478,11 +482,11 @@ test('maps upstream HTTP and streaming failures without exposing provider payloa
     const post = (extra: Partial<LlmRequest>) => request(generatePath, { method: 'POST', cookie, body: { messages: greeting, ...extra } });
     const beforeStream = await post({});
     expect(beforeStream.status).toBe(429);
-    expect(await beforeStream.json()).toEqual({ code: 'provider_rate_limit', error: 'Провайдер ограничил запросы. Повторите позже.' });
+    expect(await beforeStream.json()).toEqual({ code: 'provider_rate_limit' });
     const afterStart = await (await post({ stream: true })).text();
     expect(afterStart).toContain('event: text_delta');
     expect(afterStart).toContain('event: error');
-    expect(afterStart).toContain('"code":"provider_unavailable"');
+    expect(afterStart).toContain('data: {"type":"error","code":"provider_unavailable"}');
     expect(afterStart).not.toContain(key);
     expect(afterStart).not.toContain('event: done');
     const truncated = await (await post({ stream: true, parameters: { topP: 0.5 } })).text();

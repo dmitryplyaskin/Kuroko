@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { MantineProvider } from '@mantine/core';
 import { notifications, useNotifications } from '@mantine/notifications';
+import { allSettled, fork } from 'effector';
+import { Provider } from 'effector-react';
 import { Window, type HTMLButtonElement as DOMButton } from 'happy-dom';
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
@@ -9,6 +11,7 @@ import { corePlugin } from '../../core';
 import type { WebModule } from '../../modules/contracts';
 import { ModuleExtensionsProvider } from '../../modules/ModuleExtensions';
 import { createModuleRegistry } from '../../modules/registry';
+import { localeChanged } from '../../shared/i18n/i18n';
 import { ChatMessage } from './ChatMessage';
 
 test('dispatches registered menu actions for the selected message', async () => {
@@ -41,6 +44,7 @@ test('dispatches registered menu actions for the selected message', async () => 
   const container = document.createElement('div');
   document.body.append(container);
   const root = createRoot(container as unknown as HTMLElement);
+  const scope = fork();
 
   function NoticeOutput() {
     const { notifications: visible } = useNotifications();
@@ -49,7 +53,7 @@ test('dispatches registered menu actions for the selected message', async () => 
 
   const testModule = {
     id: 'test.message-menu',
-    contributions: [{ kind: 'chat.message.actions', id: 'test.receive-text', label: 'Передать текст', order: 5,
+    contributions: [{ kind: 'chat.message.actions', id: 'test.receive-text', label: 'chat.messageText', order: 5,
       run: ({ text }) => { received.push(text); },
     }],
   } satisfies WebModule;
@@ -78,21 +82,23 @@ test('dispatches registered menu actions for the selected message', async () => 
   try {
     await act(async () => {
       root.render(
-        <MantineProvider>
-          <ModuleExtensionsProvider registry={registry}>
-            {texts.map((text, id) => (
-              <ChatMessage key={id} message={{ id, text, time: 0, role: 'user' }} username="Пользователь"
-                reasoningOpen={false} onToggleReasoning={noop} onEdit={noop} onDraftChange={noop}
-                onCancelEdit={noop} onSaveEdit={noop} onDelete={noop} onPreview={noop} />
-            ))}
-          </ModuleExtensionsProvider>
-          <NoticeOutput />
-        </MantineProvider>,
+        <Provider value={scope}>
+          <MantineProvider>
+            <ModuleExtensionsProvider registry={registry}>
+              {texts.map((text, id) => (
+                <ChatMessage key={id} message={{ id, text, time: 0, role: 'user' }} username="Пользователь"
+                  reasoningOpen={false} onToggleReasoning={noop} onEdit={noop} onDraftChange={noop}
+                  onCancelEdit={noop} onSaveEdit={noop} onDelete={noop} onPreview={noop} />
+              ))}
+            </ModuleExtensionsProvider>
+            <NoticeOutput />
+          </MantineProvider>
+        </Provider>,
       );
     });
     await act(async () => buttonFor(1).click());
-    assert.deepEqual(menuItems().map((item) => item.textContent), ['Редактировать', 'Передать текст', 'Копировать текст', 'Удалить']);
-    await clickItem('Передать текст');
+    assert.deepEqual(menuItems().map((item) => item.textContent), ['Редактировать', 'Текст сообщения', 'Копировать текст', 'Удалить']);
+    await clickItem('Текст сообщения');
     assert.deepEqual(received, [texts[1]]);
 
     await act(async () => buttonFor(1).click());
@@ -113,7 +119,11 @@ test('dispatches registered menu actions for the selected message', async () => 
     assert.equal(document.querySelector('output')?.textContent, 'Не удалось скопировать текст.');
 
     await act(async () => buttonFor(2).click());
-    assert.deepEqual(menuItems().map((item) => item.textContent), ['Редактировать', 'Передать текст', 'Удалить']);
+    assert.deepEqual(menuItems().map((item) => item.textContent), ['Редактировать', 'Текст сообщения', 'Удалить']);
+
+    await act(async () => { await allSettled(localeChanged, { scope, params: 'en' }); });
+    assert.equal(document.querySelector('output')?.textContent, 'Could not copy the text.');
+    assert.deepEqual(menuItems().map((item) => item.textContent), ['Edit', 'Message text', 'Delete']);
   } finally {
     await act(async () => { root.unmount(); notifications.clean(); });
     await window.happyDOM.close();

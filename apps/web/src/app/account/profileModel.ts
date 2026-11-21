@@ -5,7 +5,7 @@ import { $activeSession, protectedRequestFailed, sessionEnded, sessionEndRequest
 type ProfileAction = { kind: 'logout' }
   | { kind: 'password'; currentPassword: FormDataEntryValue | null; newPassword: FormDataEntryValue | null; confirmation: FormDataEntryValue | null }
   | { kind: 'delete'; currentPassword: FormDataEntryValue | null; username: FormDataEntryValue | null };
-type FormError = ReturnType<typeof authError> | { message: string; field: 'confirmPassword' };
+type FormError = ReturnType<typeof authError> | { code: 'password_confirmation_mismatch'; field: 'confirmPassword' };
 
 export const profileActionRequested = createEvent<ProfileAction>();
 export const profileErrorCleared = createEvent();
@@ -18,16 +18,16 @@ const performProfileActionFx = createEffect(async ({ action, session }: { action
       return {};
     case 'password':
       if (action.newPassword !== action.confirmation) {
-        return { error: { message: 'Повторите новый пароль точно как ввели его выше.', field: 'confirmPassword' } as const };
+        return { error: { code: 'password_confirmation_mismatch', field: 'confirmPassword' } as const };
       }
       await authApi.changePassword(id, action.currentPassword, action.newPassword, signal);
-      return { notice: 'Пароль изменён. Войдите с новым паролем.' };
+      return { notice: 'profile.passwordChanged' as const };
     case 'delete':
       if (action.username !== username) {
-        return { error: { message: 'Введите имя аккаунта точно как указано.', field: 'username' } as const };
+        return { error: { code: 'account_name_mismatch', field: 'username' } as const };
       }
       await authApi.deleteAccount(id, username, action.currentPassword, signal);
-      return { notice: 'Аккаунт удалён.' };
+      return { notice: 'profile.accountDeleted' as const };
   }
 });
 

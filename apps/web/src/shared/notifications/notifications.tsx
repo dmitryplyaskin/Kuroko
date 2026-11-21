@@ -1,6 +1,8 @@
 import { VisuallyHidden } from '@mantine/core';
 import { notifications, useNotifications, type NotificationData } from '@mantine/notifications';
 import { Check, CircleX, Info, TriangleAlert } from 'lucide-react';
+import { LocalizedText } from '../i18n/LocalizedText';
+import type { MessageKey } from '../i18n/i18n';
 import classes from './notifications.module.css';
 
 const tones = {
@@ -12,8 +14,8 @@ const tones = {
 
 type Notice = {
   tone: keyof typeof tones;
-  message: string;
-  title?: string;
+  message: MessageKey;
+  title?: MessageKey;
   id?: string;
   autoClose?: number | false;
 };
@@ -21,11 +23,11 @@ type Notice = {
 export function notify({ tone, message, title, id, autoClose }: Notice) {
   const { Icon, color } = tones[tone];
   const duration = autoClose ?? (tone === 'error' ? false : 5000);
+  const content = <LocalizedText id={message} />;
   const notificationId: string = notifications.show({
-    id, title, message, color,
+    id, title: title && <LocalizedText id={title} />, message: content, color,
     autoClose: duration,
     icon: <Icon size={18} aria-hidden="true" />,
-    closeButtonProps: { 'aria-label': 'Закрыть уведомление' },
     classNames: {
       root: classes.notification,
       icon: classes.icon,
@@ -38,12 +40,12 @@ export function notify({ tone, message, title, id, autoClose }: Notice) {
     role: 'group',
     onFocusCapture: (event) => {
       if (duration !== false && !event.currentTarget.contains(event.relatedTarget)) {
-        notifications.update({ id: notificationId, message, autoClose: false });
+        notifications.update({ id: notificationId, message: content, autoClose: false });
       }
     },
     onBlurCapture: (event) => {
       if (duration !== false && !event.currentTarget.contains(event.relatedTarget)) {
-        notifications.update({ id: notificationId, message, autoClose: duration });
+        notifications.update({ id: notificationId, message: content, autoClose: duration });
       }
     },
   });
@@ -51,7 +53,7 @@ export function notify({ tone, message, title, id, autoClose }: Notice) {
 }
 
 function announcement({ id, title, message }: NotificationData) {
-  return <div key={id}>{title && <>{title}. </>}{message}</div>;
+  return <div key={id}>{title ? <LocalizedText id="notifications.announcement" values={{ title, message }} /> : message}</div>;
 }
 
 export function NotificationAnnouncements() {

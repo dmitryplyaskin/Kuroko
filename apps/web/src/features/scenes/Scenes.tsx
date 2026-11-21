@@ -1,39 +1,41 @@
+import { useI18n } from '../../shared/i18n/i18n';
 import { MessageSquare, NotebookPen } from 'lucide-react';
 import { SceneCover } from '../../shared/scene-cover/SceneCover';
 import './scenes.css';
 
 export default function Scenes() {
+  const { t } = useI18n();
   return (
     <>
-      <header className="page-heading"><h1 tabIndex={-1}>Сцены</h1></header>
+      <header className="page-heading"><h1 tabIndex={-1}>{t('scenes.label')}</h1></header>
       <SceneCover />
       <div className="scene-layout">
         <section aria-labelledby="sample-dialogue" className="scene-dialogue">
-          <h2 id="sample-dialogue">Диалог</h2>
+          <h2 id="sample-dialogue">{t('scenes.dialogue')}</h2>
           <article className="scene-turn">
             <span className="icon-tile" aria-hidden="true"><MessageSquare size={17} /></span>
             <div>
-              <h3>Рассказчик</h3>
-              <p>Табло погасло. На пустой платформе мигнула лампа, и из тумана донёсся звук шагов. Лина убрала билет в карман.</p>
+              <h3>{t('scenes.narrator')}</h3>
+              <p>{t('scenes.narration')}</p>
             </div>
           </article>
           <article className="scene-turn">
             <span className="icon-tile" aria-hidden="true"><NotebookPen size={17} /></span>
             <div>
-              <h3>Лина</h3>
-              <p>«Вы тоже ждёте последний поезд?» Я отступаю под навес, чтобы разглядеть, кто идёт.</p>
+              <h3>{t('scenes.lina')}</h3>
+              <p>{t('scenes.linaLine')}</p>
             </div>
           </article>
         </section>
         <aside className="scene-context" aria-labelledby="sample-context">
-          <h2 id="sample-context">Контекст</h2>
+          <h2 id="sample-context">{t('scenes.context')}</h2>
           <dl>
-            <dt>Место</dt>
-            <dd>Прибрежная станция</dd>
-            <dt>Персонаж</dt>
-            <dd>Лина, пассажирка</dd>
-            <dt>Тон</dt>
-            <dd>Тихое напряжение</dd>
+            <dt>{t('scenes.location')}</dt>
+            <dd>{t('scenes.station')}</dd>
+            <dt>{t('scenes.character')}</dt>
+            <dd>{t('scenes.passenger')}</dd>
+            <dt>{t('scenes.tone')}</dt>
+            <dd>{t('scenes.tension')}</dd>
           </dl>
         </aside>
       </div>
