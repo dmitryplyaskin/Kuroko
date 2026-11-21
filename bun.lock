@@ -13,6 +13,7 @@
       "name": "@kuroko/api",
       "dependencies": {
         "@kuroko/contracts": "workspace:*",
+        "@kuroko/tool-runtime": "workspace:*",
         "express": "^5.3.0",
         "express-rate-limit": "^8.7.5",
       },
@@ -27,6 +28,7 @@
         "@fontsource-variable/literata": "^5.3.0",
         "@fontsource-variable/onest": "^5.3.1",
         "@kuroko/contracts": "workspace:*",
+        "@kuroko/tool-runtime": "workspace:*",
         "@mantine/core": "9.8.2",
         "@mantine/hooks": "9.8.2",
         "@mantine/notifications": "9.8.2",
@@ -51,6 +53,12 @@
     },
     "packages/contracts": {
       "name": "@kuroko/contracts",
+    },
+    "packages/tool-runtime": {
+      "name": "@kuroko/tool-runtime",
+      "dependencies": {
+        "@kuroko/contracts": "workspace:*",
+      },
     },
   },
   "packages": {
@@ -79,6 +87,8 @@
     "@kuroko/api": ["@kuroko/api@workspace:apps/api"],
 
     "@kuroko/contracts": ["@kuroko/contracts@workspace:packages/contracts"],
+
+    "@kuroko/tool-runtime": ["@kuroko/tool-runtime@workspace:packages/tool-runtime"],
 
     "@kuroko/web": ["@kuroko/web@workspace:apps/web"],
 

@@ -2,11 +2,11 @@ import { isLlmErrorCode } from '@kuroko/contracts/errors';
 import type { ChatSnapshot, ChatSummary, ChatToolCall, SavedChat } from '@kuroko/contracts/chat';
 import type { LlmAssistantPart, LlmCompletion, LlmEvent, LlmMessage, LlmRequest, LlmToolCall } from '@kuroko/contracts/llm';
 import type { ToolId } from '@kuroko/contracts/tools';
+import { runToolCall, toolDeclarations } from '@kuroko/tool-runtime';
+import { toLlmMessages } from '@kuroko/tool-runtime/chatHistory';
 import type { ActiveSession } from '../../platform/session/model';
 import { sessionRequest, sessionResponse } from '../../platform/session/request';
 import { ApiError } from '../../shared/http/api';
-import { runToolCall, toolDeclarations } from '../tools/catalog';
-import { toLlmMessages } from './message';
 
 export const chatApi = {
   list: (session: ActiveSession) => sessionRequest<ChatSummary[]>(session, '/chats'),
@@ -14,6 +14,10 @@ export const chatApi = {
   open: (session: ActiveSession, id: string) => sessionRequest<SavedChat>(session, `/chats/${encodeURIComponent(id)}`),
   save: (session: ActiveSession, id: string, body: ChatSnapshot) =>
     sessionRequest<SavedChat>(session, `/chats/${encodeURIComponent(id)}`, { method: 'PUT', body }),
+  gmReply: (session: ActiveSession, { id, revision }: SavedChat, signal: AbortSignal) =>
+    sessionRequest<SavedChat>(session, `/chats/${encodeURIComponent(id)}/gm-reply`, {
+      method: 'POST', body: { revision }, signal, timeoutMs: 310_000,
+    }),
 };
 
 const maxToolRounds = 16;

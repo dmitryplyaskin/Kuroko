@@ -21,5 +21,5 @@ export type ChatMessage = {
 };
 
 export type ChatSummary = { id: string; title: string; updatedAt: number };
-export type ChatSnapshot = { revision: number; messages: ChatMessage[] };
-export type SavedChat = ChatSummary & ChatSnapshot;
+export type ChatSnapshot = { revision: number; messages: ChatMessage[]; gmMode?: boolean };
+export type SavedChat = ChatSummary & ChatSnapshot & { gmMode: boolean };

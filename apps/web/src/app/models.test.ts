@@ -22,7 +22,8 @@ import {
 import { $modelCatalog, loadModelCatalogFx } from '../features/connection/modelCatalog';
 import { $enabledTools, toolsInitialized, toolSettingChanged } from '../features/tools/model';
 import {
-  $chatAnnouncement, $chatError, $chatId, $chatRows, $replyId, chatCreateRequested, chatDraftChanged,
+  $chatAnnouncement, $chatError, $chatGmMode, $chatId, $chatNoToolsCalled, $chatRows, $replyId,
+  chatCreateRequested, chatDraftChanged, chatGmModeChanged,
   chatOpenRequested, chatSendRequested, chatShown, chatStopRequested,
   messageDeleteRequested, messageEditChanged, messageEditRequested, messageEditSubmitted,
 } from '../features/chat/model';
@@ -238,7 +239,7 @@ async function openChat() {
   return scope;
 }
 
-function withSavedChats(generate: typeof fetch): typeof fetch {
+function withSavedChats(generate: typeof fetch, publishScene?: (chat: SavedChat) => Promise<string>): typeof fetch {
   const chats: SavedChat[] = [];
   const enabled = new Set<ToolId>();
   return async (input, init) => {
@@ -254,25 +255,83 @@ function withSavedChats(generate: typeof fetch): typeof fetch {
     if (input === '/api/chats') {
       if (init?.method === 'GET') return Response.json(chats.map(({ id, title, updatedAt }) => ({ id, title, updatedAt })));
       assert.equal(init?.method, 'POST');
-      const chat = { id: String(chats.length + 1), title: '', updatedAt: Date.now(), revision: 0, messages: [] };
+      const chat = { id: String(chats.length + 1), title: '', updatedAt: Date.now(), revision: 0, messages: [], gmMode: false };
       chats.unshift(chat);
       return Response.json(chat, { status: 201 });
     }
     if (typeof input === 'string' && input.startsWith('/api/chats/')) {
-      const index = chats.findIndex((chat) => `/api/chats/${chat.id}` === input);
+      const gmReply = input.endsWith('/gm-reply');
+      const path = gmReply ? input.slice(0, -'/gm-reply'.length) : input;
+      const index = chats.findIndex((chat) => `/api/chats/${chat.id}` === path);
       assert.ok(index >= 0);
       const chat = chats[index]!;
+      if (gmReply) {
+        assert.ok(chat.gmMode && publishScene);
+        assert.equal(init?.method, 'POST');
+        assert.deepEqual(JSON.parse(String(init.body)), { revision: chat.revision });
+        const text = await publishScene(chat);
+        const message = { id: chat.messages.at(-1)!.id + 1, role: 'assistant' as const, text, time: Date.now() };
+        const saved = { ...chat, revision: chat.revision + 1, messages: [...chat.messages, message] };
+        chats[index] = saved;
+        return Response.json(saved);
+      }
       if (init?.method === 'GET') return Response.json(chat);
       assert.equal(init?.method, 'PUT');
-      const { revision, messages } = JSON.parse(String(init.body)) as ChatSnapshot;
+      const { revision, messages, gmMode } = JSON.parse(String(init.body)) as ChatSnapshot;
       assert.equal(revision, chat.revision);
-      const saved = { ...chat, revision: revision + 1, messages };
+      const saved = { ...chat, revision: revision + 1, messages, gmMode: gmMode ?? chat.gmMode };
       chats[index] = saved;
       return Response.json(saved);
     }
     return generate(input, init);
   };
 }
+
+test('GM chat uses the server publication and restores its mode without re-saving the response', async () => {
+  const originalFetch = globalThis.fetch;
+  const waiting = Promise.withResolvers<void>();
+  const scene = Promise.withResolvers<string>();
+  const revisions: number[] = [];
+  globalThis.fetch = withSavedChats(async () => {
+    assert.fail('GM chat must not call the browser generation endpoint');
+  }, async (chat) => {
+    revisions.push(chat.revision);
+    waiting.resolve();
+    return scene.promise;
+  });
+  const scope = await openChat();
+  try {
+    assert.equal(scope.getState($chatGmMode), false);
+    await allSettled(toolSettingChanged, { scope, params: { id: 'test_echo', enabled: true } });
+    await allSettled(chatGmModeChanged, { scope, params: true });
+    assert.equal(scope.getState($chatGmMode), true);
+
+    await allSettled(chatDraftChanged, { scope, params: 'Осматриваю ворота' });
+    scopeBind(chatSendRequested, { scope })();
+    await waiting.promise;
+    assert.notEqual(scope.getState($replyId), null);
+    assert.deepEqual(scope.getState($chatRows).map(({ text, toolCalls }) => [text, toolCalls]), [
+      ['Осматриваю ворота', undefined], ['', undefined],
+    ]);
+    scene.resolve('Ворота приоткрыты.');
+    await allSettled(scope);
+    assert.equal(scope.getState($chatError), null);
+    assert.equal(scope.getState($chatNoToolsCalled), false);
+    assert.deepEqual(scope.getState($chatRows).map(({ text }) => text), ['Осматриваю ворота', 'Ворота приоткрыты.']);
+
+    const id = scope.getState($chatId);
+    await allSettled(chatCreateRequested, { scope });
+    assert.equal(scope.getState($chatGmMode), false);
+    await allSettled(chatOpenRequested, { scope, params: id });
+    assert.equal(scope.getState($chatGmMode), true);
+    await allSettled(chatDraftChanged, { scope, params: 'Заглядываю внутрь' });
+    await allSettled(chatSendRequested, { scope });
+    assert.deepEqual(revisions, [2, 4]);
+  } finally {
+    scene.resolve('');
+    globalThis.fetch = originalFetch;
+  }
+});
 
 test('chat streams replies, restores separate chats, and sends the selected conversation history', async () => {
   const payloads: unknown[] = [];

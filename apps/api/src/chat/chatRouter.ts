@@ -2,11 +2,14 @@ import type { ChatMessage, ChatSnapshot, ChatToolCall } from '@kuroko/contracts/
 import { errorBody } from '@kuroko/contracts/errors';
 import { Router } from 'express';
 import { jsonObject, jsonValue, record } from '../llm/json';
+import { LlmError } from '../llm/llmErrors';
 import { isToolCallId, isToolName } from '../llm/readLlmRequest';
 import type { createChatStore } from './chatStore';
+import { GmReplyError, type createGmReply } from './gmReply';
 
-export function createChatRouter(store: ReturnType<typeof createChatStore>) {
+export function createChatRouter(store: ReturnType<typeof createChatStore>, gmReply: ReturnType<typeof createGmReply>) {
   const router = Router();
+  const activeGmTurns = new Set<string>();
   router.get('/', (_request, response) => { response.json(store.list(response.locals.user.id)); });
   router.post('/', (_request, response) => { response.status(201).json(store.create(response.locals.user.id)); });
   router.get('/:id', (request, response) => {
@@ -25,12 +28,56 @@ export function createChatRouter(store: ReturnType<typeof createChatStore>) {
     else if (result === 'conflict') response.status(409).json(errorBody('chat_conflict'));
     else response.json(result);
   });
+  router.post('/:id/gm-reply', async (request, response) => {
+    const { id } = request.params;
+    const userId: number = response.locals.user.id;
+    const revision = record(request.body)?.revision;
+    if (!nonNegativeInteger(revision)) {
+      response.status(400).json(errorBody('invalid_request'));
+      return;
+    }
+    const chat = store.find(userId, id);
+    if (!chat) {
+      response.status(404).json(errorBody('chat_not_found'));
+      return;
+    }
+    const prompt = chat.messages.at(-1);
+    if (!chat.gmMode || chat.revision !== revision || prompt?.role !== 'user' || prompt.id >= Number.MAX_SAFE_INTEGER - 2 ||
+        activeGmTurns.has(id)) {
+      response.status(409).json(errorBody('chat_conflict'));
+      return;
+    }
+
+    const controller = new AbortController();
+    const disconnect = () => controller.abort();
+    const timeout = AbortSignal.timeout(300_000);
+    response.once('close', disconnect);
+    activeGmTurns.add(id);
+    try {
+      const result = await gmReply(userId, chat, AbortSignal.any([controller.signal, timeout]));
+      if (controller.signal.aborted || response.destroyed) return;
+      if (result === 'missing') response.status(404).json(errorBody('chat_not_found'));
+      else if (result === 'conflict') response.status(409).json(errorBody('chat_conflict'));
+      else response.json(result);
+    } catch (error) {
+      if (controller.signal.aborted || response.destroyed) return;
+      if (error instanceof GmReplyError) response.status(422).json(errorBody(error.code));
+      else {
+        const failure = timeout.aborted ? new LlmError('timeout') : error instanceof LlmError ? error : new LlmError('internal_error');
+        response.status(failure.status).json(failure.body);
+      }
+    } finally {
+      response.off('close', disconnect);
+      activeGmTurns.delete(id);
+    }
+  });
   return router;
 }
 
 function readSnapshot(value: unknown): ChatSnapshot | undefined {
   const snapshot = record(value);
-  if (!snapshot || !nonNegativeInteger(snapshot.revision) || !Array.isArray(snapshot.messages)) return;
+  if (!snapshot || !nonNegativeInteger(snapshot.revision) || !Array.isArray(snapshot.messages) ||
+      (snapshot.gmMode !== undefined && typeof snapshot.gmMode !== 'boolean')) return;
   const messages: ChatMessage[] = [];
   let previousId = 0;
   for (const value of snapshot.messages as unknown[]) {
@@ -46,7 +93,7 @@ function readSnapshot(value: unknown): ChatSnapshot | undefined {
     messages.push({ id, role, text, time, edited, toolCalls });
     previousId = id;
   }
-  return { revision: snapshot.revision, messages };
+  return { revision: snapshot.revision, messages, gmMode: snapshot.gmMode };
 }
 
 function readToolCalls(value: unknown, text: string): ChatToolCall[] | undefined {

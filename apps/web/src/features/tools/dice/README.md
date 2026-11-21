@@ -1,1 +1,0 @@
-The dice engine and numeric rules under `tools` are adapted from Mayori revision `3103cfc`. Kuroko uses its own chat storage and draws with Web Crypto. The original [MIT notice](../LICENSE.mayori) applies to the adapted Mayori code.

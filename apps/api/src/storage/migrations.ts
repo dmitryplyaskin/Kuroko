@@ -2,7 +2,7 @@ import { CodedError } from '@kuroko/contracts/errors';
 import type { Database } from 'bun:sqlite';
 import { createHash } from 'node:crypto';
 
-const latestVersion = 6;
+const latestVersion = 7;
 
 const initialSchema = `
   CREATE TABLE vault_settings (
@@ -105,6 +105,18 @@ const toolsSchema = `
   ) STRICT;
 `;
 
+const gmSchema = `
+  ALTER TABLE chats ADD COLUMN gm_mode INTEGER NOT NULL DEFAULT 0 CHECK (gm_mode IN (0, 1));
+
+  CREATE TABLE chat_private_turns (
+    chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+    reply_id INTEGER NOT NULL,
+    prompt_id INTEGER NOT NULL,
+    turn_json TEXT NOT NULL CHECK (json_valid(turn_json)),
+    PRIMARY KEY (chat_id, reply_id)
+  ) STRICT;
+`;
+
 export function migrateDatabase(db: Database, vaultKey: Buffer) {
   const fingerprint = createHash('sha256').update(vaultKey).digest('hex');
 
@@ -134,6 +146,7 @@ export function migrateDatabase(db: Database, vaultKey: Buffer) {
     }
     if (version < 5) db.exec(chatsSchema);
     if (version < 6) db.exec(toolsSchema);
+    if (version < 7) db.exec(gmSchema);
 
     if (version < latestVersion) db.exec(`PRAGMA user_version = ${latestVersion}`);
   }).immediate();

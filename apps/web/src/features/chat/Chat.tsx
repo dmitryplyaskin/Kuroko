@@ -1,5 +1,5 @@
 import { useI18n } from '../../shared/i18n/i18n';
-import { Button, Group, Modal, NativeSelect, useComputedColorScheme } from '@mantine/core';
+import { Button, Group, Modal, NativeSelect, Switch, useComputedColorScheme } from '@mantine/core';
 import { createWatch } from 'effector';
 import { useProvidedScope, useUnit } from 'effector-react';
 import { ArrowDownToLine, ArrowUpToLine, Plus } from 'lucide-react';
@@ -12,8 +12,8 @@ import { chatDisplayStyle } from './chatDisplayStyle';
 import type { ChatImage, Message } from './message';
 import {
   $chatAnnouncement, $chatRows, $expandedReasoning, $messageEditor, $replyId,
-  $chatId, $chatLoadError, $chatLoading, $chatLocked, $chatSaveError, $chats,
-  chatCreateRequested, chatLoadRetryRequested, chatOpenRequested, chatSaveRetryRequested,
+  $chatGmMode, $chatId, $chatLoadError, $chatLoading, $chatLocked, $chatSaveError, $chats,
+  chatCreateRequested, chatGmModeChanged, chatLoadRetryRequested, chatOpenRequested, chatSaveRetryRequested,
   chatHidden, chatShown, keepHistoryAtEndRequested, messageDeleteRequested, messageEditCancelled,
   messageEditChanged, messageEditRequested, messageEditSubmitted, messageSent, reasoningToggled,
 } from './model';
@@ -31,14 +31,15 @@ export default function Chat() {
   const {
     session, settings, rows, replyId, announcement, editor, expandedReasoning, show, hide, openEditor,
     changeDraft, closeEditor, saveEdit, remove, toggleReasoning,
-    chatId, chats, loading, locked, loadError, saveError, createChat, openChat, retryLoad, retrySave,
+    chatId, chats, gmMode, loading, locked, loadError, saveError, createChat, changeGmMode, openChat, retryLoad, retrySave,
   } = useUnit({
     session: $activeSession, settings: $appliedChatSettings,
     rows: $chatRows, replyId: $replyId, announcement: $chatAnnouncement,
     editor: $messageEditor, expandedReasoning: $expandedReasoning, show: chatShown, hide: chatHidden,
     openEditor: messageEditRequested, changeDraft: messageEditChanged, closeEditor: messageEditCancelled,
     saveEdit: messageEditSubmitted, remove: messageDeleteRequested, toggleReasoning: reasoningToggled,
-    chatId: $chatId, chats: $chats, loading: $chatLoading, locked: $chatLocked, loadError: $chatLoadError, saveError: $chatSaveError,
+    chatId: $chatId, chats: $chats, gmMode: $chatGmMode, loading: $chatLoading, locked: $chatLocked, loadError: $chatLoadError, saveError: $chatSaveError,
+    changeGmMode: chatGmModeChanged,
     createChat: chatCreateRequested, openChat: chatOpenRequested, retryLoad: chatLoadRetryRequested, retrySave: chatSaveRetryRequested,
   });
   const username = session?.user.username ?? '';
@@ -114,6 +115,12 @@ export default function Chat() {
             {t('chat.new')}
           </Button>
         </div>
+        {chatId && (
+          <div className="chat-mode chat-column">
+            <Switch label={t('chat.gmMode')} description={t('chat.gmModeDescription')} checked={gmMode} disabled={locked}
+              onChange={(event) => changeGmMode(event.currentTarget.checked)} />
+          </div>
+        )}
         {(loadError || saveError) && (
           <div className="chat-status chat-column">
             <p role="alert">{t(`error.${loadError ?? saveError!}`)}</p>

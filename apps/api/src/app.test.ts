@@ -396,6 +396,152 @@ function mockGeneration(respond: (url: URL, init?: RequestInit) => Response | Pr
   ));
 }
 
+function gmProviderStream(content: string, calls: { name: string; arguments: object }[] = []) {
+  const tool_calls = calls.map((call, index) => ({
+    index, id: `call_${index}`, function: { name: call.name, arguments: JSON.stringify(call.arguments) },
+  }));
+  const frame = { choices: [{ delta: { content, tool_calls }, finish_reason: calls.length ? 'tool_calls' : 'stop' }] };
+  return new Response(`data: ${JSON.stringify(frame)}\n\ndata: [DONE]\n\n`, {
+    headers: { 'Content-Type': 'text/event-stream' },
+  });
+}
+
+test('publishes only the player scene and can retrieve a private roll in a later GM turn', async () => {
+  await register('gm-owner');
+  await register('gm-other');
+  const cookie = sessionCookie(await login('gm-owner')).token;
+  const other = sessionCookie(await login('gm-other')).token;
+  await saveGenerationPreset(cookie, 'openai', 'gm-test-key');
+  for (const tool of ['roll_dice', 'getRollDetails']) {
+    expect((await request(`/settings/tools/${tool}`, { method: 'PUT', cookie, body: { enabled: true } })).status).toBe(200);
+  }
+  const created = await (await request('/chats', { method: 'POST', cookie })).json() as SavedChat;
+  const path = `/chats/${created.id}`;
+  const save = async (body: ChatSnapshot) => {
+    const response = await request(path, { method: 'PUT', cookie, body });
+    expect(response.status).toBe(200);
+    return await response.json() as SavedChat;
+  };
+  const reply = (chat: SavedChat, owner = cookie) =>
+    request(`${path}/gm-reply`, { method: 'POST', cookie: owner, body: { revision: chat.revision } });
+  expect(created.gmMode).toBe(false);
+  expect((await reply(created)).status).toBe(409);
+  const ready = await save({ revision: created.revision, gmMode: true, messages: [
+    { id: 1, role: 'user', text: 'Осматриваю ворота', time: 1 },
+  ] });
+  expect((await reply(ready, other)).status).toBe(404);
+
+  let round = 0;
+  let rollId = '';
+  let providerAssertion: unknown;
+  function respond(init?: RequestInit) {
+    const body = JSON.parse(String(init?.body));
+    expect(body.stream).toBe(true);
+    expect(body.tools.map(({ function: { name } }: { function: { name: string } }) => name))
+      .toEqual(['roll_dice', 'getRollDetails', 'publishScene']);
+    const last = body.messages.at(-1);
+    switch (round++) {
+      case 0:
+        return gmProviderStream('Закрытая подготовка', [
+          { name: 'roll_dice', arguments: { rolls: { hiddenGateCheck: 'd6' }, purpose: 'Стражник подкуплен' } },
+          { name: 'publishScene', arguments: { text: 'Преждевременная сцена' } },
+        ]);
+      case 1: {
+        expect(last).toMatchObject({ role: 'tool', tool_call_id: 'call_1', content: expect.stringContaining('by itself') });
+        const result = JSON.parse(body.messages.at(-2).content);
+        rollId = result.rollId;
+        expect(rollId).toMatch(/^gm_/);
+        expect(typeof result.values.hiddenGateCheck).toBe('number');
+        expect(result.details).toBeUndefined();
+        return gmProviderStream('Закрытая оценка', [{ name: 'publishScene', arguments: {
+          text: 'Ворота приоткрыты.', notes: `Засада у ворот. Проверка ${rollId}.`,
+        } }]);
+      }
+      case 2:
+        expect(JSON.stringify(body.messages)).toContain(`Засада у ворот. Проверка ${rollId}.`);
+        expect(JSON.stringify(body.messages)).not.toContain('Закрытая подготовка');
+        expect(last).toEqual({ role: 'user', content: 'Заглядываю внутрь' });
+        return gmProviderStream('', [{ name: 'getRollDetails', arguments: { rollIds: [rollId] } }]);
+      case 3:
+        expect(JSON.parse(last.content)).toMatchObject({ rolls: [
+          { rollId, tool: 'roll_dice', result: { values: { hiddenGateCheck: expect.any(Number) }, details: expect.any(Array) } },
+        ] });
+        return gmProviderStream('', [{ name: 'publishScene', arguments: { text: 'Внутри темно.' } }]);
+      default:
+        throw new Error('Unexpected model request');
+    }
+  }
+  const mock = mockGeneration((_url, init) => {
+    try {
+      return respond(init);
+    } catch (error) {
+      providerAssertion = error;
+      throw error;
+    }
+  });
+  try {
+    const result = await reply(ready);
+    if (providerAssertion) throw providerAssertion;
+    expect(result.status).toBe(200);
+    expect(result.headers.get('Content-Type')).toContain('application/json');
+    const scene = await result.json() as SavedChat;
+    expect(scene).toEqual({
+      ...ready, revision: ready.revision + 1, updatedAt: expect.any(Number), messages: [
+        ...ready.messages, { id: 2, role: 'assistant', text: 'Ворота приоткрыты.', time: expect.any(Number) },
+      ],
+    });
+    expect(await (await request(path, { cookie })).json()).toEqual(scene);
+    const privateLog = db.query<{ turn_json: string }, []>('SELECT turn_json FROM chat_private_turns').get()!.turn_json;
+    for (const secret of ['Закрытая подготовка', 'Закрытая оценка', 'Стражник подкуплен', 'hiddenGateCheck', 'Засада у ворот']) {
+      expect(privateLog).toContain(secret);
+      expect(JSON.stringify(scene)).not.toContain(secret);
+    }
+    expect((await reply(ready)).status).toBe(409);
+
+    const off = await save({ revision: scene.revision, messages: scene.messages, gmMode: false });
+    expect(await (await request(path, { cookie })).json()).toEqual(off);
+    expect((await reply(off)).status).toBe(409);
+    const next = await save({ revision: off.revision, gmMode: true, messages: [
+      ...off.messages, { id: 3, role: 'user', text: 'Заглядываю внутрь', time: 3 },
+    ] });
+    const followUp = await reply(next);
+    if (providerAssertion) throw providerAssertion;
+    expect(followUp.status).toBe(200);
+    const secondScene = await followUp.json() as SavedChat;
+    expect(secondScene.messages.at(-1)).toEqual({ id: 4, role: 'assistant', text: 'Внутри темно.', time: expect.any(Number) });
+    expect(await (await request(path, { cookie })).json()).toEqual(secondScene);
+    expect(round).toBe(4);
+  } finally {
+    mock.mockRestore();
+  }
+});
+
+test('never falls back to unpublished GM text when the model ignores publication', async () => {
+  await register('gm-no-scene');
+  const cookie = sessionCookie(await login('gm-no-scene')).token;
+  await saveGenerationPreset(cookie, 'openai', 'gm-test-key');
+  const chat = await (await request('/chats', { method: 'POST', cookie })).json() as SavedChat;
+  const path = `/chats/${chat.id}`;
+  const saved = await (await request(path, { method: 'PUT', cookie, body: {
+    revision: chat.revision, gmMode: true, messages: [{ id: 1, role: 'user', text: 'Открываю дверь', time: 1 }],
+  } })).json() as SavedChat;
+  const choices: unknown[] = [];
+  const mock = mockGeneration((_url, init) => {
+    choices.push(JSON.parse(String(init?.body)).tool_choice);
+    return gmProviderStream('Тайный текст, который нельзя показать.');
+  });
+  try {
+    const reply = await request(`${path}/gm-reply`, { method: 'POST', cookie, body: { revision: saved.revision } });
+    expect(reply.status).toBe(422);
+    expect(await reply.json()).toEqual({ code: 'gm_scene_unpublished' });
+    expect(choices).toEqual(['auto', { type: 'function', function: { name: 'publishScene' } }]);
+    expect(await (await request(path, { cookie })).json()).toEqual(saved);
+    expect(db.query('SELECT * FROM chat_private_turns').all()).toEqual([]);
+  } finally {
+    mock.mockRestore();
+  }
+});
+
 test('uses the selected OpenRouter model endpoint without provider fallbacks', async () => {
   await register('route-owner');
   const cookie = sessionCookie(await login('route-owner')).token;

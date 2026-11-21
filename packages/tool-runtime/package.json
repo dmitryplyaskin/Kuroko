@@ -1,0 +1,13 @@
+{
+  "name": "@kuroko/tool-runtime",
+  "license": "AGPL-3.0-only",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/runtime.ts",
+    "./chatHistory": "./src/chatHistory.ts"
+  },
+  "dependencies": {
+    "@kuroko/contracts": "workspace:*"
+  }
+}

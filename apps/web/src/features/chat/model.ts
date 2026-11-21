@@ -24,6 +24,7 @@ export const chatCreateRequested = createEvent();
 export const chatOpenRequested = createEvent<string>();
 export const chatLoadRetryRequested = createEvent();
 export const chatSaveRetryRequested = createEvent();
+export const chatGmModeChanged = createEvent<boolean>();
 export const messageEditRequested = createEvent<number>();
 export const messageEditChanged = createEvent<{ id: number; text: string }>();
 export const messageEditCancelled = createEvent();
@@ -39,7 +40,8 @@ const navigateFx = createEffect(async ({ session, action, id }: Navigation) => {
   const chat = chats[0] ? await chatApi.open(session, chats[0].id) : await chatApi.create(session);
   return { chat, chats };
 });
-const saveChatFx = createEffect(({ session, id, revision, messages }: Save) => chatApi.save(session, id, { revision, messages }));
+const saveChatFx = createEffect(({ session, id, revision, messages, gmMode }: Save) =>
+  chatApi.save(session, id, { revision, messages, gmMode }));
 const chatOpened = inActiveSession(navigateFx.done, ({ session }) => session);
 const openFailed = inActiveSession(navigateFx.fail, ({ session }) => session);
 const saveSucceeded = inActiveSession(saveChatFx.done, ({ session }) => session);
@@ -50,6 +52,7 @@ const $saved = createStore<SavedChat | null>(null)
   .on(saveSucceeded, (_, { result }) => result)
   .reset(sessionEnded);
 export const $chatId = $saved.map((chat) => chat?.id ?? '');
+export const $chatGmMode = $saved.map((chat) => chat?.gmMode ?? false);
 export const $chats = createStore<ChatSummary[]>([])
   .on(chatOpened, (chats, { result }) => updateChatList(result.chats ?? chats, result.chat))
   .on(saveSucceeded, (chats, { result }) => updateChatList(chats, result))
@@ -161,10 +164,11 @@ $chatDraft.reset(messageSent);
 
 const replyDelta = createEvent<{ generation: Generation; text: string }>();
 const replyContentReceived = createEvent<{ generation: Generation; text: string; toolCalls: ChatToolCall[] }>();
-const streamReplyFx = createEffect(({ reply: { generation }, messages }: { reply: Reply; messages: ChatSnapshot['messages'] }) => {
+const generateReplyFx = createEffect(async ({ reply: { generation }, chat }: { reply: Reply; chat: SavedChat }) => {
+  if (chat.gmMode) return chatApi.gmReply(generation.session, chat, generation.controller.signal);
   const publish = scopeBind(replyDelta, { safe: true });
   const report = scopeBind(replyContentReceived, { safe: true });
-  return streamChatReply(generation.session, messages, generation.enabledTools, generation.controller.signal,
+  return streamChatReply(generation.session, chat.messages, generation.enabledTools, generation.controller.signal,
     (delta) => publish({ generation, text: delta }), (text, toolCalls) => report({ generation, text, toolCalls }));
 });
 
@@ -178,13 +182,13 @@ const replyContentUpdated = sample({
 });
 $reply.on(replyContentUpdated, (_, reply) => reply);
 
-const replyPrepared = saveSucceeded.filterMap(({ params, result }) => params.reply && { reply: params.reply, messages: result.messages });
+const replyPrepared = saveSucceeded.filterMap(({ params, result }) => params.reply && { reply: params.reply, chat: result });
 sample({
   clock: replyPrepared,
   filter: $visible,
-  target: streamReplyFx,
+  target: generateReplyFx,
 });
-$reply.on(streamReplyFx, (_, { reply }) => reply);
+$reply.on(generateReplyFx, (_, { reply }) => reply);
 
 const replyUpdated = sample({
   clock: replyDelta,
@@ -195,16 +199,19 @@ const replyUpdated = sample({
 $reply.on(replyUpdated, (_, reply) => reply);
 
 const replyCompleted = sample({
-  clock: inActiveSession(streamReplyFx.done, ({ reply }) => reply.generation.session),
+  clock: inActiveSession(generateReplyFx.done, ({ reply }) => reply.generation.session),
   source: $reply,
   filter: (reply, { params }) => reply?.generation === params.reply.generation,
-  fn: (reply, { result }) => ({
-    message: { ...reply!.message, text: result },
-    noToolsCalled: Boolean(reply!.generation.enabledTools.length && !reply!.message.toolCalls?.length),
-  }),
+  fn: (reply, { result }) => typeof result === 'string'
+    ? {
+      message: { ...reply!.message, text: result },
+      noToolsCalled: Boolean(reply!.generation.enabledTools.length && !reply!.message.toolCalls?.length),
+      saved: null,
+    }
+    : { message: result.messages.at(-1)!, noToolsCalled: false, saved: result },
 });
 const replyFailed = sample({
-  clock: inActiveSession(streamReplyFx.fail, ({ reply }) => reply.generation.session),
+  clock: inActiveSession(generateReplyFx.fail, ({ reply }) => reply.generation.session),
   source: $reply,
   filter: (reply, { params }) => reply?.generation === params.reply.generation,
   fn: (reply, { error, params }) => ({ message: reply!.message, error, session: params.reply.generation.session }),
@@ -220,7 +227,14 @@ const replyStopped = sample({
 
 sample({ clock: replyStopped, fn: ({ controller }) => controller, target: abortFx });
 $reply.reset(replyCompleted, replyFailed, replyStopped);
-$messages.on([replyCompleted, replyFailed, replyStopped], (messages, { message }) => hasMessageContent(message) ? [...messages, message] : messages);
+$messages
+  .on(replyCompleted, (messages, { message, saved }) => {
+    if (saved) return saved.messages;
+    return hasMessageContent(message) ? [...messages, message] : messages;
+  })
+  .on([replyFailed, replyStopped], (messages, { message }) => hasMessageContent(message) ? [...messages, message] : messages);
+$saved.on(replyCompleted, (chat, { saved }) => saved ?? chat);
+$chats.on(replyCompleted, (chats, { saved }) => saved ? updateChatList(chats, saved) : chats);
 
 export const $chatNoToolsCalled = createStore(false)
   .on(replyCompleted, (_, { noToolsCalled }) => noToolsCalled)
@@ -270,11 +284,18 @@ $editor
   .reset(messageEdited)
   .on(messageDeleted, (editor, id) => editor?.id === id ? null : editor);
 
-const historyChanged = createEvent<{ reply?: Reply }>();
+const historyChanged = createEvent<{ reply?: Reply; gmMode?: boolean }>();
 sample({ clock: messageSent, fn: ({ reply }) => ({ reply }), target: historyChanged });
 sample({ clock: [messageEdited, messageDeleted], fn: () => ({}), target: historyChanged });
 sample({
-  clock: [replyCompleted, replyFailed, replyStopped],
+  clock: chatGmModeChanged,
+  source: { locked: $chatLocked, chat: $saved },
+  filter: ({ locked, chat }, gmMode) => !locked && chat !== null && chat.gmMode !== gmMode,
+  fn: (_, gmMode) => ({ gmMode }),
+  target: historyChanged,
+});
+sample({
+  clock: [replyCompleted.filter({ fn: ({ saved }) => !saved }), replyFailed, replyStopped],
   filter: ({ message }) => hasMessageContent(message),
   fn: () => ({}),
   target: historyChanged,
@@ -283,7 +304,8 @@ sample({
   clock: historyChanged,
   source: { session: $activeSession, chat: $saved, messages: $messages },
   filter: ({ session, chat }) => session !== null && chat !== null,
-  fn: ({ session, chat, messages }, { reply }): Save => ({ session: session!, id: chat!.id, revision: chat!.revision, messages, reply }),
+  fn: ({ session, chat, messages }, { reply, gmMode }): Save =>
+    ({ session: session!, id: chat!.id, revision: chat!.revision, messages, reply, gmMode }),
   target: saveChatFx,
 });
 
@@ -304,7 +326,7 @@ export const $expandedReasoning = createStore<ReadonlySet<number>>(new Set())
   .reset(chatOpened, sessionEnded);
 
 export const $chatAnnouncement = createStore<MessageKey | null>(null)
-  .on(streamReplyFx, () => 'chat.announcementAnswering')
+  .on(generateReplyFx, () => 'chat.announcementAnswering')
   .on(replyCompleted, () => 'chat.announcementReady')
   .reset(replyFailed)
   .on(replyStopped, () => 'chat.announcementStopped')

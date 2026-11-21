@@ -10,6 +10,7 @@ export const apiErrorCodes = [
   'auth_required', 'auth_rate_limit', 'username_invalid', 'password_length', 'username_taken',
   'invalid_credentials', 'current_password_invalid', 'password_unchanged', 'account_name_mismatch',
   'chat_settings_invalid', 'chat_not_found', 'chat_conflict', 'preset_name_invalid', 'preset_settings_invalid', 'preset_not_found',
+  'gm_scene_unpublished', 'gm_response_length', 'response_blocked',
   'preset_name_taken', 'provider_key_invalid', 'provider_key_name_taken', 'provider_key_not_found',
   'model_catalog_selection_invalid', 'model_catalog_key_invalid', 'model_catalog_rejected',
   'model_catalog_rate_limit', 'model_catalog_unavailable',
