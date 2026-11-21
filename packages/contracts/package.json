@@ -1,0 +1,11 @@
+{
+  "name": "@kuroko/contracts",
+  "license": "AGPL-3.0-only",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./auth": "./src/auth.ts",
+    "./chatSettings": "./src/chatSettings.ts",
+    "./connectionSettings": "./src/connectionSettings.ts"
+  }
+}

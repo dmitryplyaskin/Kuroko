@@ -1,0 +1,12 @@
+.auth-panel { inline-size: min(100%, 380px); margin-inline: auto; }
+
+.auth-switch {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0 3px;
+  color: var(--kr-muted);
+  font-size: .9rem;
+  border-block-start: 1px solid var(--kr-border);
+  padding-block-start: 10px;
+}

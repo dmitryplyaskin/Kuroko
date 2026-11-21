@@ -1,0 +1,23 @@
+.mode-options, .accent-options { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.mode-option { grid-template-columns: minmax(0, 1fr) auto; }
+.mode-preview {
+  grid-column: 1 / -1;
+  display: flex;
+  min-block-size: 88px;
+  overflow: hidden;
+  border: 1px solid var(--kr-control);
+  border-radius: var(--kr-radius-control);
+}
+
+.mode-preview > span { display: grid; flex: 1; align-content: center; gap: 7px; padding: 14px; }
+.mode-preview i { display: block; max-inline-size: 70px; block-size: 4px; border-radius: 4px; }
+.mode-preview i:first-child { inline-size: 56%; block-size: 8px; }
+.accent-option { grid-template-columns: auto minmax(0, 1fr) auto; min-block-size: 54px; }
+.accent-swatch { inline-size: 19px; block-size: 19px; border-radius: 50%; }
+
+@media (max-width: 490px) {
+  .mode-options, .accent-options { grid-template-columns: minmax(0, 1fr); }
+  .mode-option { grid-template-columns: 76px minmax(0, 1fr) auto; }
+  .mode-preview { grid-column: auto; min-block-size: 42px; }
+  .mode-preview > span { padding: 6px; }
+}

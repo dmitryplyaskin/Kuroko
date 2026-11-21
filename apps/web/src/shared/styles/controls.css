@@ -1,0 +1,79 @@
+.icon-tile {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  inline-size: 36px;
+  block-size: 36px;
+  border-radius: var(--kr-radius-control);
+  background: var(--kr-accent-surface);
+  color: var(--kr-accent);
+}
+
+.theme-trigger, .icon-button, .text-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-inline-size: 42px;
+  min-block-size: 42px;
+  background: transparent;
+  color: var(--kr-muted);
+  font: inherit;
+  border: 0;
+  border-radius: var(--kr-radius-control);
+  cursor: pointer;
+}
+
+.theme-trigger { padding-inline: 10px; border: 1px solid var(--kr-control); }
+.text-button {
+  padding-inline: 7px;
+  color: var(--kr-accent);
+  font-weight: 650;
+  text-decoration: underline;
+  text-underline-offset: .2em;
+}
+
+:is(.icon-button, .text-button):disabled { opacity: .6; cursor: default; }
+
+.field-group { min-inline-size: 0; padding: 0; margin: 0; border: 0; }
+.field-group + .field-group { margin-block-start: 32px; }
+.field-group legend { padding: 0; margin-block-end: 12px; font-size: 1.075rem; font-weight: 690; letter-spacing: -.015em; }
+
+.choice-option {
+  position: relative;
+  display: grid;
+  align-items: center;
+  gap: 10px;
+  padding: 11px;
+  border: 1px solid var(--kr-control);
+  border-radius: var(--kr-radius-panel);
+  background: var(--kr-surface);
+  cursor: pointer;
+  font-size: .88rem;
+  font-weight: 600;
+}
+
+.choice-option:has(input:checked) { border-color: var(--kr-accent); background: var(--kr-accent-surface); }
+.choice-option input { position: absolute; inline-size: 1px; block-size: 1px; opacity: 0; }
+
+.choice-option:has(input:focus-visible) {
+  outline: 2px solid var(--kr-accent);
+  outline-offset: 3px;
+}
+
+.option-label { display: flex; align-items: center; gap: 8px; min-block-size: 26px; }
+.option-label svg { flex: none; }
+.option-check { color: var(--kr-accent); visibility: hidden; }
+.choice-option:has(input:checked) .option-check { visibility: visible; }
+
+@media (hover: hover) {
+  :is(.theme-trigger, .icon-button, .text-button):not(:disabled):hover,
+  .choice-option:not(:has(input:checked)):hover { background: var(--kr-hover); }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  :is(.theme-trigger, .icon-button, .text-button, .choice-option) {
+    transition: background-color var(--motion-fast) var(--motion-ease),
+      border-color var(--motion-fast) var(--motion-ease), color var(--motion-fast) var(--motion-ease);
+  }
+}

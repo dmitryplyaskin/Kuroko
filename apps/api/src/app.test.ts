@@ -2,10 +2,10 @@ import { afterEach, beforeEach, expect, spyOn, test } from 'bun:test';
 import { randomBytes } from 'node:crypto';
 import { once } from 'node:events';
 import type { Server } from 'node:http';
-import { defaultChatSettings } from '../../shared/chatSettings';
-import { defaultConnectionSettings, type ProviderKey } from '../../shared/connectionSettings';
+import { defaultChatSettings } from '@kuroko/contracts/chatSettings';
+import { defaultConnectionSettings, type ProviderKey } from '@kuroko/contracts/connectionSettings';
 import { createApp } from './app';
-import { openDatabase } from './database';
+import { openDatabase } from './storage/database';
 
 let db: ReturnType<typeof openDatabase>;
 let server: Server;
@@ -263,7 +263,11 @@ test('loads models with the selected provider’s stored key without echoing pro
       ] }));
     }
     if (url.host === 'api.anthropic.com') {
-      return Promise.resolve(Response.json({ data: [{ id: 'claude-test', max_input_tokens: 8192, max_tokens: 2048 }] }));
+      const firstPage = !url.searchParams.has('after_id');
+      const id = firstPage ? 'claude-first' : 'claude-second';
+      return Promise.resolve(Response.json({
+        data: [{ id, max_input_tokens: 8192, max_tokens: 2048 }], has_more: firstPage, last_id: id,
+      }));
     }
     if (url.host === 'openrouter.ai') {
       return Promise.resolve(Response.json({ data: [{ id: 'author/model:free', context_length: 8192 }, { id: `echo-${apiKey}` }] }));
@@ -283,11 +287,14 @@ test('loads models with the selected provider’s stored key without echoing pro
     expect(upstream[0]?.url.searchParams.has('key')).toBe(false);
     expect(new Headers(upstream[0]?.init?.headers).get('x-goog-api-key')).toBe(apiKey);
     expect(upstream[1]?.url.searchParams.get('pageToken')).toBe('page-2');
-    expect(await (await catalog('anthropic')).json()).toEqual({ models: [{ id: 'claude-test', inputLimit: 8192, outputLimit: 2048 }] });
+    expect(await (await catalog('anthropic')).json()).toEqual({ models: [
+      { id: 'claude-first', inputLimit: 8192, outputLimit: 2048 }, { id: 'claude-second', inputLimit: 8192, outputLimit: 2048 },
+    ] });
     expect(new Headers(upstream[2]?.init?.headers).get('x-api-key')).toBe(apiKey);
+    expect(upstream[3]?.url.searchParams.get('after_id')).toBe('claude-first');
     expect(await (await catalog('openrouter')).json()).toEqual({ models: [{ id: 'author/model:free', contextLimit: 8192 }] });
-    expect(upstream[3]?.url.pathname).toBe('/api/v1/models/user');
-    expect(new Headers(upstream[3]?.init?.headers).get('Authorization')).toBe(`Bearer ${apiKey}`);
+    expect(upstream[4]?.url.pathname).toBe('/api/v1/models/user');
+    expect(new Headers(upstream[4]?.init?.headers).get('Authorization')).toBe(`Bearer ${apiKey}`);
     const rejected = await catalog('openai');
     expect(rejected.status).toBe(422);
     expect(await rejected.text()).not.toContain(apiKey);

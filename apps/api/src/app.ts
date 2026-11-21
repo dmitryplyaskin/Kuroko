@@ -1,7 +1,7 @@
 import type { Database } from 'bun:sqlite';
 import { extname, join } from 'node:path';
 import express, { type ErrorRequestHandler } from 'express';
-import { createApiRouter } from './routes/api';
+import { createApiRouter } from './http/apiRouter';
 
 const handleError: ErrorRequestHandler = (error: unknown, _request, response, next) => {
   if (response.headersSent) {

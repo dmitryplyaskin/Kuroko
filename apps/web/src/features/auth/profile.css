@@ -1,0 +1,62 @@
+.profile-trigger, .profile-action {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  inline-size: 100%;
+  min-block-size: 44px;
+  background: transparent;
+  border: 0;
+  border-radius: var(--kr-radius-control);
+  color: var(--kr-text);
+  padding-inline: 8px;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.account-avatar { font-weight: 680; }
+.profile-trigger .account-avatar { inline-size: 30px; block-size: 30px; font-size: .85rem; }
+.profile-trigger-name { font-size: .85rem; font-weight: 560; overflow-wrap: anywhere; }
+.profile-trigger-arrow { color: var(--kr-muted); }
+
+.profile-identity {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-block: 3px 16px;
+  min-inline-size: 0;
+}
+
+.profile-identity strong, .profile-form { overflow-wrap: anywhere; }
+.profile-identity .account-avatar { inline-size: 42px; block-size: 42px; }
+.profile-actions { display: grid; gap: 3px; border-block-start: 1px solid var(--kr-border); padding-block-start: 8px; }
+.profile-action { padding: 7px 9px; font-size: .9rem; font-weight: 560; }
+.profile-action:disabled { opacity: .6; cursor: default; }
+.profile-action-danger { color: var(--kr-danger); }
+.profile-form { display: grid; gap: 14px; }
+.profile-form > p { font-size: .9rem; color: var(--kr-muted); }
+.profile-error { color: var(--kr-danger); font-size: .875rem; }
+.profile-form .profile-error:not(:empty) { margin-block-end: 10px; }
+.profile-overview .profile-error:not(:empty) { margin-block-start: 10px; }
+
+@media (min-width: 741px) {
+  .workspace[data-menu-collapsed] .profile-trigger { display: flex; justify-content: center; padding: 0; }
+  .workspace[data-menu-collapsed] :is(.profile-trigger-name, .profile-trigger-arrow) { display: none; }
+}
+
+@media (hover: hover) {
+  :is(.profile-trigger, .profile-action):not(:disabled):hover { background: var(--kr-hover); }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  :is(.profile-trigger, .profile-action) {
+    transition: background-color var(--motion-fast) var(--motion-ease),
+      border-color var(--motion-fast) var(--motion-ease), color var(--motion-fast) var(--motion-ease);
+  }
+}
+
+@media (max-width: 740px) {
+  .profile-trigger { display: flex; justify-content: center; min-inline-size: 44px; padding: 0; }
+  .profile-trigger-name, .profile-trigger-arrow { display: none; }
+}

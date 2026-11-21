@@ -6,12 +6,12 @@
   "engines": {
     "bun": ">=1.4.5"
   },
-  "workspaces": ["apps/*"],
+  "workspaces": ["apps/*", "packages/*"],
   "scripts": {
     "dev": "bun run --parallel --filter \"@kuroko/*\" dev",
     "dev:api": "bun run --filter @kuroko/api dev",
     "dev:web": "bun run --filter @kuroko/web dev",
-    "lint": "bun run --bun oxlint --react-plugin --jsx-a11y-plugin --deny correctness apps",
+    "lint": "bun run --bun oxlint --react-plugin --jsx-a11y-plugin --deny correctness apps packages",
     "typecheck": "bun run --parallel --filter \"@kuroko/*\" typecheck",
     "build": "bun run typecheck && bun run --parallel --filter \"@kuroko/*\" build",
     "start": "NODE_ENV=production bun dist/server.js --serve-web"

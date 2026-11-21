@@ -1,14 +1,17 @@
 import '@mantine/core/styles.css';
 import '@fontsource-variable/onest';
 import '@fontsource-variable/literata';
-import './styles.css';
+import './shared/styles/base.css';
+import './shared/styles/mantine.css';
+import './shared/styles/controls.css';
+import './shared/styles/page.css';
 import { lazy, StrictMode, Suspense } from 'react';
 import { createRoot } from 'react-dom/client';
-import { App } from './App';
-import { NotificationAnnouncements } from './notifications';
-import { KurokoThemeProvider } from './theme';
+import { App } from './app/App';
+import { NotificationAnnouncements } from './shared/notifications/notifications';
+import { KurokoThemeProvider } from './shared/theme/theme';
 
-const AppNotifications = lazy(() => import('./AppNotifications'));
+const AppNotifications = lazy(() => import('./shared/notifications/AppNotifications'));
 
 const root = document.getElementById('root');
 if (!root) {

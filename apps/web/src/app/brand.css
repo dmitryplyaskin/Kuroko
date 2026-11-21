@@ -1,0 +1,11 @@
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--kr-text);
+  font-size: 1.2rem;
+  font-weight: 730;
+  letter-spacing: -.035em;
+}
+
+.brand > span { color: var(--kr-accent-text); background: var(--kr-accent); }

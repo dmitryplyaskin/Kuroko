@@ -1,0 +1,16 @@
+:root {
+  --motion-fast: 140ms;
+  --motion-ease: cubic-bezier(.2, .7, .3, 1);
+}
+
+body {
+  background: var(--kr-canvas);
+  color: var(--kr-text);
+}
+
+h1, h2, h3, p, figure, dl, dd { margin: 0; }
+
+:is(button, a, input, textarea, [tabindex]):focus-visible {
+  outline: 2px solid var(--kr-accent);
+  outline-offset: 3px;
+}

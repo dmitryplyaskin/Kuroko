@@ -1,8 +1,8 @@
 import { mkdirSync, realpathSync } from 'node:fs';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { createApp } from './app';
-import { openDatabase } from './database';
-import { loadVaultKey } from './vault-key';
+import { openDatabase } from './storage/database';
+import { loadVaultKey } from './storage/vaultKey';
 
 const port = Number(process.env.PORT ?? 3000);
 if (!Number.isInteger(port) || port < 1 || port > 65535) {
