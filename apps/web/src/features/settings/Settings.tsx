@@ -2,7 +2,7 @@ import { Tabs } from '@mantine/core';
 import { MessageSquare, Palette, Plug } from 'lucide-react';
 import { lazy, Suspense } from 'react';
 import { Appearance } from './Appearance';
-import './settings.css';
+import classes from './Settings.module.css';
 import type { useChatSettings } from '../chat-settings/useChatSettings';
 
 const ChatPreferences = lazy(() => import('../chat-settings/ChatPreferences'));
@@ -27,7 +27,8 @@ export function SettingsPage({ account, onSessionEnd, chatSettings, tab, setTab 
         <h1 tabIndex={-1}>Настройки</h1>
         <p>{descriptions[tab ?? 'appearance']}</p>
       </header>
-      <Tabs value={tab} onChange={setTab} keepMounted={false} color="var(--kr-accent)" className="settings-tabs">
+      <Tabs value={tab} onChange={setTab} keepMounted={false} color="var(--kr-accent)"
+        classNames={{ list: classes.list, tab: classes.tab }} styles={{ panel: { paddingBlockStart: 26 } }}>
         <Tabs.List aria-label="Разделы настроек">
           <Tabs.Tab value="appearance" leftSection={<Palette size={17} aria-hidden="true" />}>Внешний вид</Tabs.Tab>
           <Tabs.Tab value="chat" leftSection={<MessageSquare size={17} aria-hidden="true" />}>Чат</Tabs.Tab>

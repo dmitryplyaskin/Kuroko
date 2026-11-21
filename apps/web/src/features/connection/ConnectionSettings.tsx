@@ -118,7 +118,7 @@ export default function ConnectionSettings({ account, onSessionEnd }: { account:
               <NativeSelect label="API-ключ" value={keyId} data={keyOptions}
                 onChange={(event) => updateDraft({ keyId: event.currentTarget.value })} />
               <Tooltip label={`Ключи ${providerConfig.label}`} events={{ hover: true, focus: true, touch: false }}>
-                <ActionIcon ref={keyManagerTrigger} type="button" variant="default" aria-label={`Управлять ключами ${providerConfig.label}`}
+                <ActionIcon ref={keyManagerTrigger} type="button" variant="default" size={44} aria-label={`Управлять ключами ${providerConfig.label}`}
                   aria-haspopup="dialog" onClick={() => setKeyManagerOpen(true)}>
                   <KeyRound size={19} aria-hidden="true" />
                 </ActionIcon>
@@ -173,7 +173,7 @@ export default function ConnectionSettings({ account, onSessionEnd }: { account:
               {submission.status === 'saved' ? submission.message : activePreset && `Активный пресет · ${activePreset.name}`}
             </output>
           </div>
-          <Button type="submit" loading={saving && !deleteOpen} disabled={saving || loadingModels}>Сохранить пресет</Button>
+          <Button type="submit" ms="auto" loading={saving && !deleteOpen} disabled={saving || loadingModels}>Сохранить пресет</Button>
         </div>
       </form>
       {keyManagerOpen && (

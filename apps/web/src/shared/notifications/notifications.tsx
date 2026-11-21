@@ -1,6 +1,7 @@
 import { VisuallyHidden } from '@mantine/core';
 import { notifications, useNotifications, type NotificationData } from '@mantine/notifications';
 import { Check, CircleX, Info, TriangleAlert } from 'lucide-react';
+import classes from './notifications.module.css';
 
 const tones = {
   success: { Icon: Check, color: 'var(--kr-accent)' },
@@ -25,7 +26,13 @@ export function notify({ tone, message, title, id, autoClose }: Notice) {
     autoClose: duration,
     icon: <Icon size={18} aria-hidden="true" />,
     closeButtonProps: { 'aria-label': 'Закрыть уведомление' },
-    className: 'app-notification',
+    classNames: {
+      root: classes.notification,
+      icon: classes.icon,
+      title: classes.title,
+      description: classes.description,
+      closeButton: classes.closeButton,
+    },
     'data-tone': tone,
     withBorder: true,
     role: 'group',

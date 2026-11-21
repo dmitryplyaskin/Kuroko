@@ -41,8 +41,6 @@
 .chat-color-controls input { font-variant-numeric: tabular-nums; }
 .chat-color-hint { margin-block-start: 10px; color: var(--kr-muted); font-size: .875rem; line-height: 1.45; }
 .chat-preferences-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px 12px; margin-block-start: 20px; }
-.chat-preferences-actions .mantine-Button-root { max-inline-size: 100%; }
-.chat-preferences-actions .mantine-Button-label { white-space: normal; }
 .chat-preferences-status:not(:empty), .chat-preferences-error { display: block; margin-block-start: 8px; text-align: end; }
 .chat-preferences-status { color: var(--kr-muted); font-size: .875rem; }
 .chat-preferences-error, .chat-preferences-feedback p { color: var(--kr-danger); }

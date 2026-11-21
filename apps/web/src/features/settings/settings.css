@@ -1,4 +1,0 @@
-.settings-tabs .mantine-Tabs-list::before { border-color: var(--kr-border); }
-.settings-tabs .mantine-Tabs-tab { min-block-size: 44px; color: var(--kr-muted); font-weight: 600; }
-.settings-tabs .mantine-Tabs-tab[data-active] { color: var(--kr-accent); }
-.settings-tabs .mantine-Tabs-panel { padding-block-start: 26px; }

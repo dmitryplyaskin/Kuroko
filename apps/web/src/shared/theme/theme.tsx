@@ -1,9 +1,10 @@
 import {
-  Button, Checkbox, Modal, MantineProvider, createTheme, defaultVariantColorsResolver,
+  Button, Checkbox, Input, MantineProvider, Menu, Modal, createTheme, defaultVariantColorsResolver,
   type CSSVariablesResolver, type VariantColorsResolver,
 } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
 import { createContext, useContext, useMemo, type ReactNode } from 'react';
+import classes from './theme.module.css';
 
 type Accent = { accent: string; accentHover: string; accentText: string; accentSurface: string };
 type Palette = Accent & {
@@ -126,9 +127,37 @@ const mantineTheme = createTheme({
   respectReducedMotion: true,
   variantColorResolver,
   components: {
-    Button: Button.extend({ defaultProps: { variant: 'filled' } }),
-    Checkbox: Checkbox.extend({ vars: () => ({ root: { '--checkbox-icon-color': 'var(--kr-accent-text)' } }) }),
-    Modal: Modal.extend({ defaultProps: { radius: 'var(--kr-radius-panel)', padding: 'lg', centered: true } }),
+    Button: Button.extend({
+      defaultProps: { variant: 'filled' },
+      styles: { root: { minBlockSize: 42 } },
+      classNames: { root: classes.button },
+    }),
+    Checkbox: Checkbox.extend({
+      vars: () => ({ root: { '--checkbox-icon-color': 'var(--kr-accent-text)' } }),
+      styles: { label: { fontWeight: 550 } },
+      classNames: { input: classes.checkbox },
+    }),
+    Input: Input.extend({ classNames: { input: classes.input } }),
+    InputWrapper: Input.Wrapper.extend({
+      styles: {
+        label: { marginBlockEnd: 5, fontWeight: 600 },
+        description: { marginBlockEnd: 6 },
+      },
+    }),
+    Menu: Menu.extend({
+      styles: {
+        dropdown: { backgroundColor: 'var(--kr-surface)', borderColor: 'var(--kr-border)' },
+        item: { minBlockSize: 38 },
+      },
+    }),
+    Modal: Modal.extend({
+      defaultProps: { radius: 'var(--kr-radius-panel)', padding: 'lg', centered: true },
+      styles: {
+        content: { backgroundColor: 'var(--kr-surface)', overscrollBehavior: 'contain' },
+        header: { backgroundColor: 'var(--kr-surface)' },
+        title: { fontSize: '1.25rem', fontWeight: 650 },
+      },
+    }),
   },
 });
 

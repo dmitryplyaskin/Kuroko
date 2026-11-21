@@ -37,8 +37,6 @@
   align-items: end;
 }
 
-.connection-key-control .mantine-ActionIcon-root { inline-size: 44px; block-size: 44px; }
-
 .provider-key-list, .provider-key-form {
   display: grid;
   gap: 12px;
@@ -90,5 +88,3 @@
   gap: 10px 20px;
   margin-block-start: 22px;
 }
-
-.connection-actions > .mantine-Button-root { margin-inline-start: auto; }

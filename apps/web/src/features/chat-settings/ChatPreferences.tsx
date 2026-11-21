@@ -1,4 +1,4 @@
-import { Button, ColorInput, SegmentedControl, useComputedColorScheme } from '@mantine/core';
+import { Button, ColorInput, SegmentedControl, useComputedColorScheme, type ButtonProps } from '@mantine/core';
 import { Bot, Check, UserRound } from 'lucide-react';
 import { useId, useState, type CSSProperties } from 'react';
 import {
@@ -10,6 +10,11 @@ import { ChatText } from '../chat/ChatText';
 import { chatDisplayStyle } from '../chat/chatDisplayStyle';
 import type { useChatSettings } from './useChatSettings';
 import './chatPreferences.css';
+
+const actionButtonStyles: ButtonProps['styles'] = {
+  root: { maxInlineSize: '100%' },
+  label: { whiteSpace: 'normal' },
+};
 
 const colorLabels: Record<ChatColor, string> = {
   text: 'Основной текст',
@@ -152,9 +157,9 @@ export default function ChatPreferences({ accountSettings }: { accountSettings: 
           </fieldset>
         </div>
         <div className="chat-preferences-actions">
-          <Button type="button" variant="subtle" disabled={saving || sameChatSettings(settings, defaultChatSettings)}
+          <Button type="button" variant="subtle" styles={actionButtonStyles} disabled={saving || sameChatSettings(settings, defaultChatSettings)}
             onClick={() => setSettings(defaultChatSettings)}>Вернуть значения по умолчанию</Button>
-          <Button type="submit" loading={saving} disabled={!dirty}>Сохранить изменения</Button>
+          <Button type="submit" styles={actionButtonStyles} loading={saving} disabled={!dirty}>Сохранить изменения</Button>
         </div>
         {submission.status === 'error'
           ? <p className="chat-preferences-error" role="alert">{submission.message}</p>

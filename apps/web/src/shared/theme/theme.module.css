@@ -1,0 +1,20 @@
+.input:where(:not([data-variant='unstyled'])) {
+  min-block-size: 44px;
+  font-size: 1rem;
+  color: var(--kr-text);
+  background: var(--kr-surface);
+}
+
+.input:where(:not([data-variant='unstyled'], :focus-within, [data-error])) {
+  border-color: var(--kr-control);
+}
+
+.checkbox:not(:checked) { background: var(--kr-surface); border-color: var(--kr-control); }
+.button[data-variant='subtle']:is([data-disabled], :disabled) { color: var(--kr-muted); }
+
+@media (prefers-reduced-motion: no-preference) {
+  .button {
+    transition: background-color var(--motion-fast) var(--motion-ease),
+      border-color var(--motion-fast) var(--motion-ease), color var(--motion-fast) var(--motion-ease);
+  }
+}

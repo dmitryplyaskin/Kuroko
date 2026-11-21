@@ -2,7 +2,6 @@ import '@mantine/core/styles.css';
 import '@fontsource-variable/onest';
 import '@fontsource-variable/literata';
 import './shared/styles/base.css';
-import './shared/styles/mantine.css';
 import './shared/styles/controls.css';
 import './shared/styles/page.css';
 import { lazy, StrictMode, Suspense } from 'react';
