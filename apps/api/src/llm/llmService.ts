@@ -23,10 +23,11 @@ export function createLlmService(
       const { id, provider } = preset;
       validateParameterOverrides(provider, request.parameters);
       const apiKey = preset.keyId ? keys.getForProvider(userId, provider, preset.keyId)?.trim() : undefined;
-      if (!isApiKey(apiKey)) throw new LlmError('missing_key');
+      if ((provider !== 'custom' || preset.keyId) && !isApiKey(apiKey)) throw new LlmError('missing_key');
+      if (provider === 'custom' && !preset.baseUrl) throw new LlmError('invalid_request');
 
       const adapter = providerAdapters[provider];
-      const connection = connections[provider];
+      const connection = provider === 'custom' ? connections.custom(preset.baseUrl!) : connections[provider];
       const model = provider === 'gemini' ? preset.model.replace(/^models\//, '') : preset.model;
       if (provider === 'gemini' && !/^[a-z\d][a-z\d._-]*$/i.test(model)) throw new LlmError('invalid_request');
       const stream = request.stream ?? false;
@@ -40,14 +41,14 @@ export function createLlmService(
       const output = new ProviderOutput();
 
       try {
-        const upstream = await fetch(url, {
+        const upstream = await connection.fetch(url, {
           method: 'POST',
           headers: {
             Accept: stream ? 'text/event-stream' : 'application/json',
             'Content-Type': 'application/json',
-            ...connection.headers(apiKey),
+            ...connection.headers(apiKey ?? ''),
           },
-          body, signal, redirect: 'error',
+          body, signal,
         });
         if (!upstream.ok) {
           void upstream.body?.cancel().catch(() => undefined);

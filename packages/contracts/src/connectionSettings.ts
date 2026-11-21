@@ -3,6 +3,7 @@ export const providers = {
   openrouter: { label: 'OpenRouter', temperatureMax: 2, topK: true },
   anthropic: { label: 'Anthropic', temperatureMax: 1, topK: true },
   gemini: { label: 'Google Gemini', temperatureMax: 2, topK: true },
+  custom: { label: 'Custom API', temperatureMax: 2, topK: false },
 } as const;
 
 export type Provider = keyof typeof providers;
@@ -13,6 +14,8 @@ export type ConnectionSettings = {
   temperature: number | null;
   topP: number | null;
   topK: number | null;
+  baseUrl?: string;
+  openrouterProvider?: string;
 };
 
 export type SaveConnectionPreset = { name: string; provider: Provider; settings: ConnectionSettings; keyId: string | null };
@@ -24,6 +27,21 @@ export type ConnectionState = {
   keys: ProviderKey[];
 };
 export type ProviderModel = { id: string; inputLimit?: number; outputLimit?: number; contextLimit?: number };
+export type OpenRouterEndpoint = { tag: string; name: string };
+export const customUrlLimit = 2048;
+
+export function readCustomBaseUrl(value: unknown): string | undefined {
+  if (typeof value !== 'string' || value.length > customUrlLimit || /[\p{Cc}\\]/u.test(value)) return;
+  const url = URL.parse(value.trim());
+  if (!url || !['http:', 'https:'].includes(url.protocol) || !url.hostname ||
+    url.username || url.password || url.href.includes('?') || url.href.includes('#')) return;
+  const base = `${url.origin}${url.pathname.replace(/\/+$/, '').replace(/\/chat\/completions$/, '')}/`;
+  if (base.length <= customUrlLimit) return base;
+}
+
+export function isOpenRouterProvider(value: unknown): value is string {
+  return typeof value === 'string' && value.length <= 128 && /^[a-z\d][a-z\d._-]*(?:\/[a-z\d][a-z\d._-]*)*$/i.test(value);
+}
 
 export const connectionNameLimit = 120;
 
@@ -67,12 +85,21 @@ export function isOptionalConnectionNumber(value: unknown, { min, max, integer }
 
 export function readConnectionSettings(provider: Provider, value: unknown): ConnectionSettings | undefined {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
-  const { model, contextTokens, responseTokens, temperature, topP, topK } = value as Record<string, unknown>;
+  const { model, contextTokens, responseTokens, temperature, topP, topK, baseUrl, openrouterProvider } = value as Record<string, unknown>;
   const ranges = connectionParameterRanges(provider);
   if (!isModelId(model) || !isOptionalConnectionNumber(contextTokens, ranges.contextTokens) ||
     !isOptionalConnectionNumber(responseTokens, ranges.responseTokens) ||
     !isOptionalConnectionNumber(temperature, ranges.temperature) || !isOptionalConnectionNumber(topP, ranges.topP) ||
     !isOptionalConnectionNumber(topK, ranges.topK) || (!providers[provider].topK && topK !== null)) return undefined;
 
-  return { model, contextTokens, responseTokens, temperature, topP, topK };
+  const settings = { model, contextTokens, responseTokens, temperature, topP, topK };
+  if (provider === 'custom') {
+    const url = readCustomBaseUrl(baseUrl);
+    return url ? { ...settings, baseUrl: url } : undefined;
+  }
+  if (provider === 'openrouter' && openrouterProvider !== undefined) {
+    if (!isOpenRouterProvider(openrouterProvider)) return;
+    return { ...settings, openrouterProvider };
+  }
+  return settings;
 }

@@ -1,12 +1,14 @@
 import type { ErrorCode } from '../../shared/http/api';
 import {
-  defaultConnectionSettings, readConnectionName, readConnectionSettings,
-  type ConnectionPreset, type ConnectionSettings, type Provider, type SaveConnectionPreset,
+  defaultConnectionSettings, readConnectionName, readConnectionSettings, readCustomBaseUrl,
+  type ConnectionPreset, type Provider, type SaveConnectionPreset,
 } from '@kuroko/contracts/connectionSettings';
 
-export type NumericField = Exclude<keyof ConnectionSettings, 'model'>;
+export type NumericField = 'contextTokens' | 'responseTokens' | 'temperature' | 'topP' | 'topK';
 type NumericValue = number | string;
-export type ConnectionDraft = Record<NumericField, NumericValue> & { name: string; provider: Provider; model: string; keyId: string };
+export type ConnectionDraft = Record<NumericField, NumericValue> & {
+  name: string; provider: Provider; model: string; keyId: string; baseUrl: string; openrouterProvider: string;
+};
 
 export function createDraft(preset?: ConnectionPreset): ConnectionDraft {
   const settings = preset ?? defaultConnectionSettings;
@@ -15,6 +17,8 @@ export function createDraft(preset?: ConnectionPreset): ConnectionDraft {
     provider: preset?.provider ?? 'openai',
     model: settings.model,
     keyId: preset?.keyId ?? '',
+    baseUrl: settings.baseUrl ?? '',
+    openrouterProvider: settings.openrouterProvider ?? '',
     contextTokens: settings.contextTokens ?? '',
     responseTokens: settings.responseTokens ?? '',
     temperature: settings.temperature ?? '',
@@ -31,9 +35,12 @@ export function validateDraft(draft: ConnectionDraft, keyId: string):
   { preset: SaveConnectionPreset } | { code: ErrorCode; field?: 'name' } {
   const name = readConnectionName(draft.name);
   if (!name) return { code: 'preset_name_invalid', field: 'name' };
+  if (draft.provider === 'custom' && !readCustomBaseUrl(draft.baseUrl)) return { code: 'custom_api_url_invalid' };
 
   const settings = readConnectionSettings(draft.provider, {
     model: draft.model.trim(),
+    baseUrl: draft.baseUrl,
+    openrouterProvider: draft.openrouterProvider || undefined,
     contextTokens: numericValue(draft.contextTokens),
     responseTokens: numericValue(draft.responseTokens),
     temperature: numericValue(draft.temperature),

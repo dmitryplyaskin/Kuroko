@@ -30,7 +30,7 @@ export type LlmMessage =
   | LlmAssistantMessage
   | { role: 'tool'; callId: string; content: JsonValue; isError?: boolean };
 
-export type LlmParameters = Partial<Omit<ConnectionSettings, 'model'>>;
+export type LlmParameters = Partial<Omit<ConnectionSettings, 'model' | 'baseUrl' | 'openrouterProvider'>>;
 export type LlmRequest = {
   presetId?: string;
   messages: LlmMessage[];

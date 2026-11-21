@@ -1,11 +1,11 @@
 import { errorBody } from '@kuroko/contracts/errors';
 import { Router, type RequestHandler } from 'express';
 import {
-  isApiKey, isProvider, readConnectionName, readConnectionSettings,
+  isApiKey, isModelId, isProvider, readConnectionName, readConnectionSettings, readCustomBaseUrl,
 } from '@kuroko/contracts/connectionSettings';
 import type { createConnectionStore } from './connectionStore';
 import type { ProviderConnections } from './providerConnections';
-import { listProviderModels } from './providerModels';
+import { listOpenRouterEndpoints, listProviderModels } from './providerModels';
 import type { ProviderKeyStore } from './providerKeyStore';
 
 const missingKey = errorBody('provider_key_not_found');
@@ -19,6 +19,10 @@ export function createConnectionRouter(
     const name = readConnectionName(request.body?.name);
     if (!name) {
       response.status(400).json(errorBody('preset_name_invalid', 'name'));
+      return;
+    }
+    if (provider === 'custom' && !readCustomBaseUrl(request.body?.settings?.baseUrl)) {
+      response.status(400).json(errorBody('custom_api_url_invalid', 'baseUrl'));
       return;
     }
     const settings = isProvider(provider) ? readConnectionSettings(provider, request.body.settings) : undefined;
@@ -80,24 +84,46 @@ export function createConnectionRouter(
   router.post('/models', async (request, response) => {
     const provider: unknown = request.body?.provider;
     const keyId: unknown = request.body?.keyId;
-    if (!isProvider(provider) || !isIdentifier(keyId)) {
+    const anonymous = provider === 'custom' && (keyId === null || keyId === '');
+    if (!isProvider(provider) || (!anonymous && !isIdentifier(keyId))) {
       response.status(400).json(errorBody('model_catalog_selection_invalid'));
       return;
     }
+    const baseUrl = provider === 'custom' ? readCustomBaseUrl(request.body?.baseUrl) : undefined;
+    if (provider === 'custom' && !baseUrl) {
+      response.status(400).json(errorBody('custom_api_url_invalid', 'baseUrl'));
+      return;
+    }
 
-    const apiKey = keys.getForProvider(response.locals.user.id, provider, keyId)?.trim();
+    const apiKey = anonymous ? '' : isIdentifier(keyId) ? keys.getForProvider(response.locals.user.id, provider, keyId)?.trim() : undefined;
     if (apiKey === undefined) {
       response.status(404).json(missingKey);
       return;
     }
-    if (!isApiKey(apiKey)) {
+    if (!anonymous && !isApiKey(apiKey)) {
       response.status(400).json(errorBody('model_catalog_key_invalid'));
       return;
     }
 
-    const result = await listProviderModels(provider, apiKey, connections);
+    const result = await listProviderModels(provider, apiKey, connections, baseUrl);
     if ('code' in result) response.status(result.status).json(errorBody(result.code));
-    else response.json({ models: result.models.filter(({ id }) => !id.includes(apiKey)) });
+    else response.json({ models: result.models.filter(({ id }) => !apiKey || !id.includes(apiKey)) });
+  });
+
+  router.post('/openrouter/endpoints', async (request, response) => {
+    const { model, keyId } = request.body ?? {};
+    if (!isModelId(model) || !isIdentifier(keyId)) {
+      response.status(400).json(errorBody('model_catalog_selection_invalid'));
+      return;
+    }
+    const apiKey = keys.getForProvider(response.locals.user.id, 'openrouter', keyId)?.trim();
+    if (!isApiKey(apiKey)) {
+      response.status(404).json(missingKey);
+      return;
+    }
+    const endpoints = await listOpenRouterEndpoints(model, apiKey, connections.openrouter);
+    if (!endpoints) response.status(424).json(errorBody('openrouter_endpoints_unavailable'));
+    else response.json({ endpoints });
   });
 
   return router;

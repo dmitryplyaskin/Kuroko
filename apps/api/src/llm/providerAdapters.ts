@@ -32,7 +32,9 @@ function toolText(content: JsonValue, isError?: boolean) {
   return typeof content === 'string' ? content : JSON.stringify(content);
 }
 
-function chatRequest({ settings, messages, tools, toolChoice, stream }: GenerationInput, openrouter = false) {
+function chatRequest({ settings, messages, tools, toolChoice, stream }: GenerationInput, provider: 'openai' | 'openrouter' | 'custom' = 'openai') {
+  const openrouter = provider === 'openrouter';
+  const custom = provider === 'custom';
   return {
     model: settings.model,
     messages: messages.map((message) => {
@@ -53,8 +55,10 @@ function chatRequest({ settings, messages, tools, toolChoice, stream }: Generati
       }
     }),
     stream,
-    stream_options: stream ? { include_usage: true } : undefined,
-    max_completion_tokens: settings.responseTokens ?? undefined,
+    stream_options: stream && !custom ? { include_usage: true } : undefined,
+    max_completion_tokens: custom ? undefined : settings.responseTokens ?? undefined,
+    max_tokens: custom ? settings.responseTokens ?? undefined : undefined,
+    provider: openrouter && settings.openrouterProvider ? { only: [settings.openrouterProvider], allow_fallbacks: false } : undefined,
     temperature: settings.temperature ?? undefined,
     top_p: settings.topP ?? undefined,
     top_k: settings.topK ?? undefined,
@@ -76,7 +80,8 @@ function chatReason(reason: string): LlmFinishReason {
   }
 }
 
-async function* readChat(frames: AsyncIterable<ProviderFrame>, output: ProviderOutput, stream: boolean, openrouter = false) {
+async function* readChat(frames: AsyncIterable<ProviderFrame>, output: ProviderOutput, stream: boolean, provider: 'openai' | 'openrouter' | 'custom' = 'openai') {
+  const openrouter = provider === 'openrouter';
   const calls = new Map<number, { id?: string; name?: string; args: string }>();
   const reasoning: JsonObject[] = [];
   const reasoningByIndex = new Map<number, JsonObject>();
@@ -128,7 +133,7 @@ async function* readChat(frames: AsyncIterable<ProviderFrame>, output: ProviderO
       output.finish = { reason: chatReason(choice.finish_reason), raw: choice.finish_reason };
     }
   }
-  if ((stream && !done) || !output.finish) invalidResponse();
+  if ((stream && !done && provider !== 'custom') || !output.finish) invalidResponse();
   if (reasoning.length) output.openrouterReasoning = reasoning;
   if (output.finish.reason === 'length' || output.finish.reason === 'content_filter') return;
   for (const [, call] of [...calls].sort(([a], [b]) => a - b)) {
@@ -384,8 +389,12 @@ const chatAdapter: Adapter = { request: chatRequest, read: readChat };
 export const providerAdapters = {
   openai: chatAdapter,
   openrouter: {
-    request: (input) => chatRequest(input, true),
-    read: (frames, output, stream) => readChat(frames, output, stream, true),
+    request: (input) => chatRequest(input, 'openrouter'),
+    read: (frames, output, stream) => readChat(frames, output, stream, 'openrouter'),
+  },
+  custom: {
+    request: (input) => chatRequest(input, 'custom'),
+    read: (frames, output, stream) => readChat(frames, output, stream, 'custom'),
   },
   anthropic: { request: anthropicRequest, read: readAnthropic },
   gemini: { request: geminiRequest, read: readGemini },

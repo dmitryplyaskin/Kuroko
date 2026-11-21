@@ -1,4 +1,4 @@
-import { connectionParameterRanges, isOptionalConnectionNumber, type Provider } from '@kuroko/contracts/connectionSettings';
+import { connectionParameterRanges, isOptionalConnectionNumber, providers, type Provider } from '@kuroko/contracts/connectionSettings';
 import type {
   LlmAssistantPart, LlmMessage, LlmParameters, LlmRequest, LlmTool, LlmToolChoice,
 } from '@kuroko/contracts/llm';
@@ -133,6 +133,6 @@ export function validateParameterOverrides(provider: Provider, parameters: LlmPa
   for (const name of parameterNames) {
     const value = parameters?.[name];
     if (value === undefined) continue;
-    if (!isOptionalConnectionNumber(value, ranges[name]) || (provider === 'openai' && name === 'topK' && value !== null)) invalid();
+    if (!isOptionalConnectionNumber(value, ranges[name]) || (!providers[provider].topK && name === 'topK' && value !== null)) invalid();
   }
 }

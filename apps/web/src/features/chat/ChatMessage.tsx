@@ -33,6 +33,7 @@ type Props = {
   message: Message;
   username: string;
   phase?: ReplyPhase;
+  locked?: boolean;
   editor?: { text: string; canSave: boolean };
   reasoningOpen: boolean;
   onToggleReasoning: (id: number, open: boolean) => void;
@@ -45,11 +46,11 @@ type Props = {
 };
 
 export const ChatMessage = memo(function ChatMessage({
-  message, username, phase, editor, reasoningOpen, onToggleReasoning,
+  message, username, phase, locked, editor, reasoningOpen, onToggleReasoning,
   onEdit, onDraftChange, onSaveEdit, onCancelEdit, onDelete, onPreview,
 }: Props) {
   const { locale, t, clock, date } = useI18n();
-  const { id, text, time, image, edited, reasoning } = message;
+  const { id, text, time, image, edited, reasoning, toolCalls } = message;
   const assistant = message.role === 'assistant';
   const author = assistant ? t('common.model') : username;
   const editing = editor !== undefined;
@@ -114,7 +115,7 @@ export const ChatMessage = memo(function ChatMessage({
               </Menu.Target>
               <Menu.Dropdown>
                 {!editing && (
-                  <Menu.Item leftSection={<Pencil size={15} aria-hidden="true" />} onClick={() => {
+                  <Menu.Item disabled={locked} leftSection={<Pencil size={15} aria-hidden="true" />} onClick={() => {
                     focusEditor.current = true;
                     onEdit(id);
                   }}>{t('chat.edit')}</Menu.Item>
@@ -122,7 +123,7 @@ export const ChatMessage = memo(function ChatMessage({
                 {!editing && actions.map((action) => (action.isVisible?.(actionContext) ?? true) && (
                   <Menu.Item key={action.id} onClick={() => void runAction(action)}>{t(action.label)}</Menu.Item>
                 ))}
-                <Menu.Item color="var(--kr-danger)" leftSection={<Trash2 size={15} aria-hidden="true" />} onClick={() => onDelete(message)}>{t('common.delete')}</Menu.Item>
+                <Menu.Item disabled={locked} color="var(--kr-danger)" leftSection={<Trash2 size={15} aria-hidden="true" />} onClick={() => onDelete(message)}>{t('common.delete')}</Menu.Item>
               </Menu.Dropdown>
             </Menu>
           )}
@@ -139,6 +140,28 @@ export const ChatMessage = memo(function ChatMessage({
                 {reasoningOpen && reasoning && <ChatText>{reasoning}</ChatText>}
               </div>
             </div>
+          )}
+          {!!toolCalls?.length && (
+            <ul className="chat-tool-calls" aria-label={t('chat.toolCalls')}>
+              {toolCalls.map((call) => (
+                <li key={call.id}>
+                  <details className="chat-tool-call">
+                    <summary>
+                      <code>{call.name}</code>{' '}
+                      <span className="chat-tool-status" data-error={call.isError || undefined}>
+                        {t(call.isError ? 'chat.toolFailed' : 'chat.toolSucceeded')}
+                      </span>
+                    </summary>
+                    <dl>
+                      <dt>{t('chat.toolArguments')}</dt>
+                      <dd><pre>{JSON.stringify(call.arguments, null, 2)}</pre></dd>
+                      <dt>{t('chat.toolResult')}</dt>
+                      <dd><pre>{JSON.stringify(call.result, null, 2)}</pre></dd>
+                    </dl>
+                  </details>
+                </li>
+              ))}
+            </ul>
           )}
           {editing ? (
             <form className="chat-message-editor" onSubmit={(event) => {

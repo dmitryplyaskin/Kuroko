@@ -2,8 +2,9 @@ import { afterEach, beforeEach, expect, spyOn, test } from 'bun:test';
 import { randomBytes } from 'node:crypto';
 import { once } from 'node:events';
 import type { Server } from 'node:http';
+import type { ChatSnapshot, SavedChat } from '@kuroko/contracts/chat';
 import { defaultChatSettings } from '@kuroko/contracts/chatSettings';
-import { defaultConnectionSettings, type ProviderKey } from '@kuroko/contracts/connectionSettings';
+import { defaultConnectionSettings, type ConnectionState, type ProviderKey } from '@kuroko/contracts/connectionSettings';
 import type { LlmRequest } from '@kuroko/contracts/llm';
 import { createApp } from './app';
 import { openDatabase } from './storage/database';
@@ -55,6 +56,39 @@ function sessionCookie(response: Response) {
   if (!cookie) throw new Error('Expected session cookie');
   return { header: cookie, token: cookie.split(';', 1)[0]! };
 }
+
+test('stores chats by account and rejects stale writes without losing the saved history', async () => {
+  await register('chat-owner');
+  await register('chat-other');
+  const cookie = sessionCookie(await login('chat-owner')).token;
+  const other = sessionCookie(await login('chat-other')).token;
+  const create = await request('/chats', { method: 'POST', cookie });
+  expect(create.status).toBe(201);
+  const first = await create.json() as SavedChat;
+  const second = await (await request('/chats', { method: 'POST', cookie })).json() as SavedChat;
+  const snapshot: ChatSnapshot = { revision: 0, messages: [
+    { id: 1, role: 'user', text: 'Первая строка\nвторая строка', time: 1 },
+    { id: 2, role: 'assistant', text: 'Ответ', time: 2 },
+    { id: 3, role: 'assistant', text: '', time: 3, toolCalls: [
+      { id: 'dice-1', name: 'roll_dice', arguments: { sides: 20 }, result: { roll: 13, sides: 20 } },
+    ] },
+  ] };
+  const path = `/chats/${first.id}`;
+  const save = (cookie: string, body = snapshot) => request(path, { method: 'PUT', cookie, body });
+  expect((await request(path, { cookie: other })).status).toBe(404);
+  expect((await save(other)).status).toBe(404);
+  expect(await (await request('/chats', { cookie: other })).json()).toEqual([]);
+  expect((await save(cookie, { ...snapshot, messages: [{ ...snapshot.messages[2]!, role: 'user' }] })).status).toBe(400);
+  const stored = await (await save(cookie)).json() as SavedChat;
+  expect(stored).toMatchObject({ revision: 1, title: 'Первая строка вторая строка', messages: snapshot.messages });
+  expect(await (await save(cookie)).json()).toEqual(stored);
+  expect((await save(cookie, { ...snapshot, messages: [] })).status).toBe(409);
+  expect(await (await request(path, { cookie })).json()).toEqual(stored);
+  expect(await (await request(`/chats/${second.id}`, { cookie })).json()).toEqual(second);
+  expect(await (await request('/chats', { cookie })).json()).toContainEqual({ id: first.id, title: stored.title, updatedAt: stored.updatedAt });
+  expect((await request('/auth/account', { method: 'DELETE', cookie, body: { username: 'chat-owner', currentPassword: password } })).status).toBe(204);
+  expect(db.query('SELECT id FROM chats').all()).toEqual([]);
+});
 
 test('registers, issues a revocable session and persists it only with auto-login', async () => {
   const registration = await register('Алиса');
@@ -335,6 +369,76 @@ function mockGeneration(respond: (url: URL, init?: RequestInit) => Response | Pr
     { preconnect: genuineFetch.preconnect },
   ));
 }
+
+test('uses the selected OpenRouter model endpoint without provider fallbacks', async () => {
+  await register('route-owner');
+  const cookie = sessionCookie(await login('route-owner')).token;
+  const { id: keyId } = await (await addKey(cookie, 'openrouter', 'Routing key', 'route-test-key')).json() as ProviderKey;
+  const model = 'author/selected:free';
+  const tag = 'provider/turbo';
+  const paths: string[] = [];
+  const mock = mockGeneration((url, init) => {
+    paths.push(url.pathname);
+    expect(new Headers(init?.headers).get('Authorization')).toBe('Bearer route-test-key');
+    if (init?.method !== 'POST') return Response.json({ data: { endpoints: [
+      { tag, provider_name: 'Provider' }, { tag, provider_name: 'Provider' }, { tag: '../invalid', provider_name: 'Invalid' },
+    ] } });
+    expect(JSON.parse(String(init.body))).toMatchObject({ model, provider: { only: [tag], allow_fallbacks: false } });
+    return Response.json({ choices: [{ message: { content: 'Ответ' }, finish_reason: 'stop' }] });
+  });
+  try {
+    const catalog = await request(`${connectionPath}/openrouter/endpoints`, { method: 'POST', cookie, body: { model, keyId } });
+    expect(await catalog.json()).toEqual({ endpoints: [{ tag, name: 'Provider' }] });
+    expect((await request(`${connectionPath}/presets`, { method: 'POST', cookie, body: {
+      name: 'OpenRouter', provider: 'openrouter', keyId, settings: { ...defaultConnectionSettings, model, openrouterProvider: tag },
+    } })).status).toBe(201);
+    expect((await request(generatePath, { method: 'POST', cookie, body: { messages: greeting } })).status).toBe(200);
+    expect(paths).toEqual(['/api/v1/models/author/selected%3Afree/endpoints', '/api/v1/chat/completions']);
+  } finally {
+    mock.mockRestore();
+  }
+});
+
+test('supports an OpenAI-compatible custom base URL without a key and blocks unapproved private addresses', async () => {
+  await register('custom-owner');
+  const cookie = sessionCookie(await login('custom-owner')).token;
+  const preset = (baseUrl: string) => request(`${connectionPath}/presets`, { method: 'POST', cookie, body: {
+    name: baseUrl, provider: 'custom', keyId: null,
+    settings: { ...defaultConnectionSettings, model: 'local-model', responseTokens: 256, baseUrl },
+  } });
+  const generate = () => request(generatePath, { method: 'POST', cookie, body: { messages: greeting, stream: true } });
+  const models = (baseUrl: string) => request(`${connectionPath}/models`, { method: 'POST', cookie, body: { provider: 'custom', keyId: '', baseUrl } });
+  expect((await preset('file:///model')).status).toBe(400);
+  for (const url of ['http://127.0.0.1:1234/v1', 'http://[::ffff:127.0.0.1]:1234/v1']) {
+    expect((await preset(url)).status).toBe(201);
+    expect(await (await generate()).json()).toEqual({ code: 'custom_api_address_blocked' });
+    expect(await (await models(url)).json()).toEqual({ code: 'custom_api_address_blocked' });
+  }
+
+  const url = 'https://8.8.8.8/v1/chat/completions';
+  const stored = await preset(url);
+  expect((await stored.json() as ConnectionState).presets).toContainEqual(expect.objectContaining({
+    baseUrl: 'https://8.8.8.8/v1/', provider: 'custom', keyId: null,
+  }));
+  const paths: string[] = [];
+  const mocked = mockGeneration((url, init) => {
+    paths.push(url.pathname);
+    expect(new Headers(init?.headers).get('Authorization')).toBeNull();
+    expect(init?.redirect).toBe('error');
+    if (init?.method !== 'POST') return Response.json({ data: [{ id: 'local-model' }] });
+    expect(JSON.parse(String(init.body))).toEqual({ model: 'local-model', messages: greeting, stream: true, max_tokens: 256 });
+    return new Response('data: {"choices":[{"delta":{"content":"Ответ"},"finish_reason":"stop"}]}\n\n', {
+      headers: { 'Content-Type': 'text/event-stream' },
+    });
+  });
+  try {
+    expect(await (await models(url)).json()).toEqual({ models: [{ id: 'local-model' }] });
+    expect(await (await generate()).text()).toContain('"type":"done"');
+    expect(paths).toEqual(['/v1/models', '/v1/chat/completions']);
+  } finally {
+    mocked.mockRestore();
+  }
+});
 
 test('generates JSON with the active or selected owned preset and applies per-request parameters', async () => {
   await register('llm-owner');

@@ -1,4 +1,4 @@
-import type { ConnectionState, Provider, ProviderKey, ProviderModel, SaveConnectionPreset } from '@kuroko/contracts/connectionSettings';
+import type { ConnectionState, OpenRouterEndpoint, Provider, ProviderKey, ProviderModel, SaveConnectionPreset } from '@kuroko/contracts/connectionSettings';
 import type { ActiveSession } from '../../platform/session/model';
 import { sessionRequest } from '../../platform/session/request';
 
@@ -15,8 +15,10 @@ export const connectionApi = {
   ),
   deletePreset: (session: ActiveSession, id: string) =>
     sessionRequest<ConnectionState>(session, `${presetsPath}/${encodeURIComponent(id)}`, { method: 'DELETE' }),
-  models: (session: ActiveSession, provider: Provider, keyId: string, signal: AbortSignal) =>
-    sessionRequest<{ models: ProviderModel[] }>(session, `${path}/models`, { method: 'POST', body: { provider, keyId }, signal }),
+  models: (session: ActiveSession, provider: Provider, keyId: string, baseUrl: string | undefined, signal: AbortSignal) =>
+    sessionRequest<{ models: ProviderModel[] }>(session, `${path}/models`, { method: 'POST', body: { provider, keyId, baseUrl }, signal }),
+  endpoints: (session: ActiveSession, model: string, keyId: string, signal: AbortSignal) =>
+    sessionRequest<{ endpoints: OpenRouterEndpoint[] }>(session, `${path}/openrouter/endpoints`, { method: 'POST', body: { model, keyId }, signal }),
   addKey: (session: ActiveSession, provider: Provider, name: string, apiKey: string) =>
     sessionRequest<ProviderKey>(session, keysPath(provider), { method: 'POST', body: { name, apiKey } }),
   deleteKey: (session: ActiveSession, provider: Provider, id: string) =>

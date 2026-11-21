@@ -4,18 +4,18 @@ import { ChevronDown, KeyRound } from 'lucide-react';
 import { useUnit } from 'effector-react';
 import { useCallback, useEffect, useRef, type SubmitEvent } from 'react';
 import {
-  connectionNameLimit, connectionParameterRanges, isModelId, isOptionalConnectionNumber, isProvider, providers,
+  connectionNameLimit, connectionParameterRanges, customUrlLimit, isModelId, isOptionalConnectionNumber, isProvider, providers, readCustomBaseUrl,
 } from '@kuroko/contracts/connectionSettings';
 import { numericValue, type NumericField } from './connectionDraft';
 import { ProviderKeysDialog } from './ProviderKeysDialog';
 import {
   $connectionLoad, $connectionSelection, $keyManagerOpen, $keySubmission, $presetDeleteError, $presetDeleteOpen,
   $presetPending, $presetSubmission,
-  connectionActionRequested, connectionClosed, connectionDraftChanged, connectionModelsRequested, connectionOpened,
+  connectionActionRequested, connectionClosed, connectionDraftChanged, connectionEndpointsRequested, connectionModelsRequested, connectionOpened,
   connectionProviderChanged, connectionRetryRequested, keyManagerClosed, keyManagerOpened, presetCopyRequested,
   presetDeleteClosed, presetDeleteOpened, presetSelected,
 } from './model';
-import { $modelCatalog } from './modelCatalog';
+import { $modelCatalog, $openRouterEndpoints } from './modelCatalog';
 import './connectionSettings.css';
 
 const providerOptions = Object.entries(providers).map(([value, { label }]) => ({ value, label }));
@@ -24,13 +24,14 @@ export default function ConnectionSettings() {
   const { t, number, decimalSeparator } = useI18n();
   const {
     load, retry, selection, submission, deleteError, saving, catalog, selectPreset, copyPreset, updateDraft, changeProvider,
-    perform, loadModels, keySubmission, open, close, keyManagerOpen, deleteOpen, openKeyManager,
+    perform, loadModels, endpoints, loadEndpoints, keySubmission, open, close, keyManagerOpen, deleteOpen, openKeyManager,
     dismissKeyManager, openDelete, dismissDelete,
   } = useUnit({
     load: $connectionLoad, retry: connectionRetryRequested, selection: $connectionSelection, submission: $presetSubmission,
     deleteError: $presetDeleteError, saving: $presetPending, catalog: $modelCatalog, selectPreset: presetSelected,
     copyPreset: presetCopyRequested, updateDraft: connectionDraftChanged, changeProvider: connectionProviderChanged,
     perform: connectionActionRequested, loadModels: connectionModelsRequested, keySubmission: $keySubmission,
+    endpoints: $openRouterEndpoints, loadEndpoints: connectionEndpointsRequested,
     open: connectionOpened, close: connectionClosed, keyManagerOpen: $keyManagerOpen, deleteOpen: $presetDeleteOpen,
     openKeyManager: keyManagerOpened, dismissKeyManager: keyManagerClosed, openDelete: presetDeleteOpened, dismissDelete: presetDeleteClosed,
   });
@@ -77,6 +78,7 @@ export default function ConnectionSettings() {
 
   const { provider } = draft;
   const providerConfig = providers[provider];
+  const providerLabel = provider === 'custom' ? t('connection.custom') : providerConfig.label;
   const ranges = connectionParameterRanges(provider);
   const models = catalog.status === 'ready' ? catalog.models : [];
   const model = models.find(({ id }) => id === draft.model.trim());
@@ -86,6 +88,13 @@ export default function ConnectionSettings() {
     model?.outputLimit && t('connection.outputLimit', { count: number.format(model.outputLimit) }),
   ].filter(Boolean).join(' · ');
   const loadingModels = catalog.status === 'loading';
+  const loadingEndpoints = endpoints.status === 'loading';
+  const routes = endpoints.status === 'ready' ? endpoints.endpoints : [];
+  const routeOptions = [{ value: '', label: t('connection.openrouterAutomatic') },
+    ...routes.map(({ tag, name }) => ({ value: tag, label: `${name} (${tag})` }))];
+  if (draft.openrouterProvider && !routes.some(({ tag }) => tag === draft.openrouterProvider)) {
+    routeOptions.push({ value: draft.openrouterProvider, label: draft.openrouterProvider });
+  }
   const keyOptions = [{ value: '', label: providerKeys.length ? t('connection.noKey') : t('connection.noSavedKeys') },
     ...providerKeys.map(({ id, name }) => ({ value: id, label: name }))];
   const presetOptions = [{ value: '', label: t('connection.newPreset') }, ...load.data.presets.map(({ id, name }) => ({ value: id, label: name }))];
@@ -136,15 +145,22 @@ export default function ConnectionSettings() {
         <div className="connection-columns">
           <fieldset className="field-group connection-group" disabled={saving}>
             <legend>{t('connection.providerAndModel')}</legend>
-            <NativeSelect label={t('connection.provider')} value={provider} data={providerOptions} onChange={(event) => {
+            <NativeSelect label={t('connection.provider')} value={provider}
+              data={providerOptions.map((option) => option.value === 'custom' ? { ...option, label: t('connection.custom') } : option)} onChange={(event) => {
               const next = event.currentTarget.value;
               if (isProvider(next)) changeProvider(next);
             }} />
+            {provider === 'custom' && (
+              <TextInput type="url" required label={t('connection.baseUrl')} description={t('connection.baseUrlHint')}
+                placeholder="https://example.com/v1" value={draft.baseUrl} maxLength={customUrlLimit} spellCheck={false}
+                error={draft.baseUrl && !readCustomBaseUrl(draft.baseUrl) ? t('error.custom_api_url_invalid') : undefined}
+                onChange={(event) => updateDraft({ baseUrl: event.currentTarget.value })} />
+            )}
             <div className="connection-key-control">
               <NativeSelect label={t('common.apiKey')} value={keyId} data={keyOptions}
                 onChange={(event) => updateDraft({ keyId: event.currentTarget.value })} />
-              <Tooltip label={t('connection.providerKeys', { provider: providerConfig.label })} events={{ hover: true, focus: true, touch: false }}>
-                <ActionIcon ref={keyManagerTrigger} type="button" variant="default" size={44} aria-label={t('connection.manageKeys', { provider: providerConfig.label })}
+              <Tooltip label={t('connection.providerKeys', { provider: providerLabel })} events={{ hover: true, focus: true, touch: false }}>
+                <ActionIcon ref={keyManagerTrigger} type="button" variant="default" size={44} aria-label={t('connection.manageKeys', { provider: providerLabel })}
                   aria-haspopup="dialog" onClick={openKeyManager}>
                   <KeyRound size={19} aria-hidden="true" />
                 </ActionIcon>
@@ -170,6 +186,22 @@ export default function ConnectionSettings() {
                   : t('connection.noModels'))}
               </output>
             </div>
+            {provider === 'openrouter' && (
+              <div className="connection-group">
+                <NativeSelect label={t('connection.openrouterProvider')} value={draft.openrouterProvider} data={routeOptions}
+                  onChange={(event) => updateDraft({ openrouterProvider: event.currentTarget.value })} />
+                <div className="connection-catalog">
+                  <Button type="button" variant="default" loading={loadingEndpoints} onClick={loadEndpoints}>
+                    {t('connection.loadOpenrouterProviders')}
+                  </Button>
+                  {endpoints.status === 'error' && <p className="connection-error" role="alert">{t(`error.${endpoints.code}`)}</p>}
+                  <output className="connection-hint">
+                    {loadingEndpoints && t('common.loading')}
+                    {endpoints.status === 'ready' && !routes.length && t('connection.noOpenrouterProviders')}
+                  </output>
+                </div>
+              </div>
+            )}
           </fieldset>
 
           <div className="connection-parameters">
@@ -201,7 +233,7 @@ export default function ConnectionSettings() {
                 : activePreset && t('connection.activePreset', { name: activePreset.name })}
             </output>
           </div>
-          <Button type="submit" ms="auto" loading={saving && !deleteOpen} disabled={saving || loadingModels}>{t('connection.savePreset')}</Button>
+          <Button type="submit" ms="auto" loading={saving && !deleteOpen} disabled={saving || loadingModels || loadingEndpoints}>{t('connection.savePreset')}</Button>
         </div>
       </form>
       {keyManagerOpen && (

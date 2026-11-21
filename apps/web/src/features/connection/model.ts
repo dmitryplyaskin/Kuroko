@@ -8,7 +8,7 @@ import { $activeSession, protectedRequestFailed, sessionEnded, type ActiveSessio
 import { inActiveSession } from '../../platform/session/request';
 import { connectionApi } from './connectionApi';
 import { createDraft, validateDraft, type ConnectionDraft } from './connectionDraft';
-import { $modelCatalog, catalogInvalidated, catalogRequested } from './modelCatalog';
+import { $modelCatalog, $openRouterEndpoints, catalogInvalidated, catalogRequested, endpointsInvalidated, endpointsRequested } from './modelCatalog';
 
 type Page = { session: ActiveSession; controller: AbortController };
 type LoadState = { status: 'loading' } | { status: 'error'; code: ErrorCode } | { status: 'ready'; data: ConnectionState };
@@ -31,6 +31,7 @@ export const connectionDraftChanged = createEvent<Partial<ConnectionDraft>>();
 export const connectionProviderChanged = createEvent<Provider>();
 export const connectionActionRequested = createEvent<Action>();
 export const connectionModelsRequested = createEvent();
+export const connectionEndpointsRequested = createEvent();
 export const presetDeleteOpened = createEvent();
 export const presetDeleteClosed = createEvent();
 export const keyManagerOpened = createEvent();
@@ -188,14 +189,25 @@ const providerChanged = sample({
   source: $draft,
   filter: (draft, provider) => provider !== draft.provider,
   fn: (draft, provider): Partial<ConnectionDraft> => ({
-    provider, model: '', keyId: '', topK: providers[provider].topK ? draft.topK : '',
+    provider, model: '', keyId: '', baseUrl: '', topK: providers[provider].topK ? draft.topK : '',
   }),
 });
 
 const draftChanged = sample({
   clock: [connectionDraftChanged, providerChanged],
   source: $connectionSelection,
-  fn: ({ presetId, draft }, change) => ({ id: presetId, draft: { ...draft, ...change }, resetCatalog: 'keyId' in change || 'provider' in change }),
+  fn: ({ presetId, draft }, change) => {
+    const next = { ...draft, ...change };
+    const providerChanged = draft.provider !== next.provider;
+    const modelChanged = draft.model.trim() !== next.model.trim();
+    const keyChanged = draft.keyId !== next.keyId;
+    if (providerChanged || modelChanged) next.openrouterProvider = '';
+    return {
+      id: presetId, draft: next,
+      resetCatalog: keyChanged || providerChanged || draft.baseUrl.trim() !== next.baseUrl.trim(),
+      resetEndpoints: keyChanged || providerChanged || modelChanged,
+    };
+  },
 });
 
 const keyAppliedToDraft = sample({
@@ -216,22 +228,35 @@ $drafts
     return next;
   });
 
-sample({ clock: [presetSelected, presetCopied, pageDeactivated], target: catalogInvalidated });
+sample({ clock: [presetSelected, presetCopied, pageDeactivated], target: [catalogInvalidated, endpointsInvalidated] });
 sample({ clock: draftChanged, filter: ({ resetCatalog }) => resetCatalog, target: catalogInvalidated });
+sample({ clock: draftChanged, filter: ({ resetEndpoints }) => resetEndpoints, target: endpointsInvalidated });
 sample({
   clock: mutationDone,
   filter: (result) => result.kind !== 'savePreset',
-  target: catalogInvalidated,
+  target: [catalogInvalidated, endpointsInvalidated],
 });
 
-const $actionContext = combine({ selection: $connectionSelection, page: $page, pending: $mutation, load: $connectionLoad, catalog: $modelCatalog });
+const $actionContext = combine({
+  selection: $connectionSelection, page: $page, pending: $mutation, load: $connectionLoad,
+  catalog: $modelCatalog, endpoints: $openRouterEndpoints,
+});
 
 sample({
   clock: connectionModelsRequested,
   source: $actionContext,
   filter: ({ page, pending, load }) => page !== null && !pending && load.status === 'ready',
-  fn: ({ page, selection }) => ({ session: page!.session, provider: selection.draft.provider, keyId: selection.keyId }),
+  fn: ({ page, selection: { draft, keyId } }) => ({
+    session: page!.session, provider: draft.provider, keyId, baseUrl: draft.provider === 'custom' ? draft.baseUrl.trim() : undefined,
+  }),
   target: catalogRequested,
+});
+sample({
+  clock: connectionEndpointsRequested,
+  source: $actionContext,
+  filter: ({ page, pending, load, selection }) => page !== null && !pending && load.status === 'ready' && selection.draft.provider === 'openrouter',
+  fn: ({ page, selection: { draft, keyId } }) => ({ session: page!.session, model: draft.model.trim(), keyId }),
+  target: endpointsRequested,
 });
 
 type PreparedAction = { mutation: Mutation } | { kind: 'savePreset' | 'addKey'; code: ErrorCode; field?: 'name' };
@@ -261,9 +286,9 @@ function prepareAction({ draft, presetId, keyId }: StoreValue<typeof $connection
 const actionPrepared = sample({
   clock: connectionActionRequested,
   source: $actionContext,
-  filter: ({ page, pending, load, selection, catalog }, action) => {
+  filter: ({ page, pending, load, selection, catalog, endpoints }, action) => {
     if (!page || pending || load.status !== 'ready') return false;
-    if (action.kind === 'savePreset') return catalog.status !== 'loading';
+    if (action.kind === 'savePreset') return catalog.status !== 'loading' && endpoints.status !== 'loading';
     if (action.kind === 'deletePreset') return Boolean(selection.selectedPreset);
     if (action.kind === 'deleteKey') return selection.providerKeys.some(({ id }) => id === action.id);
     return true;

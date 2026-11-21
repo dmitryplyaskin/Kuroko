@@ -1,5 +1,6 @@
 import { CodedError } from '@kuroko/contracts/errors';
 import type { Provider } from '@kuroko/contracts/connectionSettings';
+import { createCustomApiFetch } from './customApi';
 
 const bearer = (apiKey: string) => ({ Authorization: `Bearer ${apiKey}` });
 const defaults = {
@@ -13,10 +14,11 @@ const defaults = {
     base: 'https://generativelanguage.googleapis.com/v1beta/', generation: 'models/{model}:{method}',
     headers: (apiKey: string) => ({ 'x-goog-api-key': apiKey }),
   },
-} satisfies Record<Provider, { base: string; generation: string; headers: (apiKey: string) => Record<string, string> }>;
+} satisfies Record<Exclude<Provider, 'custom'>, { base: string; generation: string; headers: (apiKey: string) => Record<string, string> }>;
 
 export function createProviderConnections(env = process.env) {
-  function connection(provider: Provider) {
+  const customFetch = createCustomApiFetch(env.CUSTOM_API_PRIVATE_ORIGINS);
+  function connection(provider: keyof typeof defaults) {
     const { base, generation, headers } = defaults[provider];
     const prefix = provider.toUpperCase();
     const baseVariable = `${prefix}_BASE_URL`;
@@ -35,6 +37,7 @@ export function createProviderConnections(env = process.env) {
 
     return {
       headers,
+      fetch: (url: URL, options: RequestInit) => fetch(url, { ...options, redirect: 'error' }),
       catalogUrl: (path: string) => new URL(path, baseUrl),
       generationUrl: (model: string, stream: boolean) => {
         const method = stream ? 'streamGenerateContent' : 'generateContent';
@@ -51,6 +54,12 @@ export function createProviderConnections(env = process.env) {
     openrouter: connection('openrouter'),
     anthropic: connection('anthropic'),
     gemini: connection('gemini'),
+    custom: (baseUrl: string) => ({
+      headers: (apiKey: string) => apiKey ? bearer(apiKey) : {},
+      fetch: customFetch,
+      catalogUrl: (path: string) => new URL(path, baseUrl),
+      generationUrl: (_model: string, _stream: boolean) => new URL('chat/completions', baseUrl),
+    }),
   };
 }
 

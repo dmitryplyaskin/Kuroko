@@ -4,6 +4,8 @@ import { createAccountStore } from '../auth/accountStore';
 import { createAuthRouter } from '../auth/authRouter';
 import { createChatSettingsStore } from '../chat-settings/chatSettingsStore';
 import { createChatSettingsRouter } from '../chat-settings/chatSettingsRouter';
+import { createChatRouter } from '../chat/chatRouter';
+import { createChatStore } from '../chat/chatStore';
 import { createConnectionStore } from '../connection/connectionStore';
 import { createConnectionRouter } from '../connection/connectionRouter';
 import { createProviderConnections } from '../connection/providerConnections';
@@ -19,6 +21,7 @@ export function createApiRouter(db: Database, vaultKey: Buffer, secureCookie: bo
   const connections = createProviderConnections();
 
   router.use('/llm', requireUser, json({ limit: '4mb' }), createLlmRouter(createLlmService(presets, keys, connections)));
+  router.use('/chats', requireUser, json({ limit: '8mb' }), createChatRouter(createChatStore(db)));
   router.use(json({ limit: '128kb' }));
   router.get('/health', (_request, response) => {
     response.json({ status: 'ok' });

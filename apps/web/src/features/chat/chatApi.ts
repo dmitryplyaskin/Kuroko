@@ -1,8 +1,18 @@
 import { isLlmErrorCode } from '@kuroko/contracts/errors';
-import type { LlmEvent, LlmRequest } from '@kuroko/contracts/llm';
+import type { ChatSnapshot, ChatSummary, ChatToolCall, SavedChat } from '@kuroko/contracts/chat';
+import type { LlmAssistantPart, LlmCompletion, LlmEvent, LlmMessage, LlmRequest } from '@kuroko/contracts/llm';
 import type { ActiveSession } from '../../platform/session/model';
-import { sessionResponse } from '../../platform/session/request';
+import { sessionRequest, sessionResponse } from '../../platform/session/request';
 import { ApiError } from '../../shared/http/api';
+import { runTestTool, testTools } from './testTools';
+
+export const chatApi = {
+  list: (session: ActiveSession) => sessionRequest<ChatSummary[]>(session, '/chats'),
+  create: (session: ActiveSession) => sessionRequest<SavedChat>(session, '/chats', { method: 'POST' }),
+  open: (session: ActiveSession, id: string) => sessionRequest<SavedChat>(session, `/chats/${encodeURIComponent(id)}`),
+  save: (session: ActiveSession, id: string, body: ChatSnapshot) =>
+    sessionRequest<SavedChat>(session, `/chats/${encodeURIComponent(id)}`, { method: 'PUT', body }),
+};
 
 function readEvent(frame: string): LlmEvent | undefined {
   const lines = frame.split(/\r?\n/).filter((line) => line.startsWith('data:'));
@@ -17,10 +27,40 @@ function readEvent(frame: string): LlmEvent | undefined {
 }
 
 export async function streamChatReply(
-  session: ActiveSession, text: string, signal: AbortSignal, onText: (delta: string) => void,
+  session: ActiveSession, messages: LlmMessage[], signal: AbortSignal, onText: (delta: string) => void,
+  onTools?: (calls: ChatToolCall[]) => void,
 ): Promise<string> {
-  // By omitting presetId, each send uses the account's active preset at request time.
-  const body: LlmRequest = { messages: [{ role: 'user', content: text }], stream: true };
+  const tools = onTools ? testTools : undefined;
+  const first = await streamCompletion(session, { messages, stream: true, tools }, signal, onText);
+  const calls = first.message.parts.filter((part) => part?.type === 'toolCall');
+  const initialText = completionText(first.message.parts);
+  if (!onTools || !calls.length) return answerText(first, initialText);
+
+  signal.throwIfAborted();
+  if (typeof first.presetId !== 'string') throw new ApiError(502, 'invalid_response');
+  const results = calls.map(runTestTool);
+  onTools(results.map(({ entry }) => entry));
+  const separator = initialText.trim() ? '\n\n' : '';
+  if (separator) onText(separator);
+  const last = await streamCompletion(session, {
+    presetId: first.presetId, messages: [...messages, first.message, ...results.map(({ message }) => message)],
+    stream: true, tools, toolChoice: 'none',
+  }, signal, onText);
+  return (separator ? initialText : '') + separator + answerText(last, completionText(last.message.parts));
+}
+
+function completionText(parts: LlmAssistantPart[]) {
+  return parts.flatMap((part) => part?.type === 'text' && typeof part.text === 'string' ? [part.text] : []).join('');
+}
+
+function answerText(completion: LlmCompletion, text: string) {
+  if (text.trim()) return text;
+  throw new ApiError(422, completion.finishReason === 'content_filter' ? 'response_blocked' : 'response_empty');
+}
+
+async function streamCompletion(
+  session: ActiveSession, body: LlmRequest, signal: AbortSignal, onText: (delta: string) => void,
+): Promise<LlmCompletion> {
   const response = await sessionResponse(session, '/llm/generate', {
     method: 'POST', body, signal, accept: 'text/event-stream', timeoutMs: 130_000,
   });
@@ -47,12 +87,8 @@ export async function streamChatReply(
           throw new ApiError(502, isLlmErrorCode(event.code) ? event.code : 'invalid_response');
         }
         if (event?.type === 'done') {
-          const parts = event.completion?.message?.parts;
-          if (!Array.isArray(parts)) throw new ApiError(502, 'invalid_response');
-          const answer = parts.flatMap((part) => part?.type === 'text' && typeof part.text === 'string' ? [part.text] : []).join('');
-          if (answer.trim()) return answer;
-          const blocked = event.completion.finishReason === 'content_filter';
-          throw new ApiError(422, blocked ? 'response_blocked' : 'response_empty');
+          if (!Array.isArray(event.completion?.message?.parts)) throw new ApiError(502, 'invalid_response');
+          return event.completion;
         }
       }
     }

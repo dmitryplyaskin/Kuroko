@@ -37,7 +37,7 @@ export function ProviderKeysDialog({ provider, keys, onClose }: {
   }
 
   return (
-    <Modal opened onClose={onClose} title={t('connection.providerKeys', { provider: providers[provider].label })} returnFocus={false} transitionProps={{ transition: 'fade' }}
+    <Modal opened onClose={onClose} title={t('connection.providerKeys', { provider: provider === 'custom' ? t('connection.custom') : providers[provider].label })} returnFocus={false} transitionProps={{ transition: 'fade' }}
       closeButtonProps={{ 'aria-label': t('common.close'), disabled: pending }} closeOnEscape={!pending} closeOnClickOutside={!pending}>
       <Stack gap="lg">
         {keys.length > 0 && (

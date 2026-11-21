@@ -9,6 +9,7 @@ const errors = {
   provider_rate_limit: 429,
   provider_unavailable: 502,
   provider_protocol: 502,
+  custom_api_address_blocked: 422,
   timeout: 504,
   internal_error: 500,
 } as const satisfies Record<LlmErrorCode, number>;
