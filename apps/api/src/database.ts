@@ -40,6 +40,47 @@ const chatSettingsSchema = `
   ) STRICT;
 `;
 
+const connectionPresetsSchema = `
+  CREATE TABLE provider_keys (
+    id TEXT PRIMARY KEY,
+    secret_id TEXT NOT NULL REFERENCES secrets(id) ON DELETE CASCADE,
+    provider TEXT NOT NULL,
+    UNIQUE (secret_id, provider)
+  ) STRICT;
+
+  CREATE TABLE connection_presets (
+    id TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    settings_json TEXT NOT NULL CHECK (json_valid(settings_json)),
+    key_id TEXT REFERENCES provider_keys(id) ON DELETE SET NULL,
+    active INTEGER NOT NULL CHECK (active IN (0, 1)),
+    UNIQUE (user_id, name)
+  ) STRICT;
+
+  CREATE UNIQUE INDEX active_connection_preset ON connection_presets (user_id) WHERE active = 1;
+  CREATE INDEX connection_preset_key ON connection_presets (key_id) WHERE key_id IS NOT NULL;
+`;
+
+const migrateConnections = `
+  INSERT INTO provider_keys (id, secret_id, provider)
+    SELECT lower(hex(randomblob(16))), secret.id, connection.provider
+    FROM connection_settings AS connection
+    JOIN secrets AS secret ON secret.id = connection.secret_id AND secret.user_id = connection.user_id;
+
+  INSERT INTO connection_presets (id, user_id, name, provider, settings_json, key_id, active)
+    SELECT lower(hex(randomblob(16))), connection.user_id,
+      CASE connection.provider WHEN 'openai' THEN 'OpenAI' WHEN 'openrouter' THEN 'OpenRouter'
+        WHEN 'anthropic' THEN 'Anthropic' WHEN 'gemini' THEN 'Google Gemini' ELSE connection.provider END,
+      connection.provider, connection.settings_json, provider_keys.id, connection.active
+    FROM connection_settings AS connection
+    LEFT JOIN provider_keys ON provider_keys.secret_id = connection.secret_id AND provider_keys.provider = connection.provider
+      AND EXISTS (SELECT 1 FROM secrets WHERE id = connection.secret_id AND user_id = connection.user_id);
+
+  DROP TABLE connection_settings;
+`;
+
 export function openDatabase(path: string, vaultKey: Buffer) {
   const db = new Database(path, { strict: true });
   const fingerprint = createHash('sha256').update(vaultKey).digest('hex');
@@ -52,7 +93,7 @@ export function openDatabase(path: string, vaultKey: Buffer) {
       if (version === 0) {
         db.exec(schema);
         db.run('INSERT INTO vault_settings (id, key_fingerprint) VALUES (1, ?)', [fingerprint]);
-      } else if (version !== 1 && version !== 2) {
+      } else if (version !== 1 && version !== 2 && version !== 3 && version !== 4) {
         throw new Error(`Unsupported SQLite schema version: ${version}`);
       }
 
@@ -63,9 +104,13 @@ export function openDatabase(path: string, vaultKey: Buffer) {
         throw new Error('The vault key does not match this SQLite database');
       }
 
-      if (version !== 2) {
+      if (version === 0 || version === 1) {
         db.exec(chatSettingsSchema);
-        db.exec('PRAGMA user_version = 2');
+      }
+      if (version !== 4) {
+        db.exec(connectionPresetsSchema);
+        if (version === 3) db.exec(migrateConnections);
+        db.exec('PRAGMA user_version = 4');
       }
     }).immediate();
   } catch (error) {

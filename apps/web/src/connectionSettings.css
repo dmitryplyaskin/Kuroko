@@ -1,0 +1,94 @@
+.connection-columns {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 20rem), 1fr));
+  align-items: start;
+  gap: 28px;
+}
+
+.connection-group {
+  display: grid;
+  align-content: start;
+  gap: 14px;
+  padding: clamp(14px, 3vw, 22px);
+  border: 1px solid var(--kr-border);
+  border-radius: var(--kr-radius-panel);
+  background: var(--kr-surface);
+}
+
+.connection-group legend {
+  margin: 0;
+  padding-inline: 6px;
+  margin-inline-start: -6px;
+}
+
+.connection-preset { margin-block-end: 28px; }
+
+.connection-preset-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr));
+  gap: 14px;
+  align-items: end;
+}
+
+.connection-key-control {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: end;
+}
+
+.connection-key-control .mantine-ActionIcon-root { inline-size: 44px; block-size: 44px; }
+
+.provider-key-list, .provider-key-form {
+  display: grid;
+  gap: 12px;
+}
+
+.provider-key-list { list-style: none; padding: 0; margin: 0; }
+
+.provider-key-list li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+}
+
+.provider-key-list span, .connection-modal-copy { overflow-wrap: anywhere; }
+
+.connection-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 9rem), 1fr));
+  gap: 14px;
+  align-items: end;
+}
+
+.connection-fields input::placeholder {
+  color: var(--kr-muted);
+  opacity: 1;
+}
+
+.connection-catalog, .connection-feedback {
+  display: grid;
+  justify-items: start;
+  gap: 8px;
+}
+
+.connection-hint, .connection-error {
+  font-size: .875rem;
+  overflow-wrap: anywhere;
+}
+
+.connection-hint { color: var(--kr-muted); }
+.connection-error, .connection-feedback p { color: var(--kr-danger); }
+.connection-hint:empty, .connection-action-status:empty { display: none; }
+
+.connection-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px 20px;
+  margin-block-start: 22px;
+}
+
+.connection-actions > .mantine-Button-root { margin-inline-start: auto; }

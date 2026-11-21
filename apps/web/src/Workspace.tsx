@@ -1,14 +1,13 @@
 import { Activity, lazy, Suspense, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Tooltip } from '@mantine/core';
 import { useLocalStorage, useMediaQuery } from '@mantine/hooks';
-import { Feather, KeyRound, MessageSquare, PanelLeftClose, PanelLeftOpen, PanelsTopLeft, Settings } from 'lucide-react';
+import { Feather, MessageSquare, PanelLeftClose, PanelLeftOpen, PanelsTopLeft, Settings } from 'lucide-react';
 import type { User } from './api';
 import { ThemeMenu } from './Appearance';
 import { useChatSettings } from './chat/chatSettings';
 import { Profile } from './Profile';
 import { SceneCover, Scenes } from './Scenes';
 import { SettingsPage } from './Settings';
-import { Vault } from './Vault';
 
 const Chat = lazy(() => import('./chat/Chat'));
 
@@ -34,7 +33,6 @@ export function GuestLayout({ children }: { children: ReactNode }) {
 const sections = {
   scenes: { label: 'Сцены', title: 'Сцены', Icon: PanelsTopLeft },
   chat: { label: 'Чат', title: 'Тестовый чат', Icon: MessageSquare },
-  secrets: { label: 'Секреты', title: 'Мои секреты', Icon: KeyRound },
   settings: { label: 'Настройки', title: 'Настройки', Icon: Settings },
 } as const;
 
@@ -42,14 +40,14 @@ type View = keyof typeof sections;
 
 function readView(): View {
   const view = window.location.hash.slice(1);
-  if (view === 'appearance') return 'settings';
+  if (view === 'appearance' || view === 'secrets') return 'settings';
   return Object.hasOwn(sections, view) ? view as View : 'scenes';
 }
 
 export function Workspace({ user, onSessionEnd }: { user: User; onSessionEnd: (notice?: string) => void }) {
   const [view, setView] = useState(readView);
   const [chatVisited, setChatVisited] = useState(() => view === 'chat');
-  const [settingsTab, setSettingsTab] = useState<string | null>('appearance');
+  const [settingsTab, setSettingsTab] = useState<string | null>(() => window.location.hash === '#secrets' ? 'connection' : 'appearance');
   const chatSettings = useChatSettings(user.id, onSessionEnd);
   const [menuCollapsed, setMenuCollapsed] = useLocalStorage({
     key: 'kuroko-menu-collapsed', defaultValue: false, getInitialValueInEffect: false,
@@ -64,6 +62,7 @@ export function Workspace({ user, onSessionEnd }: { user: User; onSessionEnd: (n
     const onHashChange = () => {
       const next = readView();
       if (next === 'chat') setChatVisited(true);
+      if (window.location.hash === '#secrets') setSettingsTab('connection');
       setView(next);
     };
     window.addEventListener('hashchange', onHashChange);
@@ -114,8 +113,8 @@ export function Workspace({ user, onSessionEnd }: { user: User; onSessionEnd: (n
             </Suspense>
           </Activity>
         )}
-        {view === 'secrets' && <Vault user={user} onSessionEnd={onSessionEnd} />}
-        {view === 'settings' && <SettingsPage tab={settingsTab} setTab={setSettingsTab} chatSettings={chatSettings} />}
+        {view === 'settings' && <SettingsPage account={user.id} onSessionEnd={onSessionEnd}
+          tab={settingsTab} setTab={setSettingsTab} chatSettings={chatSettings} />}
       </main>
     </div>
   );

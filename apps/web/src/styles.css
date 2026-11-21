@@ -48,7 +48,7 @@ h1, h2, h3, p, figure, dl, dd { margin: 0; }
   letter-spacing: -.035em;
 }
 
-.brand > span, .account-avatar, .vault-key, .turn-icon {
+.brand > span, .account-avatar, .turn-icon {
   display: inline-grid;
   flex: none;
   place-items: center;
@@ -270,7 +270,6 @@ h1, h2, h3, p, figure, dl, dd { margin: 0; }
 .page-heading { margin-block-end: 26px; }
 .page-heading p { margin-block-start: 9px; color: var(--kr-muted); }
 .page-heading-with-action { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 16px; }
-.vault-error p { color: var(--kr-danger); }
 
 .scene-layout {
   display: grid;
@@ -308,33 +307,6 @@ h1, h2, h3, p, figure, dl, dd { margin: 0; }
 .scene-context dl { margin-block-start: 14px; font-size: .875rem; }
 .scene-context dt { color: var(--kr-muted); margin-block-start: 11px; }
 .scene-context dd { color: var(--kr-text); font-weight: 550; }
-
-.vault-status { display: block; color: var(--kr-muted); font-size: .9rem; }
-.vault-status:not(:empty) { margin-block-end: 15px; }
-.vault-error { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
-.vault-empty, .vault-list { background: var(--kr-surface); border: 1px solid var(--kr-border); border-radius: var(--kr-radius-panel); }
-.vault-empty {
-  display: grid;
-  justify-items: center;
-  gap: 9px;
-  padding: clamp(32px, 7vw, 66px) clamp(18px, 5vw, 36px);
-  text-align: center;
-}
-
-.vault-empty .vault-key { margin-block-end: 5px; inline-size: 48px; block-size: 48px; }
-.vault-empty h2 { font-size: 1.12rem; font-weight: 670; }
-.vault-empty p { max-inline-size: 40ch; color: var(--kr-muted); }
-.vault-list { padding: 0; margin: 0; list-style: none; }
-.vault-list li {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 11px;
-  padding: 10px 14px;
-}
-
-.vault-list li + li { border-block-start: 1px solid var(--kr-border); }
-.vault-name { font-weight: 580; overflow-wrap: anywhere; }
 
 .form-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px 12px; }
 .form-actions .mantine-Button-root { max-inline-size: 100%; }
@@ -468,7 +440,4 @@ h1, h2, h3, p, figure, dl, dd { margin: 0; }
   .mode-option { grid-template-columns: 76px minmax(0, 1fr) auto; }
   .mode-preview { grid-column: auto; min-block-size: 42px; }
   .mode-preview > span { padding: 6px; }
-  .vault-list li { gap: 7px; padding-inline: 9px; }
-  .vault-list li .vault-key { display: none; }
-  .vault-list li { grid-template-columns: minmax(0, 1fr) auto; }
 }

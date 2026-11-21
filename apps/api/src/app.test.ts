@@ -1,8 +1,9 @@
-import { afterEach, beforeEach, expect, test } from 'bun:test';
+import { afterEach, beforeEach, expect, spyOn, test } from 'bun:test';
 import { randomBytes } from 'node:crypto';
 import { once } from 'node:events';
 import type { Server } from 'node:http';
 import { defaultChatSettings } from '../../shared/chatSettings';
+import { defaultConnectionSettings, type ProviderKey } from '../../shared/connectionSettings';
 import { createApp } from './app';
 import { openDatabase } from './database';
 
@@ -51,7 +52,7 @@ function login(username: string, remember = false, cookie?: string) {
 function sessionCookie(response: Response) {
   const cookie = response.headers.get('Set-Cookie');
   if (!cookie) throw new Error('Expected session cookie');
-  return { header: cookie, token: cookie.split(';', 1)[0] };
+  return { header: cookie, token: cookie.split(';', 1)[0]! };
 }
 
 test('registers, issues a revocable session and persists it only with auto-login', async () => {
@@ -86,7 +87,13 @@ test('registers, issues a revocable session and persists it only with auto-login
   expect((await request('/auth/session', { cookie: remembered.token })).status).toBe(401);
 });
 
-test('encrypts values and scopes every secret operation to the authenticated owner', async () => {
+const connectionPath = '/settings/connection';
+
+function addKey(cookie: string, provider: string, name: string, apiKey: string) {
+  return request(`${connectionPath}/keys/${provider}`, { method: 'POST', cookie, body: { name, apiKey } });
+}
+
+test('stores provider keys encrypted and returns only metadata even to their owner', async () => {
   expect((await register('owner')).status).toBe(201);
   expect((await register('other')).status).toBe(201);
   const owner = await login('owner');
@@ -94,34 +101,30 @@ test('encrypts values and scopes every secret operation to the authenticated own
   const { id: account } = await owner.json() as { id: number };
   const ownerCookie = sessionCookie(owner).token;
   const otherCookie = sessionCookie(await login('other')).token;
-  const value = '  confidential\nсекрет  ';
-  const fields = { name: 'SSH key', value };
+  const apiKey = 'secret-api-key-for-test';
+  const name = 'Основной ключ';
+  const keysPath = `${connectionPath}/keys/openai`;
 
-  expect((await request('/secrets')).status).toBe(401);
-  const created = await request('/secrets', { method: 'POST', cookie: ownerCookie, body: fields });
+  expect((await request(keysPath, { method: 'POST', body: { name, apiKey } })).status).toBe(401);
+  expect((await addKey(ownerCookie, 'openai', apiKey, apiKey)).status).toBe(400);
+  const created = await addKey(ownerCookie, 'openai', name, apiKey);
   expect(created.status).toBe(201);
-  const summary = await created.json() as { id: string; name: string };
-  expect(summary).toEqual({ id: expect.any(String), name: fields.name });
-  const path = `/secrets/${summary.id}`;
+  expect(created.headers.get('Cache-Control')).toBe('no-store');
+  const summary = await created.json() as ProviderKey;
+  expect(summary).toEqual({ id: expect.any(String), name, provider: 'openai' });
   const stored = db.query<{ encrypted_value: Uint8Array }, []>('SELECT encrypted_value FROM secrets').get();
   expect(stored?.encrypted_value).toBeInstanceOf(Uint8Array);
-  expect(Buffer.from(stored!.encrypted_value).includes(value)).toBe(false);
+  expect(Buffer.from(stored!.encrypted_value).includes(apiKey)).toBe(false);
 
-  const ownerList = await request('/secrets', { cookie: ownerCookie });
-  expect(ownerList.headers.get('Cache-Control')).toBe('no-store');
-  expect(await ownerList.json()).toEqual([summary]);
-  expect(await (await request('/secrets', { cookie: otherCookie })).json()).toEqual([]);
-  expect((await request('/secrets', { cookie: otherCookie, account })).status).toBe(401);
-  expect((await request(path, { cookie: otherCookie })).status).toBe(404);
-  expect((await request(path, { method: 'PUT', cookie: otherCookie, body: fields })).status).toBe(404);
-  expect((await request(path, { method: 'DELETE', cookie: otherCookie })).status).toBe(404);
-  expect(await (await request(path, { cookie: ownerCookie })).json()).toEqual({ ...summary, value });
-
-  const updated = { name: 'Updated key', value: 'new value' };
-  expect((await request(path, { method: 'PUT', cookie: ownerCookie, body: updated })).status).toBe(200);
-  expect(await (await request(path, { cookie: ownerCookie })).json()).toEqual({ id: summary.id, ...updated });
-  expect((await request(path, { method: 'DELETE', cookie: ownerCookie })).status).toBe(204);
-  expect((await request(path, { cookie: ownerCookie })).status).toBe(404);
+  expect(await (await request(connectionPath, { cookie: ownerCookie })).json()).toEqual({ activePresetId: null, presets: [], keys: [summary] });
+  expect(await (await request(connectionPath, { cookie: otherCookie })).json()).toEqual({ activePresetId: null, presets: [], keys: [] });
+  expect((await request(connectionPath, { cookie: otherCookie, account })).status).toBe(401);
+  expect((await request(`/secrets/${summary.id}`, { cookie: ownerCookie })).status).toBe(404);
+  expect((await request(`${keysPath}/${summary.id}`, { cookie: ownerCookie })).status).toBe(404);
+  expect((await request(`${keysPath}/${summary.id}`, { method: 'DELETE', cookie: otherCookie })).status).toBe(404);
+  expect((await request(`${connectionPath}/keys/gemini/${summary.id}`, { method: 'DELETE', cookie: ownerCookie })).status).toBe(404);
+  expect((await addKey(ownerCookie, 'openai', name, 'another-key')).status).toBe(409);
+  expect((await addKey(ownerCookie, 'gemini', name, 'another-key')).status).toBe(201);
 });
 
 test('changes the password once, revokes all sessions and preserves the vault', async () => {
@@ -131,8 +134,7 @@ test('changes the password once, revokes all sessions and preserves the vault', 
   const newPassword = 'replacement-passphrase';
   const body = { currentPassword: password, newPassword };
   const path = '/auth/password';
-  const secret = { name: 'Saved key', value: 'test vault value' };
-  expect((await request('/secrets', { method: 'POST', cookie: first, body: secret })).status).toBe(201);
+  expect((await addKey(first, 'openai', 'Saved key', 'test-vault-value')).status).toBe(201);
   expect((await request(path, { method: 'PUT', body })).status).toBe(401);
   expect((await request(path, { method: 'PUT', cookie: first, body: { ...body, newPassword: 'short' } })).status).toBe(400);
   const invalid = await request(path, { method: 'PUT', cookie: first, body: { ...body, currentPassword: 'wrong' } });
@@ -148,8 +150,8 @@ test('changes the password once, revokes all sessions and preserves the vault', 
 
   const nextLogin = await request('/auth/login', { method: 'POST', body: { username: 'owner', password: newPassword } });
   expect(nextLogin.status).toBe(200);
-  const list = await request('/secrets', { cookie: sessionCookie(nextLogin).token });
-  expect(await list.json()).toEqual([{ id: expect.any(String), name: secret.name }]);
+  const list = await request(connectionPath, { cookie: sessionCookie(nextLogin).token });
+  expect(await list.json()).toMatchObject({ keys: [{ id: expect.any(String), name: 'Saved key', provider: 'openai' }] });
 });
 
 test('validates chat settings and stores them for the signed-in account only', async () => {
@@ -188,6 +190,114 @@ test('validates chat settings and stores them for the signed-in account only', a
   expect(await (await request(path, { cookie: owner })).json()).toEqual({ settings: defaultChatSettings });
 });
 
+test('saves multiple named presets for one provider and unlinks a deleted key from all of them', async () => {
+  const path = `${connectionPath}/presets`;
+  await register('owner');
+  await register('other');
+  const cookie = sessionCookie(await login('owner')).token;
+  const otherCookie = sessionCookie(await login('other')).token;
+  const settings = { model: 'model-id', contextTokens: 32768, responseTokens: 2000, temperature: 0.7, topP: 0.95, topK: null };
+  const apiKey = 'sk-example-key-for-test';
+  const key = await (await addKey(cookie, 'openai', 'Основной', apiKey)).json() as { id: string };
+  const body = { name: 'Длинная сцена', provider: 'openai', settings, keyId: key.id };
+  expect((await request(path, { method: 'POST', body })).status).toBe(401);
+  expect((await request(path, { method: 'POST', cookie, body: { ...body, settings: { ...settings, contextTokens: 3.5 } } })).status).toBe(400);
+  expect((await request(path, { method: 'POST', cookie: otherCookie, body })).status).toBe(404);
+  expect((await request(path, { method: 'POST', cookie, body: { ...body, provider: 'gemini' } })).status).toBe(404);
+
+  const saved = await request(path, { method: 'POST', cookie, body });
+  expect(saved.status).toBe(201);
+  const payload = await saved.text();
+  expect(payload).not.toContain(apiKey);
+  const firstId = JSON.parse(payload).activePresetId as string;
+  expect(JSON.parse(payload).presets).toEqual([{ ...settings, name: body.name, id: firstId, provider: 'openai', keyId: key.id }]);
+  expect((await request(path, { method: 'POST', cookie, body })).status).toBe(409);
+
+  const second = { ...body, name: 'Короткая сцена', settings: { ...settings, responseTokens: 500 } };
+  const created = await request(path, { method: 'POST', cookie, body: second });
+  expect(created.status).toBe(201);
+  const { activePresetId: secondId } = await created.json() as { activePresetId: string };
+  expect(secondId).not.toBe(firstId);
+  expect((await request(`${path}/${firstId}`, { method: 'PUT', cookie: otherCookie, body })).status).toBe(404);
+  expect((await request(`${path}/${firstId}`, { method: 'DELETE', cookie: otherCookie })).status).toBe(404);
+  const updated = await request(`${path}/${firstId}`, { method: 'PUT', cookie, body: { ...body, name: 'Обновлённая сцена' } });
+  expect(await updated.json()).toMatchObject({ activePresetId: firstId, presets: expect.arrayContaining([
+    expect.objectContaining({ id: firstId, name: 'Обновлённая сцена', responseTokens: 2000 }),
+    expect.objectContaining({ id: secondId, name: second.name, responseTokens: 500 }),
+  ]) });
+
+  const unlinked = await request(`${connectionPath}/keys/openai/${key.id}`, { method: 'DELETE', cookie });
+  expect(await unlinked.json()).toMatchObject({ activePresetId: firstId, keys: [], presets: expect.arrayContaining([
+    expect.objectContaining({ id: firstId, keyId: null }), expect.objectContaining({ id: secondId, keyId: null }),
+  ]) });
+  expect(db.query('SELECT id FROM secrets').all()).toEqual([]);
+  expect(await (await request(`${path}/${firstId}`, { method: 'DELETE', cookie })).json()).toMatchObject({
+    activePresetId: null, presets: [expect.objectContaining({ id: secondId })],
+  });
+});
+
+test('loads models with the selected provider’s stored key without echoing provider data that contains its value', async () => {
+  await register('model-tester');
+  const cookie = sessionCookie(await login('model-tester')).token;
+  const modelsPath = '/settings/connection/models';
+  const apiKey = 'api-key-for-catalog-test';
+  const keyIds = new Map<string, string>();
+  for (const provider of ['openai', 'openrouter', 'anthropic', 'gemini']) {
+    const reply = await addKey(cookie, provider, 'Key for catalog', apiKey);
+    expect(reply.status).toBe(201);
+    const { id } = await reply.json() as ProviderKey;
+    keyIds.set(provider, id);
+  }
+  const genuineFetch = fetch;
+  const upstream: { url: URL; init?: RequestInit }[] = [];
+  const mockFetch = (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+    if (typeof input === 'string' && input.startsWith(baseUrl)) return genuineFetch(input, init);
+    const url = new URL(String(input));
+    upstream.push({ url, init });
+    if (url.host === 'generativelanguage.googleapis.com') {
+      const name = url.searchParams.has('pageToken') ? 'models/gemini-second' : 'models/gemini-first';
+      const nextPageToken = url.searchParams.has('pageToken') ? undefined : 'page-2';
+      return Promise.resolve(Response.json({ nextPageToken, models: [
+        { name, supportedGenerationMethods: ['generateContent'], inputTokenLimit: 8192, outputTokenLimit: 2048 },
+        { name: 'models/embedding-only', supportedGenerationMethods: ['embedContent'] },
+      ] }));
+    }
+    if (url.host === 'api.anthropic.com') {
+      return Promise.resolve(Response.json({ data: [{ id: 'claude-test', max_input_tokens: 8192, max_tokens: 2048 }] }));
+    }
+    if (url.host === 'openrouter.ai') {
+      return Promise.resolve(Response.json({ data: [{ id: 'author/model:free', context_length: 8192 }, { id: `echo-${apiKey}` }] }));
+    }
+    return Promise.resolve(Response.json({ error: `Provider included ${apiKey} in its error` }, { status: 401 }));
+  };
+  const mocked = spyOn(globalThis, 'fetch').mockImplementation(Object.assign(mockFetch, { preconnect: genuineFetch.preconnect }));
+
+  try {
+    const catalog = (provider: string, keyId = keyIds.get(provider)) => request(modelsPath, { method: 'POST', cookie, body: { provider, keyId } });
+    expect((await catalog('https://example.com')).status).toBe(400);
+    expect((await catalog('openai', keyIds.get('gemini'))).status).toBe(404);
+    expect((await request(modelsPath, { method: 'POST', cookie, body: { provider: 'openai', credential: { apiKey } } })).status).toBe(400);
+    expect(await (await catalog('gemini')).json()).toEqual({ models: [
+      { id: 'gemini-first', inputLimit: 8192, outputLimit: 2048 }, { id: 'gemini-second', inputLimit: 8192, outputLimit: 2048 },
+    ] });
+    expect(upstream[0]?.url.searchParams.has('key')).toBe(false);
+    expect(new Headers(upstream[0]?.init?.headers).get('x-goog-api-key')).toBe(apiKey);
+    expect(upstream[1]?.url.searchParams.get('pageToken')).toBe('page-2');
+    expect(await (await catalog('anthropic')).json()).toEqual({ models: [{ id: 'claude-test', inputLimit: 8192, outputLimit: 2048 }] });
+    expect(new Headers(upstream[2]?.init?.headers).get('x-api-key')).toBe(apiKey);
+    expect(await (await catalog('openrouter')).json()).toEqual({ models: [{ id: 'author/model:free', contextLimit: 8192 }] });
+    expect(upstream[3]?.url.pathname).toBe('/api/v1/models/user');
+    expect(new Headers(upstream[3]?.init?.headers).get('Authorization')).toBe(`Bearer ${apiKey}`);
+    const rejected = await catalog('openai');
+    expect(rejected.status).toBe(422);
+    expect(await rejected.text()).not.toContain(apiKey);
+    expect(upstream.every(({ init }) => init?.redirect === 'error')).toBe(true);
+    expect(db.query('SELECT id FROM secrets').all()).toHaveLength(4);
+  } finally {
+    mocked.mockRestore();
+  }
+});
+
 test('deletes only the confirmed account and cascades to its sessions and secrets', async () => {
   const other = await register('other');
   const { id: otherId } = await other.json() as { id: number };
@@ -197,8 +307,13 @@ test('deletes only the confirmed account and cascades to its sessions and secret
   const otherCookie = sessionCookie(await login('other')).token;
   const path = '/auth/account';
   const body = { username: 'owner', currentPassword: password };
-  for (const [cookie, name] of [[first, 'Owner secret'], [otherCookie, 'Other secret']]) {
-    expect((await request('/secrets', { method: 'POST', cookie, body: { name, value: 'test value' } })).status).toBe(201);
+  for (const [cookie, name] of [[first, 'Owner secret'], [otherCookie, 'Other secret']] as const) {
+    const created = await addKey(cookie, 'openai', name, 'test-key-value');
+    expect(created.status).toBe(201);
+    const { id } = await created.json() as ProviderKey;
+    expect((await request(`${connectionPath}/presets`, { method: 'POST', cookie, body: {
+      name: 'Default preset', provider: 'openai', keyId: id, settings: { ...defaultConnectionSettings, model: 'test-model' },
+    } })).status).toBe(201);
     expect((await request('/settings/chat', { method: 'PUT', cookie, body: defaultChatSettings })).status).toBe(200);
   }
 
@@ -212,13 +327,14 @@ test('deletes only the confirmed account and cascades to its sessions and secret
   expect(deleted.status).toBe(204);
   expect(deleted.headers.get('set-cookie')).toContain('__Host-kuroko_session=;');
   expect((await request('/auth/session', { cookie: first })).status).toBe(401);
-  expect((await request('/secrets', { cookie: second })).status).toBe(401);
+  expect((await request(connectionPath, { cookie: second })).status).toBe(401);
   expect((await login('owner')).status).toBe(401);
   expect(db.query('SELECT name FROM secrets').all()).toEqual([{ name: 'Other secret' }]);
+  expect(db.query('SELECT user_id FROM connection_presets').all()).toEqual([{ user_id: otherId }]);
   expect(db.query('SELECT user_id FROM chat_settings').all()).toEqual([{ user_id: otherId }]);
   expect((await request('/auth/session', { cookie: otherCookie })).status).toBe(200);
 
   expect((await register('owner')).status).toBe(201);
   const fresh = sessionCookie(await login('owner')).token;
-  expect(await (await request('/secrets', { cookie: fresh })).json()).toEqual([]);
+  expect(await (await request(connectionPath, { cookie: fresh })).json()).toEqual({ activePresetId: null, presets: [], keys: [] });
 });

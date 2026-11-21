@@ -1,7 +1,4 @@
 export type User = { id: number; username: string };
-export type SecretSummary = { id: string; name: string };
-export type SecretFields = { name: string; value: string };
-export type Secret = SecretSummary & SecretFields;
 export type AuthField = 'username' | 'password' | 'currentPassword' | 'newPassword';
 
 export class ApiError extends Error {
