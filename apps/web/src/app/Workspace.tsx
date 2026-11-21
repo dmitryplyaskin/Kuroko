@@ -5,6 +5,7 @@ import { PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import type { User } from '@kuroko/contracts/auth';
 import { useUnit } from 'effector-react';
 import { ModuleIcon } from '../modules/ModuleIcon';
+import { ModuleExtensionsProvider } from '../modules/ModuleExtensions';
 import { ModuleView } from '../modules/ModuleView';
 import type { ModuleRegistry, RegisteredScreen } from '../modules/registry';
 import { SettingsNavigationProvider } from '../modules/settingsNavigation';
@@ -79,12 +80,14 @@ export function Workspace({ user, registry, model }: {
         <Profile user={user} />
       </aside>
       <main className="workspace-content page-container" data-size="wide" data-layout={screen.layout} ref={main} tabIndex={-1}>
-        <SettingsNavigationProvider value={settings}>
-          {registry.screens.map((entry) => {
-            const active = entry.id === screen.id;
-            return (active || retainedScreens.has(entry.id)) && <Screen key={entry.id} entry={entry} active={active} />;
-          })}
-        </SettingsNavigationProvider>
+        <ModuleExtensionsProvider registry={registry}>
+          <SettingsNavigationProvider value={settings}>
+            {registry.screens.map((entry) => {
+              const active = entry.id === screen.id;
+              return (active || retainedScreens.has(entry.id)) && <Screen key={entry.id} entry={entry} active={active} />;
+            })}
+          </SettingsNavigationProvider>
+        </ModuleExtensionsProvider>
       </main>
     </div>
   );

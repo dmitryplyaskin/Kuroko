@@ -10,7 +10,7 @@ import { fork, scopeBind } from 'effector';
 import { Provider } from 'effector-react';
 import { corePlugin } from './core';
 import { createModuleRegistry } from './modules/registry';
-import { appStarted } from './platform/lifecycle';
+import { startApplication } from './app/startApplication';
 import { createWorkspaceModel } from './app/workspaceModel';
 import { browserStorageChanged } from './shared/browser/preferences';
 import { App } from './app/App';
@@ -39,7 +39,7 @@ const handleStorage = (event: StorageEvent) => {
 window.addEventListener('hashchange', handleHashChange);
 window.addEventListener('storage', handleStorage);
 handleHashChange();
-scopeBind(appStarted, { scope })();
+startApplication(registry, scope);
 
 const appRoot = createRoot(root);
 appRoot.render(

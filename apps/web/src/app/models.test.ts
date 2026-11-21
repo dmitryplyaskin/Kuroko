@@ -10,7 +10,7 @@ import {
 } from '../platform/session/model';
 import {
   $appliedChatSettings, $chatSettingsDirty, $chatSettingsDraft, $chatSettingsSubmission, chatSettingsChanged,
-  chatSettingsSaveRequested, loadChatSettingsFx, saveChatSettingsFx,
+  chatSettingsInitialized, chatSettingsSaveRequested, loadChatSettingsFx, saveChatSettingsFx,
 } from '../features/chat/settings/model';
 import {
   $connectionLoad, $connectionSelection, connectionActionRequested, connectionClosed, connectionDraftChanged,
@@ -46,7 +46,6 @@ test('startup can retry after a network error and enters the workspace after res
         if (++attempts === 1) throw new Error('Unavailable');
         return user;
       }],
-      [loadChatSettingsFx, noChatSettings],
     ],
   });
 
@@ -64,6 +63,7 @@ test('a late 401 after signing in again as the same user leaves the new session 
     handlers: [[loadChatSettingsFx, noChatSettings], [saveChatSettingsFx, () => oldSave.promise]],
   });
 
+  await allSettled(chatSettingsInitialized, { scope });
   await allSettled(sessionUserReceived, { scope, params: user });
   const oldSession = scope.getState($activeSession)!;
   await allSettled(chatSettingsChanged, { scope, params: { fontSize: 20 } });
@@ -88,6 +88,32 @@ test('a late 401 after signing in again as the same user leaves the new session 
   assert.equal(scope.getState($session).status, 'guest');
 });
 
+test('a late successful load leaves the chat settings of a new session for the same user intact', async () => {
+  const freshSettings = { ...defaultChatSettings, fontSize: 20 };
+  const oldLoad = Promise.withResolvers<Awaited<ReturnType<typeof loadChatSettingsFx>>>();
+  let requests = 0;
+  const scope = fork({
+    handlers: [[loadChatSettingsFx, () => ++requests === 1 ? oldLoad.promise : { settings: freshSettings, legacy: undefined }]],
+  });
+
+  await allSettled(chatSettingsInitialized, { scope });
+  const signIn = scopeBind(sessionUserReceived, { scope });
+  signIn(user);
+  const oldSession = scope.getState($activeSession)!;
+  scopeBind(sessionEndRequested, { scope })({ session: oldSession });
+  signIn(user);
+  await Promise.resolve();
+
+  assert.equal(requests, 2);
+  assert.equal(oldSession.signal.aborted, true);
+  assert.deepEqual(scope.getState($appliedChatSettings), freshSettings);
+  oldLoad.resolve({ settings: { ...defaultChatSettings, fontSize: 24 }, legacy: undefined });
+  await allSettled(scope);
+
+  assert.deepEqual(scope.getState($appliedChatSettings), freshSettings);
+  assert.deepEqual(scope.getState($chatSettingsDraft), freshSettings);
+});
+
 test('legacy chat preferences are a draft and are applied only after a successful save', async () => {
   const legacy = { ...defaultChatSettings, fontSize: 22 };
   const saving = Promise.withResolvers<typeof defaultChatSettings>();
@@ -101,6 +127,7 @@ test('legacy chat preferences are a draft and are applied only after a successfu
     ],
   });
 
+  await allSettled(chatSettingsInitialized, { scope });
   await allSettled(sessionUserReceived, { scope, params: user });
   assert.deepEqual(scope.getState($chatSettingsDraft), legacy);
   assert.equal(scope.getState($chatSettingsDirty), true);
@@ -117,7 +144,7 @@ test('legacy chat preferences are a draft and are applied only after a successfu
 });
 
 test('copying a connection preset uses its latest draft and keeps the original draft', async () => {
-  const scope = fork({ handlers: [[loadChatSettingsFx, noChatSettings], [loadConnectionFx, () => connection]] });
+  const scope = fork({ handlers: [[loadConnectionFx, () => connection]] });
   await allSettled(sessionUserReceived, { scope, params: user });
   await allSettled(connectionOpened, { scope });
   await allSettled(connectionDraftChanged, { scope, params: { model: 'custom-model' } });
@@ -136,7 +163,6 @@ test('changing provider cancels the old catalog and ignores its late result', as
   let firstController: AbortController | undefined;
   const scope = fork({
     handlers: [
-      [loadChatSettingsFx, noChatSettings],
       [loadConnectionFx, () => connection],
       [loadModelCatalogFx, ({ provider, controller }: Parameters<typeof loadModelCatalogFx>[0]) => {
         if (provider === 'anthropic') return { models: [{ id: 'current-model' }] };
@@ -168,7 +194,6 @@ test('re-entering the connection tab waits for a write before loading its new sn
   let writes = 0;
   const scope = fork({
     handlers: [
-      [loadChatSettingsFx, noChatSettings],
       [loadConnectionFx, () => ++reads === 1 ? connection : saved],
       [mutateConnectionFx, async () => {
         writes++;
@@ -203,6 +228,7 @@ test('mock replies pause when hidden, resume from the same position and retain v
       [waitForReplyTickFx, () => new Promise<void>((resolve) => ticks.push(resolve))],
     ],
   });
+  await allSettled(chatSettingsInitialized, { scope });
   await allSettled(sessionUserReceived, { scope, params: user });
   await allSettled(chatShown, { scope });
   await allSettled(chatDraftChanged, { scope, params: 'Привет' });
@@ -238,6 +264,7 @@ test('mock replies pause when hidden, resume from the same position and retain v
 
 test('chat validates attachments and supports editing and deleting a sent message', async () => {
   const scope = fork({ handlers: [[loadChatSettingsFx, noChatSettings]] });
+  await allSettled(chatSettingsInitialized, { scope });
   await allSettled(sessionUserReceived, { scope, params: user });
   await allSettled(chatShown, { scope });
 

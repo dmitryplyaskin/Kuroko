@@ -1,8 +1,11 @@
 import { Button, Menu, Textarea } from '@mantine/core';
 import { Bot, ChevronRight, Ellipsis, Pencil, Trash2 } from 'lucide-react';
 import { memo, useCallback, useLayoutEffect, useRef, useState } from 'react';
+import { useModuleExtensions } from '../../modules/ModuleExtensions';
+import { notify } from '../../shared/notifications/notifications';
 import { ChatText } from './ChatText';
 import type { ChatImage, Message, ReplyPhase } from './message';
+import type { MessageAction, MessageActionContext } from './messageActions';
 
 const clock = new Intl.DateTimeFormat('ru', { hour: '2-digit', minute: '2-digit' });
 const date = new Intl.DateTimeFormat('ru', { dateStyle: 'long', timeStyle: 'short' });
@@ -50,6 +53,8 @@ export const ChatMessage = memo(function ChatMessage({
   const assistant = message.role === 'assistant';
   const author = assistant ? 'Мок-модель' : username;
   const editing = editor !== undefined;
+  const actions = useModuleExtensions('chat.message.actions');
+  const actionContext: MessageActionContext = { text };
   const menuButton = useRef<HTMLButtonElement>(null);
   const editInput = useRef<HTMLTextAreaElement>(null);
   const focusEditor = useRef(false);
@@ -66,6 +71,14 @@ export const ChatMessage = memo(function ChatMessage({
   function cancelEdit() {
     onCancelEdit();
     menuButton.current?.focus({ preventScroll: true });
+  }
+
+  async function runAction(action: MessageAction) {
+    try {
+      await action.run(actionContext);
+    } catch {
+      notify({ tone: 'error', title: action.label, message: 'Не удалось выполнить действие.' });
+    }
   }
 
   function toggleReasoning(button: HTMLButtonElement) {
@@ -106,6 +119,9 @@ export const ChatMessage = memo(function ChatMessage({
                     onEdit(id);
                   }}>Редактировать</Menu.Item>
                 )}
+                {!editing && actions.map((action) => (action.isVisible?.(actionContext) ?? true) && (
+                  <Menu.Item key={action.id} onClick={() => void runAction(action)}>{action.label}</Menu.Item>
+                ))}
                 <Menu.Item color="var(--kr-danger)" leftSection={<Trash2 size={15} aria-hidden="true" />} onClick={() => onDelete(message)}>Удалить</Menu.Item>
               </Menu.Dropdown>
             </Menu>

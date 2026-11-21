@@ -1,5 +1,6 @@
 import { lazy, type ComponentType, type LazyExoticComponent } from 'react';
-import type { ModuleBundle, SettingsTab, WebModule, WorkspaceScreen } from './contracts';
+import { scopeBind, type Scope } from 'effector';
+import type { ExtensionContribution, ExtensionKind, ModuleBundle, SettingsTab, WebModule, WorkspaceScreen } from './contracts';
 
 type RegisteredView<T> = Readonly<T & {
   moduleId: string;
@@ -26,17 +27,27 @@ export function createModuleRegistry(bundle: ModuleBundle, additionalModules: re
   const screens = new Map<string, RegisteredScreen>();
   const tabs = new Map<string, RegisteredTab>();
   const routes = new Map<string, WorkspaceRoute>();
+  const extensions = new Map<ExtensionKind, ExtensionContribution[]>();
+  const initializers: NonNullable<WebModule['initialize']>[] = [];
 
   for (const module of [...bundle.modules, ...additionalModules]) {
     if (moduleIds.has(module.id)) throw new Error(`Duplicate module ID: ${module.id}`);
     moduleIds.add(module.id);
+    if (module.initialize) initializers.push(module.initialize);
 
     for (const contribution of module.contributions) {
       const { id } = contribution;
       if (contributionIds.has(id)) throw new Error(`Duplicate contribution ID: ${id}`);
       contributionIds.add(id);
 
-      const load = Object.hasOwn(module.views, id) ? module.views[id] : undefined;
+      if (contribution.kind !== 'workspace.screen' && contribution.kind !== 'settings.tab') {
+        const entries = extensions.get(contribution.kind);
+        if (entries) entries.push(contribution);
+        else extensions.set(contribution.kind, [contribution]);
+        continue;
+      }
+
+      const load = module.views && Object.hasOwn(module.views, id) ? module.views[id] : undefined;
       if (!load) throw new Error(`Missing view loader for ${id} in ${module.id}`);
       const view = { moduleId: module.id, View: lazy(load) };
 
@@ -68,12 +79,19 @@ export function createModuleRegistry(bundle: ModuleBundle, additionalModules: re
   const defaultRoute: WorkspaceRoute = { screen: defaultScreen };
   const orderedScreens: readonly RegisteredScreen[] = [...screens.values()].sort(displayOrder);
   const orderedTabs: readonly RegisteredTab[] = [...tabs.values()].sort(displayOrder);
+  for (const entries of extensions.values()) entries.sort(displayOrder);
   return {
     screens: orderedScreens,
     settingsTabs: orderedTabs,
     defaultSettingsTab: bundle.defaultSettingsTab,
     resolveRoute: (hash: string) => routes.get(hash) ?? defaultRoute,
     hasSettingsTab: (key: string) => tabs.has(key),
+    initialize: (scope: Scope) => {
+      for (const initialize of initializers) scopeBind(initialize, { scope })();
+    },
+    // Contributions are grouped by their discriminant during registration.
+    getExtensions: <K extends ExtensionKind>(kind: K): readonly ExtensionContribution<K>[] =>
+      (extensions.get(kind) ?? []) as unknown as readonly ExtensionContribution<K>[],
   };
 }
 

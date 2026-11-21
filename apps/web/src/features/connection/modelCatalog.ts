@@ -3,6 +3,7 @@ import type { Provider, ProviderModel } from '@kuroko/contracts/connectionSettin
 import { abortFx } from '../../shared/async/abort';
 import { errorMessage } from '../../shared/http/api';
 import { protectedRequestFailed, type ActiveSession } from '../../platform/session/model';
+import { inActiveSession } from '../../platform/session/request';
 import { connectionApi } from './connectionApi';
 
 type Catalog = { status: 'idle' | 'loading' } | { status: 'error'; message: string } | { status: 'ready'; models: ProviderModel[] };
@@ -13,12 +14,12 @@ export const catalogRequested = createEvent<CatalogQuery>();
 export const catalogInvalidated = createEvent();
 
 export const loadModelCatalogFx = createEffect(({ session, provider, keyId, controller }: CatalogRequest) =>
-  connectionApi.models(session.user.id, provider, keyId, AbortSignal.any([session.signal, controller.signal])));
+  connectionApi.models(session, provider, keyId, controller.signal));
 
 const $request = createStore<CatalogRequest | null>(null).on(loadModelCatalogFx, (_, request) => request);
 
 const catalogFinished = sample({
-  clock: loadModelCatalogFx.finally,
+  clock: inActiveSession(loadModelCatalogFx.finally, ({ session }) => session),
   source: $request,
   filter: (request, { params }) => params === request,
   fn: (_, completion) => completion,

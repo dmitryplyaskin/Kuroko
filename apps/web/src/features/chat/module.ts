@@ -1,8 +1,9 @@
 import type { WebModule } from '../../modules/contracts';
-import './settings/model';
+import { chatSettingsInitialized } from './settings/model';
 
 export const chatModule = {
   id: 'kuroko.chat',
+  initialize: chatSettingsInitialized,
   contributions: [{
     kind: 'workspace.screen',
     id: 'kuroko.chat.index',

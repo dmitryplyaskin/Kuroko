@@ -1,22 +1,24 @@
 import type { ConnectionState, Provider, ProviderKey, ProviderModel, SaveConnectionPreset } from '@kuroko/contracts/connectionSettings';
-import { api } from '../../shared/http/api';
+import type { ActiveSession } from '../../platform/session/model';
+import { sessionRequest } from '../../platform/session/request';
 
 const path = '/settings/connection';
 const presetsPath = `${path}/presets`;
 const keysPath = (provider: Provider) => `${path}/keys/${provider}`;
 
 export const connectionApi = {
-  load: (account: number, signal: AbortSignal) => api<ConnectionState>(path, { account, signal }),
-  savePreset: (account: number, id: string, preset: SaveConnectionPreset, signal: AbortSignal) => api<ConnectionState>(
+  load: (session: ActiveSession, signal: AbortSignal) => sessionRequest<ConnectionState>(session, path, { signal }),
+  savePreset: (session: ActiveSession, id: string, preset: SaveConnectionPreset) => sessionRequest<ConnectionState>(
+    session,
     id ? `${presetsPath}/${encodeURIComponent(id)}` : presetsPath,
-    { method: id ? 'PUT' : 'POST', account, signal, body: preset },
+    { method: id ? 'PUT' : 'POST', body: preset },
   ),
-  deletePreset: (account: number, id: string, signal: AbortSignal) =>
-    api<ConnectionState>(`${presetsPath}/${encodeURIComponent(id)}`, { method: 'DELETE', account, signal }),
-  models: (account: number, provider: Provider, keyId: string, signal: AbortSignal) =>
-    api<{ models: ProviderModel[] }>(`${path}/models`, { method: 'POST', account, body: { provider, keyId }, signal }),
-  addKey: (account: number, provider: Provider, name: string, apiKey: string, signal: AbortSignal) =>
-    api<ProviderKey>(keysPath(provider), { method: 'POST', account, signal, body: { name, apiKey } }),
-  deleteKey: (account: number, provider: Provider, id: string, signal: AbortSignal) =>
-    api<ConnectionState>(`${keysPath(provider)}/${encodeURIComponent(id)}`, { method: 'DELETE', account, signal }),
+  deletePreset: (session: ActiveSession, id: string) =>
+    sessionRequest<ConnectionState>(session, `${presetsPath}/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  models: (session: ActiveSession, provider: Provider, keyId: string, signal: AbortSignal) =>
+    sessionRequest<{ models: ProviderModel[] }>(session, `${path}/models`, { method: 'POST', body: { provider, keyId }, signal }),
+  addKey: (session: ActiveSession, provider: Provider, name: string, apiKey: string) =>
+    sessionRequest<ProviderKey>(session, keysPath(provider), { method: 'POST', body: { name, apiKey } }),
+  deleteKey: (session: ActiveSession, provider: Provider, id: string) =>
+    sessionRequest<ConnectionState>(session, `${keysPath(provider)}/${encodeURIComponent(id)}`, { method: 'DELETE' }),
 };

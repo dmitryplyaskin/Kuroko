@@ -1,4 +1,5 @@
 import type { ComponentType } from 'react';
+import type { EventCallable } from 'effector';
 
 export type ModuleIconName = 'panels' | 'message' | 'settings' | 'palette' | 'plug';
 
@@ -26,10 +27,19 @@ export type SettingsTab = ViewContribution & {
 
 export type ViewLoader = () => Promise<{ default: ComponentType }>;
 
+export interface ExtensionContributions {}
+
+export type ExtensionKind = keyof ExtensionContributions;
+
+export type ExtensionContribution<K extends ExtensionKind = ExtensionKind> = {
+  [Kind in K]: ExtensionContributions[Kind] & { kind: Kind; id: string; order: number };
+}[K];
+
 export type WebModule = {
   id: string;
-  contributions: readonly (WorkspaceScreen | SettingsTab)[];
-  views: Readonly<Partial<Record<string, ViewLoader>>>;
+  contributions: readonly (WorkspaceScreen | SettingsTab | ExtensionContribution)[];
+  views?: Readonly<Partial<Record<string, ViewLoader>>>;
+  initialize?: EventCallable<void>;
 };
 
 export type ModuleBundle = {

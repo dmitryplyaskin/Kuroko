@@ -4,8 +4,9 @@ import {
   type ChatSettings, type ChatSettingsResponse,
 } from '@kuroko/contracts/chatSettings';
 import { $activeSession, protectedRequestFailed, sessionEnded, sessionStarted, type ActiveSession } from '../../../platform/session/model';
+import { inActiveSession, sessionRequest } from '../../../platform/session/request';
 import { readBrowserStorage } from '../../../shared/browser/storage';
-import { api, errorMessage } from '../../../shared/http/api';
+import { errorMessage } from '../../../shared/http/api';
 import { notify } from '../../../shared/notifications/notifications';
 
 type LoadState = { status: 'loading' } | { status: 'error'; message: string } | { status: 'ready'; settings: ChatSettings; fromBrowser: boolean };
@@ -18,6 +19,8 @@ export const chatSettingsSaveRequested = createEvent();
 export const chatSettingsChanged = createEvent<DraftChange>();
 export const chatSettingsColorChanged = createEvent<ColorChange>();
 export const chatSettingsResetRequested = createEvent();
+export const chatSettingsInitialized = createEvent();
+const $chatSettingsEnabled = createStore(false).on(chatSettingsInitialized, () => true);
 
 function readLegacySettings() {
   const stored = readBrowserStorage('kuroko-chat-settings-v1');
@@ -30,44 +33,24 @@ function readLegacySettings() {
 }
 
 export const loadChatSettingsFx = createEffect(async (session: ActiveSession) => {
-  const { settings } = await api<ChatSettingsResponse>('/settings/chat', {
-    account: session.user.id, signal: session.signal,
-  });
+  const { settings } = await sessionRequest<ChatSettingsResponse>(session, '/settings/chat');
   return { settings, legacy: settings === null ? readLegacySettings() : undefined };
 });
 
 export const saveChatSettingsFx = createEffect(async ({ session, draft }: { session: ActiveSession; draft: ChatSettings }) => {
-  const { settings } = await api<ChatSettingsResponse>('/settings/chat', {
-    method: 'PUT', account: session.user.id, body: draft, signal: session.signal,
+  const { settings } = await sessionRequest<ChatSettingsResponse>(session, '/settings/chat', {
+    method: 'PUT', body: draft,
   });
   if (!settings) throw new Error('The server did not return the saved chat settings');
   return settings;
 });
 
-const loadDone = sample({
-  clock: loadChatSettingsFx.done,
-  source: $activeSession,
-  filter: (current, { params }) => current === params,
-  fn: (_, { result }) => result,
-});
-const loadFailed = sample({
-  clock: loadChatSettingsFx.fail,
-  source: $activeSession,
-  filter: (current, { params }) => current === params,
-  fn: (_, { params, error }) => ({ session: params, error }),
-});
-const saveDone = sample({
-  clock: saveChatSettingsFx.done,
-  source: $activeSession,
-  filter: (current, { params }) => current === params.session,
-  fn: (_, { result }) => result,
-});
-const saveFailed = sample({
-  clock: saveChatSettingsFx.fail,
-  source: $activeSession,
-  filter: (current, { params }) => current === params.session,
-  fn: (_, { params, error }) => ({ session: params.session, error }),
-});
+const loadDone = inActiveSession(loadChatSettingsFx.done, (session) => session).map(({ result }) => result);
+const loadFailed = inActiveSession(loadChatSettingsFx.fail, (session) => session)
+  .map(({ params, error }) => ({ session: params, error }));
+const saveDone = inActiveSession(saveChatSettingsFx.done, ({ session }) => session).map(({ result }) => result);
+const saveFailed = inActiveSession(saveChatSettingsFx.fail, ({ session }) => session)
+  .map(({ params, error }) => ({ session: params.session, error }));
 
 export const $chatSettingsLoad = createStore<LoadState>({ status: 'loading' })
   .on(loadChatSettingsFx, () => ({ status: 'loading' }))
@@ -99,18 +82,18 @@ export const $chatSettingsDraft = createStore(defaultChatSettings)
 export const $chatSettingsDirty = combine($chatSettingsLoad, $chatSettingsDraft,
   (load, draft) => load.status === 'ready' && !sameChatSettings(draft, load.settings));
 
-sample({ clock: sessionStarted, target: loadChatSettingsFx });
+sample({ clock: sessionStarted, filter: $chatSettingsEnabled, target: loadChatSettingsFx });
 sample({
   clock: chatSettingsRetryRequested,
-  source: { session: $activeSession, load: $chatSettingsLoad },
-  filter: ({ session, load }) => session !== null && load.status === 'error',
+  source: { enabled: $chatSettingsEnabled, session: $activeSession, load: $chatSettingsLoad },
+  filter: ({ enabled, session, load }) => enabled && session !== null && load.status === 'error',
   fn: ({ session }) => session!,
   target: loadChatSettingsFx,
 });
 sample({
   clock: chatSettingsSaveRequested,
-  source: { session: $activeSession, draft: $chatSettingsDraft, dirty: $chatSettingsDirty, canChange: $canChange },
-  filter: ({ session, dirty, canChange }) => session !== null && dirty && canChange,
+  source: { enabled: $chatSettingsEnabled, session: $activeSession, draft: $chatSettingsDraft, dirty: $chatSettingsDirty, canChange: $canChange },
+  filter: ({ enabled, session, dirty, canChange }) => enabled && session !== null && dirty && canChange,
   fn: ({ session, draft }) => ({ session: session!, draft }),
   target: saveChatSettingsFx,
 });

@@ -5,6 +5,7 @@ import {
 import { abortFx } from '../../shared/async/abort';
 import { errorMessage } from '../../shared/http/api';
 import { $activeSession, protectedRequestFailed, sessionEnded, type ActiveSession } from '../../platform/session/model';
+import { inActiveSession } from '../../platform/session/request';
 import { connectionApi } from './connectionApi';
 import { createDraft, validateDraft, type ConnectionDraft } from './connectionDraft';
 import { $modelCatalog, catalogInvalidated, catalogRequested } from './modelCatalog';
@@ -55,24 +56,22 @@ $page.reset(pageDeactivated);
 sample({ clock: pageDeactivated, fn: (page) => page.controller, target: abortFx });
 
 export const loadConnectionFx = createEffect(({ session, controller }: Page) =>
-  connectionApi.load(session.user.id, controller.signal));
+  connectionApi.load(session, controller.signal));
 
 export const mutateConnectionFx = createEffect(async ({ page, mutation }: { page: Page; mutation: Mutation }) => {
   const { session } = page;
-  const id = session.user.id;
-  const signal = session.signal;
   switch (mutation.kind) {
     case 'savePreset':
-      return { kind: mutation.kind, id: mutation.id, state: await connectionApi.savePreset(id, mutation.id, mutation.preset, signal) };
+      return { kind: mutation.kind, id: mutation.id, state: await connectionApi.savePreset(session, mutation.id, mutation.preset) };
     case 'deletePreset':
-      return { kind: mutation.kind, id: mutation.id, state: await connectionApi.deletePreset(id, mutation.id, signal) };
+      return { kind: mutation.kind, id: mutation.id, state: await connectionApi.deletePreset(session, mutation.id) };
     case 'addKey':
       return {
         kind: mutation.kind, presetId: mutation.presetId,
-        key: await connectionApi.addKey(id, mutation.provider, mutation.name, mutation.apiKey, signal),
+        key: await connectionApi.addKey(session, mutation.provider, mutation.name, mutation.apiKey),
       };
     case 'deleteKey':
-      return { kind: mutation.kind, state: await connectionApi.deleteKey(id, mutation.provider, mutation.id, signal) };
+      return { kind: mutation.kind, state: await connectionApi.deleteKey(session, mutation.provider, mutation.id) };
   }
 });
 
@@ -84,26 +83,31 @@ const $mutation = createStore<PendingMutation | null>(null)
 export const $presetPending = $mutation.map((mutation) => mutation?.kind === 'savePreset' || mutation?.kind === 'deletePreset');
 export const $keyPending = $mutation.map((mutation) => mutation?.kind === 'addKey' || mutation?.kind === 'deleteKey');
 
+const connectionLoadDone = inActiveSession(loadConnectionFx.done, ({ session }) => session);
+const connectionLoadFailed = inActiveSession(loadConnectionFx.fail, ({ session }) => session);
+const connectionMutationDone = inActiveSession(mutateConnectionFx.done, ({ page }) => page.session);
+const connectionMutationFailed = inActiveSession(mutateConnectionFx.fail, ({ page }) => page.session);
+
 const loadDone = sample({
-  clock: loadConnectionFx.done,
+  clock: connectionLoadDone,
   source: $page,
   filter: (page, { params }) => page === params,
   fn: (_, { result }) => result,
 });
 const loadFailed = sample({
-  clock: loadConnectionFx.fail,
+  clock: connectionLoadFailed,
   source: $page,
   filter: (page, { params }) => page === params,
   fn: (_, { params, error }) => ({ session: params.session, error }),
 });
 const mutationDone = sample({
-  clock: mutateConnectionFx.done,
+  clock: connectionMutationDone,
   source: $page,
   filter: (page, { params }) => page === params.page,
   fn: (_, { result }) => result,
 });
 const mutationFailed = sample({
-  clock: mutateConnectionFx.fail,
+  clock: connectionMutationFailed,
   source: $page,
   filter: (page, { params }) => page === params.page,
   fn: (_, { params, error }) => ({ kind: params.mutation.kind, message: errorMessage(error) }),
@@ -143,7 +147,7 @@ sample({
 });
 sample({ clock: loadFailed, target: protectedRequestFailed });
 sample({
-  clock: mutateConnectionFx.fail,
+  clock: connectionMutationFailed,
   fn: ({ params, error }) => ({ session: params.page.session, error }),
   target: protectedRequestFailed,
 });
