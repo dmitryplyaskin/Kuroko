@@ -43,6 +43,8 @@ test('runs toolbar and registered menu actions for the selected message and keep
   const copied: string[] = [];
   const received: string[] = [];
   const deleted: number[] = [];
+  const regenerated: number[] = [];
+  const selectedVariants: number[] = [];
   let rejectCopy = false;
   const globals = {
     window, document, navigator: window.navigator,
@@ -72,7 +74,7 @@ test('runs toolbar and registered menu actions for the selected message and keep
 
   function NoticeOutput() {
     const { notifications: visible } = useNotifications();
-    return <output>{visible.at(-1)?.message}</output>;
+    return <output data-notice>{visible.at(-1)?.message}</output>;
   }
 
   const testModule = {
@@ -111,6 +113,7 @@ test('runs toolbar and registered menu actions for the selected message and keep
 
   function EditableReply() {
     const [editing, setEditing] = useState(false);
+    const [variant, selectVariant] = useState(1);
     const message: Message = { id: 3, role: 'assistant', text: 'До 🎲После', time: 0, toolCalls: [
       { id: 'legacy', name: 'test_echo', arguments: {}, result: 'OK' },
       { id: 'dice-1', name: 'roll_dice', arguments: {}, result: 4, textOffset: 'До 🎲'.length },
@@ -118,7 +121,12 @@ test('runs toolbar and registered menu actions for the selected message and keep
     ] };
     return <ChatMessage message={message} username="Пользователь" reasoningOpen={false} onToggleReasoning={noop}
       editor={editing ? { texts: messageDraftTexts(message), canSave: false } : undefined} onEdit={() => setEditing(true)}
-      onDraftChange={noop} onCancelEdit={() => setEditing(false)} onSaveEdit={noop} onDelete={noop} onPreview={noop} />;
+      onDraftChange={noop} onCancelEdit={() => setEditing(false)} onSaveEdit={noop}
+      onRegenerate={(id) => regenerated.push(id)} variants={{ index: variant, total: 2 }} onSelectVariant={({ replyId, index }) => {
+        assert.equal(replyId, message.id);
+        selectedVariants.push(index);
+        selectVariant(index);
+      }} onDelete={noop} onPreview={noop} />;
   }
 
   try {
@@ -141,9 +149,22 @@ test('runs toolbar and registered menu actions for the selected message and keep
     });
     const toolbar = articleFor(3).querySelector('.chat-message-actions');
     assert.equal(toolbar?.previousElementSibling?.className, 'chat-message-content');
+    assert.equal(toolbar?.lastElementChild?.className, 'chat-reply-variants');
     assert.deepEqual(Array.from(toolbar?.querySelectorAll('button') ?? [], (button) => button.getAttribute('aria-label')),
-      ['Копировать текст', 'Редактировать', 'Перегенерировать', 'Удалить', 'Другие действия']);
-    assert.equal(buttonFor(3, 'Перегенерировать').disabled, true);
+      ['Копировать текст', 'Редактировать', 'Перегенерировать', 'Удалить', 'Другие действия', 'Предыдущий вариант ответа', 'Следующий вариант ответа']);
+    for (const id of [0, 1, 2]) assert.equal(articleFor(id).querySelector('button[aria-label="Перегенерировать"]'), null);
+    await act(async () => buttonFor(3, 'Перегенерировать').click());
+    assert.deepEqual(regenerated, [3]);
+    const previous = buttonFor(3, 'Предыдущий вариант ответа');
+    const next = buttonFor(3, 'Следующий вариант ответа');
+    assert.equal(next.getAttribute('aria-disabled'), 'true');
+    assert.equal(toolbar?.querySelector('output')?.textContent, 'Вариант 2 из 2');
+    await act(async () => { previous.focus(); previous.click(); });
+    assert.equal(document.activeElement, previous);
+    assert.equal(previous.getAttribute('aria-disabled'), 'true');
+    assert.equal(toolbar?.querySelector('output')?.textContent, 'Вариант 1 из 2');
+    await act(async () => { previous.click(); next.click(); });
+    assert.deepEqual(selectedVariants, [0, 1]);
     assert.equal(buttonFor(3, 'Другие действия').disabled, true);
     const blocks = articleFor(3).querySelector('.chat-message-blocks')?.children;
     assert.equal(blocks?.length, 4);
@@ -174,24 +195,24 @@ test('runs toolbar and registered menu actions for the selected message and keep
 
     await act(async () => buttonFor(1, 'Копировать текст').click());
     assert.deepEqual(copied, [texts[1]]);
-    assert.equal(document.querySelector('output')?.textContent, 'Текст скопирован.');
+    assert.equal(document.querySelector('[data-notice]')?.textContent, 'Текст скопирован.');
 
     rejectCopy = true;
     await act(async () => buttonFor(0, 'Копировать текст').click());
     assert.deepEqual(copied, [texts[1]]);
-    assert.equal(document.querySelector('output')?.textContent, 'Не удалось скопировать текст.');
+    assert.equal(document.querySelector('[data-notice]')?.textContent, 'Не удалось скопировать текст.');
 
     await act(async () => notifications.clean());
     Object.defineProperty(window.navigator, 'clipboard', { value: undefined });
     await act(async () => buttonFor(0, 'Копировать текст').click());
-    assert.equal(document.querySelector('output')?.textContent, 'Не удалось скопировать текст.');
+    assert.equal(document.querySelector('[data-notice]')?.textContent, 'Не удалось скопировать текст.');
 
     assert.equal(buttonFor(2, 'Копировать текст').disabled, true);
     await act(async () => buttonFor(2, 'Другие действия').click());
     assert.deepEqual(menuItems().map((item) => item.textContent), ['Текст сообщения']);
 
     await act(async () => { await allSettled(localeChanged, { scope, params: 'en' }); });
-    assert.equal(document.querySelector('output')?.textContent, 'Could not copy the text.');
+    assert.equal(document.querySelector('[data-notice]')?.textContent, 'Could not copy the text.');
     assert.deepEqual(menuItems().map((item) => item.textContent), ['Message text']);
   } finally {
     await act(async () => { root.unmount(); notifications.clean(); });

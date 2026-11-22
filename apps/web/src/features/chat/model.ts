@@ -1,6 +1,9 @@
 import type { MessageKey } from '../../shared/i18n/i18n';
 import { combine, createEffect, createEvent, createStore, sample, scopeBind, type StoreValue } from 'effector';
-import { chatTitleLimit, type ChatActivityEntry, type ChatActivityTurn, type ChatSnapshot, type ChatSummary, type ChatToolCall, type SavedChat } from '@kuroko/contracts/chat';
+import {
+  chatReplyPrompt, chatTitleLimit, type ChatActivityEntry, type ChatActivityTurn, type ChatReplyVariantSelection,
+  type ChatReplyVariants, type ChatSnapshot, type ChatSummary, type ChatToolCall, type SavedChat,
+} from '@kuroko/contracts/chat';
 import type { ToolId } from '@kuroko/contracts/tools';
 import { createChatActivity } from '@kuroko/tool-runtime/chatActivity';
 import { abortFx } from '../../shared/async/abort';
@@ -12,9 +15,12 @@ import { chatApi, streamChatReply } from './chatApi';
 import { editMessageText, hasMessageContent, messageDraftTexts, type ActiveSubagent, type Message, type ReplyPhase } from './message';
 
 type Generation = { session: ActiveSession; controller: AbortController; enabledTools: readonly ToolId[] };
-type Reply = { generation: Generation; message: Message; activity: ChatActivityEntry[]; activeSubagents?: readonly ActiveSubagent[] };
+type Reply = { generation: Generation; message: Message; activity: ChatActivityEntry[]; replaceId?: number; activeSubagents?: readonly ActiveSubagent[] };
 type Navigation = { session: ActiveSession; action: 'initial' | 'create' | 'open'; id?: string };
-type Save = ChatSnapshot & { session: ActiveSession; id: string; reply?: Reply };
+type Save = { session: ActiveSession; id: string; revision: number } & (
+  (Omit<ChatSnapshot, 'revision'> & { reply?: Reply; selection?: never }) |
+  { reply?: never; selection: ChatReplyVariantSelection }
+);
 type ChatManagement = { id: string; action: 'rename'; title: string } | { id: string; action: 'delete' };
 
 export const chatShown = createEvent();
@@ -34,6 +40,8 @@ export const messageEditChanged = createEvent<{ id: number; text: string; index?
 export const messageEditCancelled = createEvent();
 export const messageEditSubmitted = createEvent<number>();
 export const messageDeleteRequested = createEvent<number>();
+export const messageRegenerateRequested = createEvent<number>();
+export const replyVariantRequested = createEvent<ChatReplyVariantSelection>();
 export const reasoningToggled = createEvent<{ id: number; open: boolean }>();
 
 const $visible = createStore(false).on(chatShown, () => true).reset(chatHidden, sessionEnded);
@@ -44,8 +52,12 @@ const navigateFx = createEffect(async ({ session, action, id }: Navigation) => {
   const chat = chats[0] ? await chatApi.open(session, chats[0].id) : await chatApi.create(session);
   return { chat, chats };
 });
-const saveChatFx = createEffect(({ session, id, revision, messages, gmMode, activity }: Save) =>
-  chatApi.save(session, id, { revision, messages, gmMode, activity }));
+const saveChatFx = createEffect((change: Save) => {
+  const { session, id, revision } = change;
+  if (change.selection) return chatApi.selectVariant(session, id, { revision, ...change.selection });
+  const { messages, gmMode, activity, replaceId } = change;
+  return chatApi.save(session, id, { revision, messages, gmMode, activity, replaceId });
+});
 const manageChatFx = createEffect(async ({ session, change }: { session: ActiveSession; current: string; change: ChatManagement }) => {
   if (change.action === 'rename') return { summary: await chatApi.rename(session, change.id, change.title) };
   try {
@@ -59,6 +71,7 @@ const manageChatFx = createEffect(async ({ session, change }: { session: ActiveS
 const chatOpened = inActiveSession(navigateFx.done, ({ session }) => session);
 const openFailed = inActiveSession(navigateFx.fail, ({ session }) => session);
 const saveSucceeded = inActiveSession(saveChatFx.done, ({ session }) => session);
+const variantSelected = saveSucceeded.filter({ fn: ({ params }) => params.selection !== undefined });
 const saveFailed = inActiveSession(saveChatFx.fail, ({ session }) => session);
 export const chatManagementSucceeded = inActiveSession(manageChatFx.done, ({ session }) => session);
 const managementFailed = inActiveSession(manageChatFx.fail, ({ session }) => session);
@@ -79,6 +92,8 @@ const $saved = createStore<SavedChat | null>(null)
 export const $chatId = $saved.map((chat) => chat?.id ?? '');
 export const $chatTitle = $saved.map((chat) => chat?.title ?? '');
 export const $chatGmMode = $saved.map((chat) => chat?.gmMode ?? false);
+const noVariants: Record<number, ChatReplyVariants> = {};
+export const $chatReplyVariants = $saved.map((chat) => chat?.replyVariants ?? noVariants);
 export const $chats = createStore<ChatSummary[]>([])
   .on(chatOpened, (chats, { result }) => updateChatList(result.chats ?? chats, result.chat))
   .on(saveSucceeded, (chats, { result }) => updateChatList(chats, result))
@@ -136,18 +151,35 @@ sample({
 });
 
 const $messages = createStore<Message[]>([]).reset(sessionEnded);
-export const $chatMessages = $messages;
 const $activity = createStore<ChatActivityTurn[]>([])
   .on(chatOpened, (_, { result }) => result.chat.activity ?? [])
+  .on(variantSelected, (_, { result }) => result.activity ?? [])
   .reset(sessionEnded);
 const $reply = createStore<Reply | null>(null).reset(sessionEnded);
+const $replaceId = $reply.map((reply) => reply?.replaceId ?? null);
+export const $chatMessages = combine($messages, $replaceId, (messages, replaceId) =>
+  replaceId !== null ? messages.slice(0, -1) : messages);
 const $nextId = createStore(1)
   .on(chatOpened, (_, { result }) => (result.chat.messages.at(-1)?.id ?? 0) + 1)
   .reset(sessionEnded);
-$messages.on(chatOpened, (_, { result }) => result.chat.messages);
+$messages
+  .on(chatOpened, (_, { result }) => result.chat.messages)
+  .on(variantSelected, (_, { result }) => result.messages);
 
 export const $chatLocked = combine($chatLoading, $saving, $saveError, $reply, $chatManaging,
   (loading, saving, failure, reply, managing) => loading || saving || failure !== null || reply !== null || managing);
+
+sample({
+  clock: replyVariantRequested,
+  source: { session: $activeSession, chat: $saved, visible: $visible, locked: $chatLocked },
+  filter: ({ session, chat, visible, locked }, { replyId, index }) => {
+    const variant = chat?.replyVariants?.[replyId];
+    return visible && !locked && session !== null && variant !== undefined &&
+      Number.isSafeInteger(index) && index >= 0 && index < variant.total && index !== variant.index;
+  },
+  fn: ({ session, chat }, selection): Save => ({ session: session!, id: chat!.id, revision: chat!.revision, selection }),
+  target: saveChatFx,
+});
 
 $messages.reset(activeChatDeleted);
 $activity.reset(activeChatDeleted);
@@ -190,8 +222,21 @@ const $composer = combine({
   session: $activeSession, visible: $visible, draft: $chatDraft, locked: $chatLocked, chatId: $chatId, nextId: $nextId,
   enabledTools: $enabledTools, toolSettingsBusy: $toolSettingsBusy,
 });
-function canSend({ session, visible, draft, locked, chatId, toolSettingsBusy }: StoreValue<typeof $composer>) {
-  return session !== null && visible && !locked && !toolSettingsBusy && Boolean(chatId && draft.trim());
+function canGenerate({ session, visible, locked, chatId, toolSettingsBusy }: StoreValue<typeof $composer>) {
+  return session !== null && visible && !locked && !toolSettingsBusy && Boolean(chatId);
+}
+
+function canSend(composer: StoreValue<typeof $composer>) {
+  return canGenerate(composer) && Boolean(composer.draft.trim());
+}
+
+function createReply(session: ActiveSession, enabledTools: readonly ToolId[], id: number, time: number, replaceId?: number): Reply {
+  return {
+    generation: { session, controller: new AbortController(), enabledTools },
+    message: { id, role: 'assistant', text: '', time },
+    activity: [],
+    replaceId,
+  };
 }
 
 export const $chatCanSend = $composer.map(canSend);
@@ -202,11 +247,7 @@ export const messageSent = sample({
   fn: ({ session, nextId, draft, enabledTools }) => {
     const time = Date.now();
     const user: Message = { id: nextId, role: 'user', text: draft.trim(), time };
-    const reply: Reply = {
-      generation: { session: session!, controller: new AbortController(), enabledTools },
-      message: { id: nextId + 1, role: 'assistant', text: '', time },
-      activity: [],
-    };
+    const reply = createReply(session!, enabledTools, nextId + 1, time);
     return { user, reply };
   },
 });
@@ -214,12 +255,31 @@ $messages.on(messageSent, (messages, { user }) => [...messages, user]);
 $nextId.on(messageSent, (_, { reply }) => reply.message.id + 1);
 $chatDraft.reset(messageSent);
 
+const $regeneration = combine($saved, $composer, (chat, composer) => {
+  if (!chat || !canGenerate(composer)) return null;
+  const last = chat.messages.at(-1);
+  const replaceId = last?.role === 'assistant' ? last.id : undefined;
+  const prompt = chatReplyPrompt(chat.messages, replaceId);
+  return last && prompt ? { chat, id: last.id, promptId: prompt.id, replaceId } : null;
+});
+export const $chatRegenerateId = $regeneration.map((target) => target?.id ?? null);
+const replyRegenerated = sample({
+  clock: messageRegenerateRequested,
+  source: { target: $regeneration, composer: $composer },
+  filter: ({ target }, id) => target?.id === id,
+  fn: ({ target, composer }) => ({
+    chat: target!.chat,
+    reply: createReply(composer.session!, composer.enabledTools, target!.promptId + 1, Date.now(), target!.replaceId),
+  }),
+});
+$nextId.on(replyRegenerated, (nextId, { reply }) => Math.max(nextId, reply.message.id + 1));
+
 const replyDelta = createEvent<{ generation: Generation; text: string }>();
 const replyContentReceived = createEvent<{ generation: Generation; text: string; toolCalls: ChatToolCall[] }>();
 const replySubagentActivity = createEvent<{ generation: Generation; active: readonly ActiveSubagent[] }>();
 const replyActivityReceived = createEvent<{ generation: Generation; entry: ChatActivityEntry }>();
-const generateReplyFx = createEffect(async ({ reply: { generation }, chat }: { reply: Reply; chat: SavedChat }) => {
-  if (chat.gmMode) return chatApi.gmReply(generation.session, chat, generation.controller.signal);
+const generateReplyFx = createEffect(async ({ reply: { generation, replaceId }, chat }: { reply: Reply; chat: SavedChat }) => {
+  if (chat.gmMode) return chatApi.gmReply(generation.session, chat, generation.controller.signal, replaceId);
   const publish = scopeBind(replyDelta, { safe: true });
   const report = scopeBind(replyContentReceived, { safe: true });
   const reportSubagent = scopeBind(replySubagentActivity, { safe: true });
@@ -229,9 +289,10 @@ const generateReplyFx = createEffect(async ({ reply: { generation }, chat }: { r
   const reply = start('reply', {});
   const { signal } = generation.controller;
   try {
-    const text = await streamChatReply(generation.session, chat.messages, generation.enabledTools, signal,
+    const history = replaceId === undefined ? chat.messages : chat.messages.slice(0, -1);
+    const text = await streamChatReply(generation.session, history, generation.enabledTools, signal,
       (delta) => publish({ generation, text: delta }), (text, toolCalls) => report({ generation, text, toolCalls }),
-      (active) => reportSubagent({ generation, active }), start, onActivity);
+      (active) => reportSubagent({ generation, active }), start, onActivity, replaceId !== undefined || chat.replyVariants !== undefined);
     reply.finish('completed', {});
     return text;
   } catch (error) {
@@ -289,6 +350,7 @@ sample({
   filter: $visible,
   target: generateReplyFx,
 });
+sample({ clock: replyRegenerated, target: generateReplyFx });
 $reply.on(generateReplyFx, (_, { reply }) => reply);
 
 const replyUpdated = sample({
@@ -303,20 +365,20 @@ const replyCompleted = sample({
   clock: inActiveSession(generateReplyFx.done, ({ reply }) => reply.generation.session),
   source: $reply,
   filter: (reply, { params }) => reply?.generation === params.reply.generation,
-  fn: (reply, { result }) => typeof result === 'string'
-    ? {
-      message: { ...reply!.message, text: result },
-      activity: finishActivity(reply!, 'completed'),
-      saved: null,
-    }
-    : { message: result.messages.at(-1)!, saved: result, activity: undefined },
+  fn: (reply, { result }) => {
+    const { replaceId, message } = reply!;
+    return typeof result === 'string'
+      ? { replaceId, message: { ...message, text: result }, activity: finishActivity(reply!, 'completed'), saved: null }
+      : { replaceId, message: result.messages.at(-1)!, activity: undefined, saved: result };
+  },
 });
 const replyFailed = sample({
   clock: inActiveSession(generateReplyFx.fail, ({ reply }) => reply.generation.session),
   source: $reply,
   filter: (reply, { params }) => reply?.generation === params.reply.generation,
   fn: (reply, { error, params }) => ({
-    message: reply!.message, error, session: params.reply.generation.session, activity: finishActivity(reply!, 'failed'),
+    replaceId: reply!.replaceId, message: reply!.message, error,
+    session: params.reply.generation.session, activity: finishActivity(reply!, 'failed'),
   }),
 });
 sample({ clock: replyFailed, fn: ({ session, error }) => ({ session, error }), target: protectedRequestFailed });
@@ -325,28 +387,49 @@ const replyStopped = sample({
   clock: [chatStopRequested, chatHidden],
   source: $reply,
   filter: (reply): reply is Reply => reply !== null,
-  fn: (reply) => ({ message: reply!.message, controller: reply!.generation.controller, activity: finishActivity(reply!, 'stopped') }),
+  fn: (reply) => ({
+    replaceId: reply!.replaceId, message: reply!.message, controller: reply!.generation.controller, activity: finishActivity(reply!, 'stopped'),
+  }),
+});
+
+const replyPartial = sample({
+  clock: [replyFailed, replyStopped],
+  filter: ({ replaceId }) => replaceId === undefined,
+  fn: ({ message, activity }) => ({ message, activity, replaceId: undefined }),
 });
 
 sample({ clock: replyStopped, fn: ({ controller }) => controller, target: abortFx });
 $reply.reset(replyCompleted, replyFailed, replyStopped);
 $messages
-  .on(replyCompleted, (messages, { message, saved }) => {
+  .on(replyCompleted, (messages, { message, saved, replaceId }) => {
     if (saved) return saved.messages;
-    return hasMessageContent(message) ? [...messages, message] : messages;
+    if (!hasMessageContent(message)) return messages;
+    return [...(replaceId === undefined ? messages : messages.slice(0, -1)), message];
   })
-  .on([replyFailed, replyStopped], (messages, { message }) => hasMessageContent(message) ? [...messages, message] : messages);
+  .on(replyPartial, (messages, { message }) => hasMessageContent(message) ? [...messages, message] : messages);
 $saved.on(replyCompleted, (chat, { saved }) => saved ?? chat);
 $chats.on(replyCompleted, (chats, { saved }) => saved ? updateChatList(chats, saved) : chats);
-$activity.on([replyCompleted, replyFailed, replyStopped], (turns, { activity }) => activity ? [...turns, activity] : turns);
+function withoutActivity(turns: ChatActivityTurn[], promptId: number) {
+  return turns.some((turn) => turn.promptId === promptId) ? turns.filter((turn) => turn.promptId !== promptId) : turns;
+}
+$activity
+  .on(replyCompleted, (turns, { message, activity }) => {
+    const history = withoutActivity(turns, message.id - 1);
+    return activity ? [...history, activity] : history;
+  })
+  .on(replyPartial, (turns, { activity }) => activity ? [...withoutActivity(turns, activity.promptId), activity] : turns);
 export const $replyId = $reply.map((reply) => reply?.message.id ?? null);
 const $liveActivity = $reply.map((reply) => reply?.activity ?? null);
-export const $chatActivity = combine($activity, $replyId, $liveActivity, (turns, replyId, entries) =>
-  replyId !== null && entries?.length ? [...turns, { promptId: replyId - 1, entries }] : turns);
+export const $chatActivity = combine($activity, $replyId, $liveActivity, (turns, replyId, entries) => {
+  if (replyId === null) return turns;
+  const promptId = replyId - 1;
+  const history = withoutActivity(turns, promptId);
+  return entries?.length ? [...history, { promptId, entries }] : history;
+});
 
 export const $chatError = createStore<ErrorCode | null>(null)
   .on(replyFailed, (_, { error }) => errorCode(error))
-  .reset(messageSent, chatOpened, sessionEnded);
+  .reset(messageSent, replyRegenerated, variantSelected, chatOpened, sessionEnded);
 
 type Editor = { id: number; texts: string[] };
 const editOpened = sample({
@@ -396,7 +479,7 @@ $editor
   .on(messageDeleted, (editor, { id }) => editor?.id === id ? null : editor)
   .reset(activeChatDeleted);
 
-const historyChanged = createEvent<{ reply?: Reply; gmMode?: boolean; activity?: ChatActivityTurn }>();
+const historyChanged = createEvent<{ reply?: Reply; gmMode?: boolean; activity?: ChatActivityTurn; replaceId?: number }>();
 sample({ clock: messageSent, fn: ({ reply }) => ({ reply }), target: historyChanged });
 sample({ clock: [messageEdited, messageDeleted], fn: () => ({}), target: historyChanged });
 sample({
@@ -407,17 +490,17 @@ sample({
   target: historyChanged,
 });
 sample({
-  clock: [replyCompleted.filter({ fn: ({ saved }) => !saved }), replyFailed, replyStopped],
+  clock: [replyCompleted.filter({ fn: ({ saved }) => !saved }), replyPartial],
   filter: ({ message, activity }) => hasMessageContent(message) || Boolean(activity),
-  fn: ({ activity }) => ({ activity }),
+  fn: ({ activity, replaceId }) => ({ activity, replaceId }),
   target: historyChanged,
 });
 sample({
   clock: historyChanged,
   source: { session: $activeSession, chat: $saved, messages: $messages },
   filter: ({ session, chat }) => session !== null && chat !== null,
-  fn: ({ session, chat, messages }, { reply, gmMode, activity }): Save =>
-    ({ session: session!, id: chat!.id, revision: chat!.revision, messages, reply, gmMode, activity }),
+  fn: ({ session, chat, messages }, { reply, gmMode, activity, replaceId }): Save =>
+    ({ session: session!, id: chat!.id, revision: chat!.revision, messages, reply, gmMode, activity, replaceId }),
   target: saveChatFx,
 });
 
@@ -457,8 +540,8 @@ export const $replyPhase = $reply.map((reply): ReplyPhase | null => {
 });
 const noSubagents: readonly ActiveSubagent[] = [];
 export const $activeSubagents = $reply.map((reply) => reply?.activeSubagents ?? noSubagents);
-export const $chatRows = combine($messages, $reply, (messages, reply) => reply ? [...messages, reply.message] : messages);
+export const $chatRows = combine($chatMessages, $reply, (messages, reply) => reply ? [...messages, reply.message] : messages);
 export const keepHistoryAtEndRequested = sample({
-  clock: [replyUpdated, replyContentUpdated, replySubagentUpdated, replyCompleted, replyFailed, replyStopped, messageEdited],
+  clock: [replyRegenerated, replyUpdated, replyContentUpdated, replySubagentUpdated, replyCompleted, replyFailed, replyStopped, messageEdited, variantSelected],
   fn: () => undefined,
 });

@@ -1,4 +1,7 @@
-import { chatTitleLimit, type ChatActivityEntry, type ChatMessage, type ChatSnapshot, type ChatSummary, type ChatToolCall, type SavedChat } from '@kuroko/contracts/chat';
+import {
+  chatReplyPrompt, chatTitleLimit, type ChatActivityEntry, type ChatMessage, type ChatReplyVariantSelection,
+  type ChatSnapshot, type ChatSummary, type ChatToolCall, type SavedChat,
+} from '@kuroko/contracts/chat';
 import type { LlmAssistantMessage } from '@kuroko/contracts/llm';
 import type { Database } from 'bun:sqlite';
 import { randomUUID } from 'node:crypto';
@@ -8,6 +11,7 @@ export type PrivateTurn = {
   notes?: string;
   rounds: { assistant: LlmAssistantMessage; calls: ChatToolCall[] }[];
 };
+type ReplyVersion = { message: ChatMessage; activity?: ChatActivityEntry[]; privateTurn?: PrivateTurn };
 
 export function createChatStore(db: Database) {
   const list = db.query<ChatSummary, [number]>(`
@@ -51,44 +55,153 @@ export function createChatStore(db: Database) {
     SELECT entries_json AS entriesJson FROM chat_activity WHERE chat_id = ? AND prompt_id = ?
   `);
   const deleteActivity = db.query('DELETE FROM chat_activity WHERE chat_id = ? AND prompt_id = ?');
+  const findPrivate = db.query<{ turnJson: string }, [string, number]>(`
+    SELECT turn_json AS turnJson FROM chat_private_turns WHERE chat_id = ? AND reply_id = ?
+  `);
+  const findVariants = db.query<{ index: number; archivedJson: string }, [string, number]>(`
+    SELECT selected_index AS "index", archived_json AS archivedJson FROM chat_reply_variants WHERE chat_id = ? AND reply_id = ?
+  `);
+  const listVariants = db.query<{ replyId: number; index: number; total: number }, [string]>(`
+    SELECT reply_id AS replyId, selected_index AS "index", json_array_length(archived_json) + 1 AS total
+    FROM chat_reply_variants WHERE chat_id = ?
+  `);
+  const upsertVariants = db.query(`
+    INSERT INTO chat_reply_variants (chat_id, reply_id, selected_index, archived_json) VALUES (?, ?, ?, ?)
+    ON CONFLICT (chat_id, reply_id) DO UPDATE SET selected_index = excluded.selected_index, archived_json = excluded.archived_json
+  `);
+  const deleteVariants = db.query('DELETE FROM chat_reply_variants WHERE chat_id = ? AND reply_id = ?');
 
-  const save = db.transaction((userId: number, id: string, { revision, messages, gmMode, activity }: ChatSnapshot) => {
+  function withVariants(chat: SavedChat): SavedChat {
+    const variants = listVariants.all(chat.id);
+    return variants.length ? {
+      ...chat, replyVariants: Object.fromEntries(variants.map(({ replyId, index, total }) => [replyId, { index, total }])),
+    } : chat;
+  }
+
+  function withActivity(chat: SavedChat): SavedChat {
+    const activity = listActivity.all(chat.id).map(({ promptId, entriesJson }) => ({
+      promptId, entries: JSON.parse(entriesJson) as ChatActivityEntry[],
+    }));
+    return activity.length ? { ...chat, activity } : chat;
+  }
+
+  function readVariants(id: string, replyId: number) {
+    const variants = findVariants.get(id, replyId);
+    return variants && { index: variants.index, archived: JSON.parse(variants.archivedJson) as ReplyVersion[] };
+  }
+
+  function readVersion(id: string, message: ChatMessage): ReplyVersion {
+    const activity = findActivity.get(id, message.id - 1);
+    const privateTurn = findPrivate.get(id, message.id);
+    return {
+      message,
+      activity: activity ? JSON.parse(activity.entriesJson) as ChatActivityEntry[] : undefined,
+      privateTurn: privateTurn ? JSON.parse(privateTurn.turnJson) as PrivateTurn : undefined,
+    };
+  }
+
+  function clearReplyContext(id: string, replyId: number) {
+    deleteActivity.run(id, replyId - 1);
+    deletePrivate.run(id, replyId, replyId - 1);
+  }
+
+  function archiveReply(id: string, current: ChatMessage, nextId: number) {
+    // The selected version lives in the active chat. The array holds the other versions in display order.
+    const { index, archived } = readVariants(id, current.id) ?? { index: 0, archived: [] };
+    archived.splice(index, 0, readVersion(id, current));
+    if (current.id !== nextId) deleteVariants.run(id, current.id);
+    upsertVariants.run(id, nextId, archived.length, JSON.stringify(archived));
+    clearReplyContext(id, current.id);
+  }
+
+  function invalidateArchivedContext(id: string, replyId: number, promptDeleted: boolean) {
+    const variants = readVariants(id, replyId);
+    if (!variants) return;
+    const archived = variants.archived.map(({ message, activity }) => ({ message, activity: promptDeleted ? undefined : activity }));
+    upsertVariants.run(id, replyId, variants.index, JSON.stringify(archived));
+  }
+
+  const save = db.transaction((userId: number, id: string, { revision, messages, gmMode, activity, replaceId }: ChatSnapshot) => {
     const row = find.get(userId, id);
     if (!row) return 'missing';
     const messagesJson = JSON.stringify(messages);
     const mode = gmMode ?? Boolean(row.gmMode);
     const entriesJson = activity && JSON.stringify(activity.entries);
     if (row.revision === revision + 1 && row.messagesJson === messagesJson && mode === Boolean(row.gmMode) &&
-        (!activity || findActivity.get(id, activity.promptId)?.entriesJson === entriesJson)) return readChat(row);
+        (!activity || findActivity.get(id, activity.promptId)?.entriesJson === entriesJson)) return withVariants(readChat(row));
     if (row.revision !== revision) return 'conflict';
     const firstPrompt = messages.find(({ role }) => role === 'user')?.text ?? '';
     const title = Array.from(firstPrompt.replace(/\s+/g, ' ').trim()).slice(0, chatTitleLimit).join('');
     const updatedAt = Date.now();
-    if (row.messagesJson !== messagesJson) {
+    if (replaceId !== undefined) {
+      const previous = readChat(row).messages;
+      const prompt = chatReplyPrompt(previous, replaceId);
+      const reply = messages.at(-1);
+      if (mode || !prompt || reply?.role !== 'assistant' || reply.id !== prompt.id + 1 || (activity && activity.promptId !== prompt.id) ||
+          JSON.stringify(messages.slice(0, -1)) !== JSON.stringify(previous.slice(0, -1))) return 'conflict';
+      archiveReply(id, previous.at(-1)!, reply.id);
+    } else if (row.messagesJson !== messagesJson) {
       const current = new Map(messages.map((message) => [message.id, message]));
       for (const previous of readChat(row).messages) {
         const message = current.get(previous.id);
-        if (message?.role !== previous.role || message.text !== previous.text) deletePrivate.run(id, previous.id, previous.id);
-        if (message?.role !== previous.role) deleteActivity.run(id, previous.role === 'user' ? previous.id : previous.id - 1);
+        const removed = message?.role !== previous.role;
+        if (removed || message.text !== previous.text) {
+          deletePrivate.run(id, previous.id, previous.id);
+          if (previous.role === 'user') invalidateArchivedContext(id, previous.id + 1, removed);
+        }
+        if (removed) {
+          deleteActivity.run(id, previous.role === 'user' ? previous.id : previous.id - 1);
+          if (previous.role === 'assistant') deleteVariants.run(id, previous.id);
+        }
       }
     }
     update.run(title, updatedAt, messagesJson, Number(mode), userId, id);
     if (activity && entriesJson) insertActivity.run(id, activity.promptId, entriesJson);
-    return { id, title: row.customTitle ?? title, updatedAt, revision: revision + 1, messages, gmMode: mode };
+    return withVariants({ id, title: row.customTitle ?? title, updatedAt, revision: revision + 1, messages, gmMode: mode });
   });
 
-  const publish = db.transaction((userId: number, id: string, revision: number, text: string, turn: PrivateTurn) => {
+  const publish = db.transaction((userId: number, id: string, revision: number, text: string, turn: PrivateTurn, replaceId?: number) => {
     const row = find.get(userId, id);
     if (!row) return 'missing';
     if (row.revision !== revision || !row.gmMode) return 'conflict';
     const chat = readChat(row);
-    const prompt = chat.messages.at(-1);
-    if (prompt?.role !== 'user' || prompt.id >= Number.MAX_SAFE_INTEGER - 2) return 'conflict';
+    const prompt = chatReplyPrompt(chat.messages, replaceId);
+    if (!prompt) return 'conflict';
     const reply: ChatMessage = { id: prompt.id + 1, role: 'assistant', text, time: Date.now() };
+    if (replaceId !== undefined) {
+      archiveReply(id, chat.messages.pop()!, reply.id);
+    }
     chat.messages.push(reply);
     update.run(row.title, reply.time, JSON.stringify(chat.messages), row.gmMode, userId, id);
+    deleteActivity.run(id, prompt.id);
     insertPrivate.run(id, reply.id, prompt.id, JSON.stringify(turn));
-    return { ...chat, revision: revision + 1, updatedAt: reply.time };
+    return withVariants({ ...chat, revision: revision + 1, updatedAt: reply.time });
+  });
+
+  const selectVariant = db.transaction((userId: number, id: string, revision: number, { replyId, index }: ChatReplyVariantSelection) => {
+    const row = find.get(userId, id);
+    if (!row) return 'missing';
+    const chat = readChat(row);
+    const position = chat.messages.findIndex((message) => message.id === replyId && message.role === 'assistant');
+    const variants = readVariants(id, replyId);
+    if (position === -1 || !variants || index > variants.archived.length) return 'conflict';
+    if (variants.index === index && (row.revision === revision || row.revision === revision + 1)) {
+      return withActivity(withVariants(chat));
+    }
+    if (row.revision !== revision) return 'conflict';
+
+    const { archived } = variants;
+    archived.splice(variants.index, 0, readVersion(id, chat.messages[position]!));
+    const [selected] = archived.splice(index, 1);
+    const { message, activity, privateTurn } = selected!;
+    chat.messages[position] = { ...message, id: replyId };
+    clearReplyContext(id, replyId);
+    if (activity) insertActivity.run(id, replyId - 1, JSON.stringify(activity));
+    if (privateTurn) insertPrivate.run(id, replyId, replyId - 1, JSON.stringify(privateTurn));
+    upsertVariants.run(id, replyId, index, JSON.stringify(archived));
+    const updatedAt = Date.now();
+    update.run(row.title, updatedAt, JSON.stringify(chat.messages), row.gmMode, userId, id);
+    return withActivity(withVariants({ ...chat, revision: revision + 1, updatedAt }));
   });
 
   return {
@@ -99,11 +212,7 @@ export function createChatStore(db: Database) {
     },
     open: db.transaction((userId: number, id: string) => {
       const row = find.get(userId, id);
-      if (!row) return;
-      const activity = listActivity.all(id).map(({ promptId, entriesJson }) => ({
-        promptId, entries: JSON.parse(entriesJson) as ChatActivityEntry[],
-      }));
-      return { ...readChat(row), ...(activity.length && { activity }) };
+      if (row) return withActivity(withVariants(readChat(row)));
     }),
     rename: (userId: number, id: string, title: string) => rename.get(title, userId, id),
     remove: (userId: number, id: string) => remove.run(userId, id).changes > 0,
@@ -115,6 +224,7 @@ export function createChatStore(db: Database) {
     },
     save: save.immediate,
     publish: publish.immediate,
+    selectVariant: selectVariant.immediate,
     privateTurns: (userId: number, id: string) => listPrivate.all(userId, id)
       .map(({ replyId, turnJson }) => ({ replyId, turn: JSON.parse(turnJson) as PrivateTurn })),
   };

@@ -1,5 +1,5 @@
 import {
-  chatActivityKinds, chatActivityStatuses, chatTitleLimit,
+  chatActivityKinds, chatActivityStatuses, chatReplyPrompt, chatTitleLimit,
   type ChatActivityEntry, type ChatActivityTurn, type ChatMessage, type ChatSnapshot, type ChatToolCall,
 } from '@kuroko/contracts/chat';
 import { errorBody } from '@kuroko/contracts/errors';
@@ -46,11 +46,22 @@ export function createChatRouter(store: ReturnType<typeof createChatStore>, gmRe
     else if (result === 'conflict') response.status(409).json(errorBody('chat_conflict'));
     else response.json(result);
   });
+  router.put('/:id/reply-variant', (request, response) => {
+    const { revision, replyId, index } = record(request.body) ?? {};
+    if (!nonNegativeInteger(revision) || !nonNegativeInteger(replyId) || !nonNegativeInteger(index)) {
+      response.status(400).json(errorBody('invalid_request'));
+      return;
+    }
+    const result = store.selectVariant(response.locals.user.id, request.params.id, revision, { replyId, index });
+    if (result === 'missing') response.status(404).json(errorBody('chat_not_found'));
+    else if (result === 'conflict') response.status(409).json(errorBody('chat_conflict'));
+    else response.json(result);
+  });
   router.post('/:id/gm-reply', async (request, response) => {
     const { id } = request.params;
     const userId: number = response.locals.user.id;
-    const revision = record(request.body)?.revision;
-    if (!nonNegativeInteger(revision)) {
+    const { revision, replaceId } = record(request.body) ?? {};
+    if (!nonNegativeInteger(revision) || (replaceId !== undefined && !nonNegativeInteger(replaceId))) {
       response.status(400).json(errorBody('invalid_request'));
       return;
     }
@@ -59,9 +70,7 @@ export function createChatRouter(store: ReturnType<typeof createChatStore>, gmRe
       response.status(404).json(errorBody('chat_not_found'));
       return;
     }
-    const prompt = chat.messages.at(-1);
-    if (!chat.gmMode || chat.revision !== revision || prompt?.role !== 'user' || prompt.id >= Number.MAX_SAFE_INTEGER - 2 ||
-        activeGmTurns.has(id)) {
+    if (!chat.gmMode || chat.revision !== revision || !chatReplyPrompt(chat.messages, replaceId) || activeGmTurns.has(id)) {
       response.status(409).json(errorBody('chat_conflict'));
       return;
     }
@@ -72,7 +81,7 @@ export function createChatRouter(store: ReturnType<typeof createChatStore>, gmRe
     response.once('close', disconnect);
     activeGmTurns.add(id);
     try {
-      const result = await gmReply(userId, chat, AbortSignal.any([controller.signal, timeout]));
+      const result = await gmReply(userId, chat, AbortSignal.any([controller.signal, timeout]), replaceId);
       if (controller.signal.aborted || response.destroyed) return;
       if (result === 'missing') response.status(404).json(errorBody('chat_not_found'));
       else if (result === 'conflict') response.status(409).json(errorBody('chat_conflict'));
@@ -95,7 +104,8 @@ export function createChatRouter(store: ReturnType<typeof createChatStore>, gmRe
 function readSnapshot(value: unknown): ChatSnapshot | undefined {
   const snapshot = record(value);
   if (!snapshot || !nonNegativeInteger(snapshot.revision) || !Array.isArray(snapshot.messages) ||
-      (snapshot.gmMode !== undefined && typeof snapshot.gmMode !== 'boolean')) return;
+      (snapshot.gmMode !== undefined && typeof snapshot.gmMode !== 'boolean') ||
+      (snapshot.replaceId !== undefined && !nonNegativeInteger(snapshot.replaceId))) return;
   const messages: ChatMessage[] = [];
   let previousId = 0;
   for (const value of snapshot.messages as unknown[]) {
@@ -113,7 +123,7 @@ function readSnapshot(value: unknown): ChatSnapshot | undefined {
   }
   const activity = readActivity(snapshot.activity, messages);
   if (snapshot.activity !== undefined && !activity) return;
-  return { revision: snapshot.revision, messages, gmMode: snapshot.gmMode, activity };
+  return { revision: snapshot.revision, messages, gmMode: snapshot.gmMode, activity, replaceId: snapshot.replaceId };
 }
 
 function readActivity(value: unknown, messages: ChatMessage[]): ChatActivityTurn | undefined {

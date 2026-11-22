@@ -17,10 +17,10 @@ import { chatDisplayStyle } from './chatDisplayStyle';
 import type { ChatImage, Message } from './message';
 import {
   $activeSubagents, $chatAnnouncement, $chatRows, $expandedReasoning, $messageEditor, $replyId, $replyPhase,
-  $chatActivity, $chatGmMode, $chatId, $chatLoadError, $chatLoading, $chatLocked, $chatMessages, $chatSaveError,
+  $chatActivity, $chatGmMode, $chatId, $chatLoadError, $chatLoading, $chatLocked, $chatMessages, $chatRegenerateId, $chatReplyVariants, $chatSaveError,
   chatLoadRetryRequested, chatSaveRetryRequested,
   chatHidden, chatShown, keepHistoryAtEndRequested, messageDeleteRequested, messageEditCancelled,
-  messageEditChanged, messageEditRequested, messageEditSubmitted, messageSent, reasoningToggled,
+  messageEditChanged, messageEditRequested, messageEditSubmitted, messageRegenerateRequested, messageSent, reasoningToggled, replyVariantRequested,
 } from './model';
 import { $appliedChatSettings } from './settings/model';
 import './chat.css';
@@ -37,7 +37,7 @@ export default function Chat() {
   const scope = useProvidedScope();
   const {
     session, settings, rows, replyId, replyPhase, activeSubagents, announcement, editor, expandedReasoning, show, hide, openEditor,
-    changeDraft, closeEditor, saveEdit, remove, toggleReasoning,
+    changeDraft, closeEditor, saveEdit, remove, regenerateId, requestRegeneration, variants, selectVariant, toggleReasoning,
     activity, messages, chatId, gmMode, loading, locked, loadError, saveError, retryLoad, retrySave,
   } = useUnit({
     session: $activeSession, settings: $appliedChatSettings,
@@ -45,6 +45,8 @@ export default function Chat() {
     editor: $messageEditor, expandedReasoning: $expandedReasoning, show: chatShown, hide: chatHidden,
     openEditor: messageEditRequested, changeDraft: messageEditChanged, closeEditor: messageEditCancelled,
     saveEdit: messageEditSubmitted, remove: messageDeleteRequested, toggleReasoning: reasoningToggled,
+    regenerateId: $chatRegenerateId, requestRegeneration: messageRegenerateRequested,
+    variants: $chatReplyVariants, selectVariant: replyVariantRequested,
     activity: $chatActivity, messages: $chatMessages, chatId: $chatId, gmMode: $chatGmMode,
     loading: $chatLoading, locked: $chatLocked, loadError: $chatLoadError, saveError: $chatSaveError,
     retryLoad: chatLoadRetryRequested, retrySave: chatSaveRetryRequested,
@@ -90,15 +92,20 @@ export default function Chat() {
   const openPreview = useCallback((image: ChatImage) => setDialog({ kind: 'preview', image }), []);
   const setReasoningOpen = useCallback((id: number, open: boolean) => toggleReasoning({ id, open }), [toggleReasoning]);
   const updateMessageDraft = useCallback((id: number, index: number, text: string) => changeDraft({ id, index, text }), [changeDraft]);
+  const regenerate = useCallback((id: number) => {
+    history.current?.focus();
+    requestRegeneration(id);
+  }, [requestRegeneration]);
   const renderMessage = useCallback((message: Message) => (
     <ChatMessage message={message} username={username} phase={message.id === replyId && replyPhase ? replyPhase : undefined} locked={locked}
       activeSubagents={message.id === replyId ? activeSubagents : undefined}
       editor={editor?.id === message.id ? editor : undefined}
       reasoningOpen={expandedReasoning.has(message.id)} onToggleReasoning={setReasoningOpen}
       onEdit={openEditor} onDraftChange={updateMessageDraft} onCancelEdit={closeEditor} onSaveEdit={saveEdit}
+      onRegenerate={message.id === regenerateId ? regenerate : undefined} variants={variants[message.id]} onSelectVariant={selectVariant}
       onDelete={openDelete} onPreview={openPreview} />
   ), [username, replyId, replyPhase, activeSubagents, locked, editor, expandedReasoning, setReasoningOpen, openEditor, updateMessageDraft,
-    closeEditor, saveEdit, openDelete, openPreview]);
+    closeEditor, saveEdit, regenerateId, regenerate, variants, selectVariant, openDelete, openPreview]);
 
   useEffect(() => {
     if (!scope) return;

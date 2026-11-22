@@ -42,10 +42,11 @@ export function createGmReply(
   enabledTools: (userId: number) => readonly ToolId[],
   delegateTask: ReturnType<typeof createDelegateTask>,
 ) {
-  return async (userId: number, chat: SavedChat, signal: AbortSignal) => {
+  return async (userId: number, chat: SavedChat, signal: AbortSignal, replaceId?: number) => {
     const enabled = enabledTools(userId);
     const tools = [...toolDeclarations(enabled), publishScene];
-    const privateTurns = store.privateTurns(userId, chat.id);
+    const history = replaceId === undefined ? chat.messages : chat.messages.slice(0, -1);
+    const privateTurns = store.privateTurns(userId, chat.id).filter(({ replyId }) => replyId !== replaceId);
     const notesByReply = new Map(privateTurns.flatMap(({ replyId, turn }) =>
       turn.notes ? [[replyId, `Private GM notes (do not quote to player):\n${turn.notes}`] as const] : []));
     const privateCalls = privateTurns.flatMap(({ turn }) => turn.rounds.flatMap(({ calls }) => calls));
@@ -53,8 +54,8 @@ export function createGmReply(
     const context = names.length
       ? `${instructions}\nUse these private subagent names as identifiers for follow-up tasks: ${JSON.stringify(names)}.`
       : instructions;
-    const messages: LlmMessage[] = [{ role: 'system', content: context }, ...toLlmMessages(chat.messages, notesByReply)];
-    const callHistory = [...privateCalls, ...chat.messages.flatMap(({ toolCalls }) => toolCalls ?? [])];
+    const messages: LlmMessage[] = [{ role: 'system', content: context }, ...toLlmMessages(history, notesByReply)];
+    const callHistory = [...privateCalls, ...history.flatMap(({ toolCalls }) => toolCalls ?? [])];
     const rounds: PrivateTurn['rounds'] = [];
     let presetId: string | undefined;
     let finalize = false;
@@ -86,7 +87,7 @@ export function createGmReply(
         const scene = readScene(first.arguments);
         if (scene) {
           rounds.push({ assistant, calls: [] });
-          return store.publish(userId, chat.id, chat.revision, scene.text, { rounds, notes: scene.notes });
+          return store.publish(userId, chat.id, chat.revision, scene.text, { rounds, notes: scene.notes }, replaceId);
         }
       }
       if (round === 16) break;

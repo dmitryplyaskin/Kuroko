@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { allSettled, createWatch, fork, scopeBind } from 'effector';
-import type { ChatSnapshot, SavedChat } from '@kuroko/contracts/chat';
+import type { ChatMessage, ChatReplyVariantSelection, ChatSnapshot, SavedChat } from '@kuroko/contracts/chat';
 import { defaultChatSettings } from '@kuroko/contracts/chatSettings';
 import { defaultConnectionSettings, type ConnectionState } from '@kuroko/contracts/connectionSettings';
 import { isToolId, type ToolId } from '@kuroko/contracts/tools';
@@ -22,10 +22,11 @@ import {
 import { $modelCatalog, loadModelCatalogFx } from '../features/connection/modelCatalog';
 import { $enabledTools, toolsInitialized, toolSettingChanged } from '../features/tools/model';
 import {
-  $activeSubagents, $chatAnnouncement, $chatError, $chatGmMode, $chatId, $chatRows, $replyId, $replyPhase,
+  $activeSubagents, $chatActivity, $chatAnnouncement, $chatDraft, $chatError, $chatGmMode, $chatId, $chatRegenerateId, $chatReplyVariants,
+  $chatRows, $replyId, $replyPhase,
   chatCreateRequested, chatDraftChanged, chatGmModeChanged,
   chatOpenRequested, chatSendRequested, chatShown, chatStopRequested,
-  messageDeleteRequested, messageEditChanged, messageEditRequested, messageEditSubmitted,
+  messageDeleteRequested, messageEditChanged, messageEditRequested, messageEditSubmitted, messageRegenerateRequested, replyVariantRequested,
 } from '../features/chat/model';
 
 const user = { id: 1, username: 'Лина' };
@@ -277,6 +278,15 @@ async function openChat() {
 function withSavedChats(generate: typeof fetch, publishScene?: (chat: SavedChat) => Promise<string>): typeof fetch {
   const chats: SavedChat[] = [];
   const enabled = new Set<ToolId>();
+  const replyVersions = new Map<string, ChatMessage[]>();
+  function keepVariant(chat: SavedChat, saved: SavedChat, replaceId?: number) {
+    if (replaceId === undefined) return saved;
+    const key = `${chat.id}/${replaceId}`;
+    const versions = replyVersions.get(key) ?? [chat.messages.at(-1)!];
+    versions.push(saved.messages.at(-1)!);
+    replyVersions.set(key, versions);
+    return { ...saved, replyVariants: { ...chat.replyVariants, [replaceId]: { index: versions.length - 1, total: versions.length } } };
+  }
   return async (input, init) => {
     if (input === '/api/settings/tools') return Response.json({ enabled: [...enabled] });
     if (typeof input === 'string' && input.startsWith('/api/settings/tools/')) {
@@ -296,25 +306,41 @@ function withSavedChats(generate: typeof fetch, publishScene?: (chat: SavedChat)
     }
     if (typeof input === 'string' && input.startsWith('/api/chats/')) {
       const gmReply = input.endsWith('/gm-reply');
-      const path = gmReply ? input.slice(0, -'/gm-reply'.length) : input;
+      const selectVariant = input.endsWith('/reply-variant');
+      const path = gmReply || selectVariant ? input.slice(0, input.lastIndexOf('/')) : input;
       const index = chats.findIndex((chat) => `/api/chats/${chat.id}` === path);
       assert.ok(index >= 0);
       const chat = chats[index]!;
       if (gmReply) {
         assert.ok(chat.gmMode && publishScene);
         assert.equal(init?.method, 'POST');
-        assert.deepEqual(JSON.parse(String(init.body)), { revision: chat.revision });
-        const text = await publishScene(chat);
-        const message = { id: chat.messages.at(-1)!.id + 1, role: 'assistant' as const, text, time: Date.now() };
-        const saved = { ...chat, revision: chat.revision + 1, messages: [...chat.messages, message] };
+        const { revision, replaceId } = JSON.parse(String(init.body));
+        assert.equal(revision, chat.revision);
+        if (replaceId !== undefined) assert.equal(replaceId, chat.messages.at(-1)?.id);
+        const messages = replaceId === undefined ? chat.messages : chat.messages.slice(0, -1);
+        const text = await publishScene({ ...chat, messages });
+        const message = { id: messages.at(-1)!.id + 1, role: 'assistant' as const, text, time: Date.now() };
+        const saved = keepVariant(chat, { ...chat, revision: chat.revision + 1, messages: [...messages, message] }, replaceId);
+        chats[index] = saved;
+        return Response.json(saved);
+      }
+      if (selectVariant) {
+        assert.equal(init?.method, 'PUT');
+        const { revision, replyId, index: selected } = JSON.parse(String(init.body)) as ChatReplyVariantSelection & { revision: number };
+        const versions = replyVersions.get(`${chat.id}/${replyId}`);
+        assert.equal(revision, chat.revision);
+        assert.ok(versions?.[selected]);
+        const messages = chat.messages.map((message) => message.id === replyId ? versions[selected]! : message);
+        const replyVariants = { ...chat.replyVariants, [replyId]: { index: selected, total: versions.length } };
+        const saved = { ...chat, revision: revision + 1, messages, replyVariants };
         chats[index] = saved;
         return Response.json(saved);
       }
       if (init?.method === 'GET') return Response.json(chat);
       assert.equal(init?.method, 'PUT');
-      const { revision, messages, gmMode } = JSON.parse(String(init.body)) as ChatSnapshot;
+      const { revision, messages, gmMode, replaceId } = JSON.parse(String(init.body)) as ChatSnapshot;
       assert.equal(revision, chat.revision);
-      const saved = { ...chat, revision: revision + 1, messages, gmMode: gmMode ?? chat.gmMode };
+      const saved = keepVariant(chat, { ...chat, revision: revision + 1, messages, gmMode: gmMode ?? chat.gmMode }, replaceId);
       chats[index] = saved;
       return Response.json(saved);
     }
@@ -332,6 +358,10 @@ test('GM chat uses the server publication and restores its mode without re-savin
   }, async (chat) => {
     revisions.push(chat.revision);
     waiting.resolve();
+    if (revisions.length === 2) {
+      assert.deepEqual(chat.messages.map(({ text }) => text), ['Осматриваю ворота']);
+      return 'Ворота заперты.';
+    }
     return scene.promise;
   });
   const scope = await openChat();
@@ -352,15 +382,19 @@ test('GM chat uses the server publication and restores its mode without re-savin
     await allSettled(scope);
     assert.equal(scope.getState($chatError), null);
     assert.deepEqual(scope.getState($chatRows).map(({ text }) => text), ['Осматриваю ворота', 'Ворота приоткрыты.']);
+    await allSettled(messageRegenerateRequested, { scope, params: 2 });
+    assert.deepEqual(scope.getState($chatRows).map(({ text }) => text), ['Осматриваю ворота', 'Ворота заперты.']);
+    assert.deepEqual(scope.getState($chatReplyVariants), { 2: { index: 1, total: 2 } });
 
     const id = scope.getState($chatId);
     await allSettled(chatCreateRequested, { scope });
     assert.equal(scope.getState($chatGmMode), false);
     await allSettled(chatOpenRequested, { scope, params: id });
     assert.equal(scope.getState($chatGmMode), true);
+    assert.equal(scope.getState($chatRows).at(-1)?.text, 'Ворота заперты.');
     await allSettled(chatDraftChanged, { scope, params: 'Заглядываю внутрь' });
     await allSettled(chatSendRequested, { scope });
-    assert.deepEqual(revisions, [2, 4]);
+    assert.deepEqual(revisions, [2, 3, 5]);
   } finally {
     scene.resolve('');
     globalThis.fetch = originalFetch;
@@ -428,6 +462,82 @@ test('chat streams replies, restores separate chats, and sends the selected conv
     unwatch();
     globalThis.fetch = originalFetch;
     void writer.abort().catch(() => undefined);
+  }
+});
+
+test('chat regenerates only the last turn and keeps the previous answer if the replacement fails or stops', async () => {
+  const originalFetch = globalThis.fetch;
+  const requests: unknown[] = [];
+  const waiting = Promise.withResolvers<void>();
+  globalThis.fetch = withSavedChats(async (input, init) => {
+    assert.equal(input, '/api/llm/generate');
+    requests.push(JSON.parse(String(init?.body)).messages);
+    const error = { type: 'error', code: 'provider_unavailable' };
+    if (requests.length === 2) return new Response(sse(error), { headers: sseHeaders });
+    if (requests.length === 4) return new Response(sse({ type: 'text_delta', text: 'Черновик' }) + sse(error), { headers: sseHeaders });
+    if (requests.length === 5) return new Promise((_, reject) => {
+      const signal = init!.signal!;
+      signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+      waiting.resolve();
+    });
+    const text = requests.length === 1 ? 'Первый ответ' : requests.length === 3 ? 'Исходный ответ' : 'Новый ответ';
+    return new Response(completed(text), { headers: sseHeaders });
+  });
+  const scope = await openChat();
+  const regenerate = (id: number) => allSettled(messageRegenerateRequested, { scope, params: id });
+  try {
+    await allSettled(chatDraftChanged, { scope, params: 'Первый запрос' });
+    await allSettled(chatSendRequested, { scope });
+    await allSettled(chatDraftChanged, { scope, params: 'Второй запрос' });
+    await allSettled(chatSendRequested, { scope });
+    await allSettled(chatDraftChanged, { scope, params: 'Несохранённый черновик' });
+    assert.equal(scope.getState($chatRegenerateId), 3);
+    await regenerate(2);
+    assert.equal(requests.length, 2);
+    await regenerate(3);
+    assert.equal(scope.getState($chatError), null);
+    assert.equal(scope.getState($chatRegenerateId), 4);
+    const original = scope.getState($chatRows);
+    const activity = scope.getState($chatActivity);
+    assert.equal(original.at(-1)?.text, 'Исходный ответ');
+
+    await regenerate(4);
+    assert.equal(scope.getState($chatError), 'provider_unavailable');
+    assert.deepEqual(scope.getState($chatRows), original);
+    assert.deepEqual(scope.getState($chatActivity), activity);
+
+    scopeBind(messageRegenerateRequested, { scope })(4);
+    await waiting.promise;
+    assert.equal(scope.getState($chatRegenerateId), null);
+    assert.equal(scope.getState($chatRows).at(-1)?.text, '');
+    await allSettled(chatStopRequested, { scope });
+    assert.deepEqual(scope.getState($chatRows), original);
+    assert.deepEqual(scope.getState($chatActivity), activity);
+
+    await regenerate(4);
+    assert.deepEqual(scope.getState($chatRows).map(({ id, text }) => [id, text]), [
+      [1, 'Первый запрос'], [2, 'Первый ответ'], [3, 'Второй запрос'], [4, 'Новый ответ'],
+    ]);
+    assert.deepEqual(scope.getState($chatActivity).map(({ promptId }) => promptId), [1, 3]);
+    assert.equal(scope.getState($chatDraft), 'Несохранённый черновик');
+    const history = [
+      { role: 'user', content: 'Первый запрос' }, { role: 'assistant', parts: [{ type: 'text', text: 'Первый ответ' }] },
+      { role: 'user', content: 'Второй запрос' },
+    ];
+    assert.deepEqual(requests.slice(1), Array.from({ length: 5 }, () => history));
+    assert.deepEqual(scope.getState($chatReplyVariants), { 4: { index: 1, total: 2 } });
+    await allSettled(replyVariantRequested, { scope, params: { replyId: 4, index: 0 } });
+    assert.deepEqual(scope.getState($chatRows), original);
+    const reloaded = await openChat();
+    assert.deepEqual(reloaded.getState($chatRows), original);
+    assert.deepEqual(reloaded.getState($chatReplyVariants), { 4: { index: 0, total: 2 } });
+    await allSettled(chatDraftChanged, { scope: reloaded, params: 'Продолжай' });
+    await allSettled(chatSendRequested, { scope: reloaded });
+    assert.deepEqual(requests.at(-1), [
+      ...history, { role: 'assistant', parts: [{ type: 'text', text: 'Исходный ответ' }] }, { role: 'user', content: 'Продолжай' },
+    ]);
+  } finally {
+    globalThis.fetch = originalFetch;
   }
 });
 

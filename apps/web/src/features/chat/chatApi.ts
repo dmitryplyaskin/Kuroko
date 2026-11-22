@@ -1,5 +1,5 @@
 import { isLlmErrorCode } from '@kuroko/contracts/errors';
-import type { ChatActivityEntry, ChatSnapshot, ChatSummary, ChatToolCall, SavedChat } from '@kuroko/contracts/chat';
+import type { ChatActivityEntry, ChatReplyVariantSelection, ChatSnapshot, ChatSummary, ChatToolCall, SavedChat } from '@kuroko/contracts/chat';
 import type { LlmAssistantPart, LlmCompletion, LlmEvent, LlmMessage, LlmRequest, LlmToolCall } from '@kuroko/contracts/llm';
 import type { DelegateTaskEvent, DelegateTaskRequest, DelegateTaskResult, ToolId } from '@kuroko/contracts/tools';
 import { createSubagentBatch, runToolCall, toolDeclarations } from '@kuroko/tool-runtime';
@@ -20,9 +20,11 @@ export const chatApi = {
     sessionRequest<void>(session, `/chats/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   save: (session: ActiveSession, id: string, body: ChatSnapshot) =>
     sessionRequest<SavedChat>(session, `/chats/${encodeURIComponent(id)}`, { method: 'PUT', body }),
-  gmReply: (session: ActiveSession, { id, revision }: SavedChat, signal: AbortSignal) =>
+  selectVariant: (session: ActiveSession, id: string, body: ChatReplyVariantSelection & { revision: number }) =>
+    sessionRequest<SavedChat>(session, `/chats/${encodeURIComponent(id)}/reply-variant`, { method: 'PUT', body }),
+  gmReply: (session: ActiveSession, { id, revision }: SavedChat, signal: AbortSignal, replaceId?: number) =>
     sessionRequest<SavedChat>(session, `/chats/${encodeURIComponent(id)}/gm-reply`, {
-      method: 'POST', body: { revision }, signal, timeoutMs: 310_000,
+      method: 'POST', body: { revision, replaceId }, signal, timeoutMs: 310_000,
     }),
 };
 
@@ -44,13 +46,15 @@ export async function streamChatReply(
   session: ActiveSession, messages: ChatSnapshot['messages'], enabledTools: readonly ToolId[], signal: AbortSignal,
   onText: (delta: string) => void, onContent: (text: string, calls: ChatToolCall[]) => void,
   onSubagentActivity: (active: readonly ActiveSubagent[]) => void, start: ReturnType<typeof createChatActivity>,
-  onActivity: (entry: ChatActivityEntry) => void,
+  onActivity: (entry: ChatActivityEntry) => void, uniqueToolIds: boolean,
 ): Promise<string> {
   const tools = enabledTools.length ? toolDeclarations(enabledTools) : undefined;
   const history: LlmMessage[] = toLlmMessages(messages);
   const savedCalls = messages.flatMap(({ toolCalls }) => toolCalls ?? []);
   const toolCalls: ChatToolCall[] = [];
   const recordedIds = new Set(savedCalls.map(({ id }) => id));
+  // A provider can reuse an ID from an inactive variant that is absent from model history.
+  const recordPrefix = uniqueToolIds ? `call_${crypto.getRandomValues(new Uint32Array(4)).join('_')}_` : 'call_';
   let nextRecordNumber = 1;
   let presetId: string | undefined;
   let text = '';
@@ -120,8 +124,8 @@ export async function streamChatReply(
       }
     });
     const results = await Promise.all(calls.map(async ({ call, textOffset }) => {
-      let recordId = call.id;
-      while (recordedIds.has(recordId)) recordId = `call_${nextRecordNumber++}`;
+      let recordId = uniqueToolIds ? `${recordPrefix}${nextRecordNumber++}` : call.id;
+      while (recordedIds.has(recordId)) recordId = `${recordPrefix}${nextRecordNumber++}`;
       recordedIds.add(recordId);
       const tool = start('tool', { arguments: call.arguments, ...(call.name === 'delegate_task' && { callId: recordId }) }, call.name);
       const { entry, message } = await runToolCall(call, enabledTools, { signal, id: recordId, history: recordedCalls, delegateTask });

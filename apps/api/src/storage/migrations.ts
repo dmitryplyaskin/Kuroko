@@ -3,7 +3,7 @@ import type { Database } from 'bun:sqlite';
 import { createHash } from 'node:crypto';
 import { realmFilterKey, realmTagKeys } from '../realms/realmFilterKeys';
 
-const latestVersion = 13;
+const latestVersion = 14;
 
 const initialSchema = `
   CREATE TABLE vault_settings (
@@ -215,6 +215,15 @@ export function migrateDatabase(db: Database, vaultKey: Buffer) {
         prompt_id INTEGER NOT NULL,
         entries_json TEXT NOT NULL CHECK (json_valid(entries_json)),
         PRIMARY KEY (chat_id, prompt_id)
+      ) STRICT;
+    `);
+    if (version < 14) db.exec(`
+      CREATE TABLE chat_reply_variants (
+        chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+        reply_id INTEGER NOT NULL,
+        selected_index INTEGER NOT NULL CHECK (selected_index >= 0 AND selected_index <= json_array_length(archived_json)),
+        archived_json TEXT NOT NULL CHECK (json_type(archived_json) = 'array' AND json_array_length(archived_json) > 0),
+        PRIMARY KEY (chat_id, reply_id)
       ) STRICT;
     `);
 

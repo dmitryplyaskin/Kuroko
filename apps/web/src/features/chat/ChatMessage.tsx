@@ -1,8 +1,8 @@
 import { useI18n } from '../../shared/i18n/i18n';
-import type { ChatToolCall } from '@kuroko/contracts/chat';
+import type { ChatReplyVariants, ChatReplyVariantSelection, ChatToolCall } from '@kuroko/contracts/chat';
 import { readSubagentName } from '@kuroko/contracts/tools';
 import { Button, Menu } from '@mantine/core';
-import { Bot, ChevronRight, Copy, Ellipsis, LoaderCircle, Pencil, RotateCw, Trash2 } from 'lucide-react';
+import { Bot, ChevronLeft, ChevronRight, Copy, Ellipsis, LoaderCircle, Pencil, RotateCw, Trash2 } from 'lucide-react';
 import { memo, useCallback, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { useModuleExtensions } from '../../modules/ModuleExtensions';
 import { notify } from '../../shared/notifications/notifications';
@@ -82,6 +82,31 @@ function ToolCalls({ calls }: { calls: ChatToolCall[] }) {
   );
 }
 
+function ReplyVariants({ variants: { index, total }, locked, select }: {
+  variants: ChatReplyVariants; locked?: boolean; select: (index: number) => void;
+}) {
+  const { t, number } = useI18n();
+  const label = { current: number.format(index + 1), total: number.format(total) };
+  const previousDisabled = Boolean(locked || index === 0);
+  const nextDisabled = Boolean(locked || index === total - 1);
+  const previous = t('chat.previousReplyVariant');
+  const next = t('chat.nextReplyVariant');
+  return (
+    <span className="chat-reply-variants">
+      <button type="button" className="icon-button" aria-label={previous} title={previous} aria-disabled={previousDisabled}
+        onClick={() => { if (!previousDisabled) select(index - 1); }}>
+        <ChevronLeft size={16} aria-hidden="true" />
+      </button>
+      <span aria-hidden="true">{label.current} / {label.total}</span>
+      <output className="chat-sr-only">{t('chat.replyVariantPosition', label)}</output>
+      <button type="button" className="icon-button" aria-label={next} title={next} aria-disabled={nextDisabled}
+        onClick={() => { if (!nextDisabled) select(index + 1); }}>
+        <ChevronRight size={16} aria-hidden="true" />
+      </button>
+    </span>
+  );
+}
+
 type Props = {
   message: Message;
   username: string;
@@ -95,13 +120,16 @@ type Props = {
   onDraftChange: (id: number, index: number, value: string) => void;
   onCancelEdit: () => void;
   onSaveEdit: (id: number) => void;
+  onRegenerate?: (id: number) => void;
+  variants?: ChatReplyVariants;
+  onSelectVariant?: (selection: ChatReplyVariantSelection) => void;
   onDelete: (message: Message) => void;
   onPreview: (image: ChatImage) => void;
 };
 
 export const ChatMessage = memo(function ChatMessage({
   message, username, phase, activeSubagents, locked, editor, reasoningOpen, onToggleReasoning,
-  onEdit, onDraftChange, onSaveEdit, onCancelEdit, onDelete, onPreview,
+  onEdit, onDraftChange, onSaveEdit, onCancelEdit, onRegenerate, variants, onSelectVariant, onDelete, onPreview,
 }: Props) {
   const { t, number } = useI18n();
   const { id, text, time, image, edited, reasoning } = message;
@@ -217,9 +245,12 @@ export const ChatMessage = memo(function ChatMessage({
             }}>
             <Pencil size={16} aria-hidden="true" />
           </button>
-          <button type="button" className="icon-button" aria-label={t('chat.regenerate')} title={t('chat.regenerate')} disabled>
-            <RotateCw size={16} aria-hidden="true" />
-          </button>
+          {onRegenerate && (
+            <button type="button" className="icon-button" aria-label={t('chat.regenerate')} title={t('chat.regenerate')}
+              disabled={locked} onClick={() => onRegenerate(id)}>
+              <RotateCw size={16} aria-hidden="true" />
+            </button>
+          )}
           <button type="button" className="icon-button chat-message-delete" aria-label={t('common.delete')} title={t('common.delete')}
             disabled={locked} onClick={() => onDelete(message)}>
             <Trash2 size={16} aria-hidden="true" />
@@ -234,6 +265,8 @@ export const ChatMessage = memo(function ChatMessage({
               </Menu.Dropdown>
             </Menu>
           ) : <button type="button" className="icon-button" aria-label={t('chat.moreActions')} title={t('chat.moreActions')} disabled>{ellipsis}</button>}
+          {variants && onSelectVariant && <ReplyVariants variants={variants} locked={locked}
+            select={(index) => onSelectVariant({ replyId: id, index })} />}
         </div>
       )}>
       {assistant && reasoning !== undefined && (

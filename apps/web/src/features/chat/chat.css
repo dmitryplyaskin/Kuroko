@@ -231,6 +231,21 @@
   min-block-size: 32px;
 }
 
+.chat-reply-variants {
+  display: inline-flex;
+  align-items: center;
+  color: var(--kr-muted);
+  font-size: .8rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.chat-reply-variants .icon-button[aria-disabled='true'] {
+  opacity: .6;
+  cursor: default;
+  background: transparent;
+}
+
 @media (hover: hover) {
   .chat-message-delete.icon-button:not(:disabled):hover { color: var(--kr-danger); }
 }

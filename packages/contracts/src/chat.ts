@@ -20,6 +20,13 @@ export type ChatMessage = {
   toolCalls?: ChatToolCall[];
 };
 
+export function chatReplyPrompt(messages: readonly ChatMessage[], replaceId?: number): ChatMessage | undefined {
+  const last = messages.at(-1);
+  if (replaceId !== undefined && (last?.role !== 'assistant' || last.id !== replaceId)) return;
+  const prompt = replaceId === undefined ? last : messages.at(-2);
+  if (prompt?.role === 'user' && prompt.id < Number.MAX_SAFE_INTEGER - 2) return prompt;
+}
+
 export type ChatSummary = { id: string; title: string; updatedAt: number };
 export const chatTitleLimit = 64;
 
@@ -36,8 +43,11 @@ export type ChatActivityEntry = {
   details: JsonObject;
 };
 export type ChatActivityTurn = { promptId: number; entries: ChatActivityEntry[] };
-export type ChatSnapshot = { revision: number; messages: ChatMessage[]; gmMode?: boolean; activity?: ChatActivityTurn };
-export type SavedChat = ChatSummary & Omit<ChatSnapshot, 'gmMode' | 'activity'> & {
+export type ChatReplyVariants = { index: number; total: number };
+export type ChatReplyVariantSelection = { replyId: number; index: number };
+export type ChatSnapshot = { revision: number; messages: ChatMessage[]; gmMode?: boolean; activity?: ChatActivityTurn; replaceId?: number };
+export type SavedChat = ChatSummary & Omit<ChatSnapshot, 'gmMode' | 'activity' | 'replaceId'> & {
   gmMode: boolean;
   activity?: ChatActivityTurn[];
+  replyVariants?: Record<number, ChatReplyVariants>;
 };

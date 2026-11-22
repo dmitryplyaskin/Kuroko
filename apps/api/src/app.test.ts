@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, spyOn, test } from 'bun:test';
 import { randomBytes } from 'node:crypto';
 import { once } from 'node:events';
 import type { Server } from 'node:http';
-import type { ChatSnapshot, ChatToolCall, SavedChat } from '@kuroko/contracts/chat';
+import type { ChatActivityTurn, ChatMessage, ChatSnapshot, ChatToolCall, SavedChat } from '@kuroko/contracts/chat';
 import { defaultChatSettings } from '@kuroko/contracts/chatSettings';
 import { defaultConnectionSettings, type ConnectionState, type ProviderKey } from '@kuroko/contracts/connectionSettings';
 import type { LlmRequest } from '@kuroko/contracts/llm';
@@ -1044,6 +1044,132 @@ test('publishes only the player scene and can retrieve a private roll in a later
     expect(secondScene.messages.at(-1)).toEqual({ id: 4, role: 'assistant', text: 'Внутри темно.', time: expect.any(Number) });
     expect(await (await request(path, { cookie })).json()).toEqual(secondScene);
     expect(round).toBe(4);
+  } finally {
+    mock.mockRestore();
+  }
+});
+
+test('keeps chat reply variants in order and restores their tools and activity', async () => {
+  await register('variants-owner');
+  await register('variants-other');
+  const cookie = sessionCookie(await login('variants-owner')).token;
+  const other = sessionCookie(await login('variants-other')).token;
+  const created = await (await request('/chats', { method: 'POST', cookie })).json() as SavedChat;
+  const path = `/chats/${created.id}`;
+  const prompt: ChatMessage = { id: 1, role: 'user', text: 'Что у двери?', time: 1 };
+  const original: ChatMessage = { id: 2, role: 'assistant', text: 'Горит лампа.', time: 2, edited: true,
+    toolCalls: [{ id: 'original_call', name: 'test_echo', arguments: { message: 'лампа' }, result: 'лампа' }] };
+  const second: ChatMessage = { id: 2, role: 'assistant', text: 'Висит фонарь.', time: 3 };
+  const third: ChatMessage = { id: 2, role: 'assistant', text: 'Стоит свеча.', time: 4 };
+  const activity = (message: ChatMessage): ChatActivityTurn => ({
+    promptId: prompt.id,
+    entries: [{ id: '1', kind: 'model', status: 'completed', time: message.time, details: { text: message.text } }],
+  });
+  const save = (chat: SavedChat, messages: ChatMessage[], extra?: Partial<Pick<ChatSnapshot, 'activity' | 'replaceId'>>) =>
+    request(path, { method: 'PUT', cookie, body: { revision: chat.revision, messages, ...extra } });
+  const select = (chat: SavedChat, index: number, owner = cookie) => request(`${path}/reply-variant`, {
+    method: 'PUT', cookie: owner, body: { revision: chat.revision, replyId: original.id, index },
+  });
+  const ok = async (response: Response) => {
+    expect(response.status).toBe(200);
+    return await response.json() as SavedChat;
+  };
+
+  const initial = await ok(await save(created, [prompt, original], { activity: activity(original) }));
+  const replacement = { replaceId: original.id, activity: activity(second) };
+  const regenerated = await ok(await save(initial, [prompt, second], replacement));
+  expect(regenerated.replyVariants).toEqual({ 2: { index: 1, total: 2 } });
+  expect(await ok(await save(initial, [prompt, second], replacement))).toEqual(regenerated);
+  expect((await select(regenerated, 0, other)).status).toBe(404);
+  expect((await select(regenerated, 2)).status).toBe(409);
+  const restored = await ok(await select(regenerated, 0));
+  expect(restored.messages).toEqual([prompt, original]);
+  expect(restored.activity).toEqual([activity(original)]);
+  expect(restored.replyVariants).toEqual({ 2: { index: 0, total: 2 } });
+  expect(await ok(await select(regenerated, 0))).toEqual(restored);
+
+  const regeneratedAgain = await ok(await save(restored, [prompt, third], { replaceId: original.id, activity: activity(third) }));
+  expect(regeneratedAgain.replyVariants).toEqual({ 2: { index: 2, total: 3 } });
+  const followUp: ChatMessage = { id: 3, role: 'user', text: 'Захожу.', time: 5 };
+  const continued = await ok(await save(regeneratedAgain, [...regeneratedAgain.messages, followUp]));
+  expect((await save(continued, [prompt, third, followUp], { replaceId: original.id })).status).toBe(409);
+  const middle = await ok(await select(continued, 1));
+  expect(middle.messages).toEqual([prompt, second, followUp]);
+  expect(middle.activity).toEqual([activity(second)]);
+  expect(middle.replyVariants).toEqual({ 2: { index: 1, total: 3 } });
+  expect(await ok(await request(path, { cookie }))).toEqual(middle);
+
+  const orphan = await ok(await save(middle, [second, followUp]));
+  const selectedOrphan = await ok(await select(orphan, 0));
+  expect(selectedOrphan.messages).toEqual([original, followUp]);
+  expect(selectedOrphan.activity).toBeUndefined();
+  const deleted = await ok(await save(selectedOrphan, [followUp]));
+  expect(deleted.replyVariants).toBeUndefined();
+  expect((await select(deleted, 1)).status).toBe(409);
+});
+
+test('regenerates only the latest GM reply and restores its private notes when switching variants', async () => {
+  await register('gm-regenerate-owner');
+  const cookie = sessionCookie(await login('gm-regenerate-owner')).token;
+  await saveGenerationPreset(cookie, 'openai', 'gm-regenerate-test-key');
+  const created = await (await request('/chats', { method: 'POST', cookie })).json() as SavedChat;
+  const path = `/chats/${created.id}`;
+  const save = async (chat: SavedChat, messages: SavedChat['messages']) => {
+    const response = await request(path, { method: 'PUT', cookie, body: { revision: chat.revision, gmMode: true, messages } });
+    expect(response.status).toBe(200);
+    return await response.json() as SavedChat;
+  };
+  const reply = (chat: SavedChat, replaceId?: number) =>
+    request(`${path}/gm-reply`, { method: 'POST', cookie, body: { revision: chat.revision, replaceId } });
+  const readNotes = () => db.query<{ turn_json: string }, []>('SELECT turn_json FROM chat_private_turns ORDER BY reply_id').all()
+    .map(({ turn_json }) => JSON.parse(turn_json).notes);
+  let scene: { text: string; notes: string } | undefined = { text: 'Видна дверь.', notes: 'Ключ лежит в кармане.' };
+  const histories: string[] = [];
+  const mock = mockGeneration((_url, init) => {
+    histories.push(JSON.stringify(JSON.parse(String(init?.body)).messages));
+    return scene ? gmProviderStream('', [{ name: 'publishScene', arguments: scene }]) : gmProviderStream('Неопубликованная сцена');
+  });
+  try {
+    const firstPrompt = await save(created, [{ id: 1, role: 'user', text: 'Осматриваюсь.', time: 1 }]);
+    const first = await reply(firstPrompt);
+    expect(first.status).toBe(200);
+    const firstScene = await first.json() as SavedChat;
+    const nextPrompt = await save(firstScene, [...firstScene.messages, { id: 3, role: 'user', text: 'Прислушиваюсь.', time: 3 }]);
+    scene = { text: 'Слышны шаги.', notes: 'По коридору идёт сторож.' };
+    const next = await reply(nextPrompt);
+    expect(next.status).toBe(200);
+    const saved = await next.json() as SavedChat;
+    expect((await reply(saved, 2)).status).toBe(409);
+    expect((await reply(nextPrompt, 4)).status).toBe(409);
+    expect(histories).toHaveLength(2);
+
+    scene = undefined;
+    expect((await reply(saved, 4)).status).toBe(422);
+    expect(await (await request(path, { cookie })).json()).toEqual(saved);
+    expect(readNotes()).toEqual(['Ключ лежит в кармане.', 'По коридору идёт сторож.']);
+
+    scene = { text: 'Слышен скрип.', notes: 'Окно открыто.' };
+    const replacement = await reply(saved, 4);
+    expect(replacement.status).toBe(200);
+    const regenerated = await replacement.json() as SavedChat;
+    expect(regenerated.revision).toBe(saved.revision + 1);
+    expect(regenerated.messages).toEqual([...saved.messages.slice(0, -1), {
+      id: 4, role: 'assistant', text: 'Слышен скрип.', time: expect.any(Number),
+    }]);
+    expect(histories.at(-1)).toContain('Ключ лежит в кармане.');
+    expect(histories.at(-1)).toContain('Прислушиваюсь.');
+    expect(histories.at(-1)).not.toContain('Слышны шаги.');
+    expect(histories.at(-1)).not.toContain('По коридору идёт сторож.');
+    expect(readNotes()).toEqual(['Ключ лежит в кармане.', 'Окно открыто.']);
+    expect(await (await request(path, { cookie })).json()).toEqual(regenerated);
+    expect(regenerated.replyVariants).toEqual({ 4: { index: 1, total: 2 } });
+
+    const restored = await request(`${path}/reply-variant`, {
+      method: 'PUT', cookie, body: { revision: regenerated.revision, replyId: 4, index: 0 },
+    });
+    expect(restored.status).toBe(200);
+    expect(await restored.json()).toMatchObject({ messages: saved.messages, replyVariants: { 4: { index: 0, total: 2 } } });
+    expect(readNotes()).toEqual(['Ключ лежит в кармане.', 'По коридору идёт сторож.']);
   } finally {
     mock.mockRestore();
   }
