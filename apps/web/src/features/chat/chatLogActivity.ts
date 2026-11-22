@@ -3,12 +3,14 @@ import type { JsonValue } from '@kuroko/contracts/llm';
 import { messageBlocks } from '@kuroko/tool-runtime/chatHistory';
 import { activityModelText, activityObject, activityToolDetails, type ActivityEntry, type AgentTask } from './ChatActivity';
 
+type LogEvent = ActivityEntry & { kind: Exclude<ActivityEntry['kind'], 'agent'> };
+
 export type LogRow = {
   key: string;
-  kind: ActivityEntry['kind'] | ChatMessage['role'];
+  kind: LogEvent['kind'] | ChatMessage['role'];
   time: number;
   text?: string;
-  event?: ActivityEntry;
+  event?: LogEvent;
   sourceKey?: string;
   pending?: boolean;
 };
@@ -20,7 +22,7 @@ function messageRow(message: ChatMessage, text = message.text, key = `message-${
   return { key, kind: message.role, time: message.time, text };
 }
 
-function eventRow(event: ActivityEntry, sourceKey?: string): LogRow {
+function eventRow(event: LogEvent, sourceKey?: string): LogRow {
   const text = event.kind === 'model' ? activityModelText(event) : undefined;
   return {
     key: event.key, kind: text?.trim() ? 'assistant' : event.kind, time: event.time, text,
@@ -31,19 +33,24 @@ function eventRow(event: ActivityEntry, sourceKey?: string): LogRow {
 function recordedRows(entries: ActivityEntry[], agentId?: string) {
   const rows: LogRow[] = [];
   let lastModel: string | undefined;
-  for (const event of entries) {
-    if (event.agentId !== agentId || event.kind === 'agent' || event.kind === 'reply') continue;
+  let summary: LogEvent | undefined;
+  const events = entries.filter((entry): entry is LogEvent => entry.agentId === agentId && entry.kind !== 'agent');
+  for (const event of events) {
+    if (event.kind === 'reply') {
+      summary ??= event;
+      continue;
+    }
     if (event.kind === 'model') lastModel = event.key;
     rows.push(eventRow(event, event.kind === 'tool' ? lastModel : undefined));
   }
-  const summary = entries.find((entry) => entry.kind === 'reply' && entry.agentId === agentId);
   if (summary && (!rows.length || summary.status === 'failed' || summary.status === 'stopped')) rows.push(eventRow(summary));
   return rows;
 }
 
 function savedRows(reply: ChatMessage, entries: ActivityEntry[]) {
   if (!reply.toolCalls?.length) return reply.text.trim() ? [messageRow(reply)] : [];
-  const byCall = Map.groupBy(entries.filter(({ agentId, kind }) => !agentId && kind === 'tool'), ({ legacyCallId }) => legacyCallId);
+  const tools = entries.filter((entry): entry is LogEvent => !entry.agentId && entry.kind === 'tool');
+  const byCall = Map.groupBy(tools, ({ legacyCallId }) => legacyCallId);
   return messageBlocks(reply).flatMap((block, index) => block.kind === 'text'
     ? [messageRow(reply, block.text, `message-${reply.id}-${index}`)]
     : block.calls.flatMap(({ id }) => (byCall.get(id) ?? []).map((entry) => eventRow(entry))));

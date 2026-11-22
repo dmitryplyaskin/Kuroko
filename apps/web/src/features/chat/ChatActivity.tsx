@@ -103,13 +103,6 @@ export function chatActivityView(turns: ChatActivityTurn[], messages: ChatMessag
   return { entries, agents: [...agents.values()] };
 }
 
-export const activityLabels = { reply: 'chat.eventReply', model: 'chat.eventModel', tool: 'chat.eventTool', agent: 'chat.eventAgent' } as const;
-export const activitySections = {
-  request: 'chat.eventRequest', response: 'chat.eventResponse',
-  task: 'chat.agentTask', arguments: 'chat.toolArguments', result: 'chat.toolResult',
-  modelResult: 'chat.eventModelResult', error: 'chat.eventError',
-} as const;
-
 export function ActivityStatus({ status }: { status: ChatActivityEntry['status'] }) {
   const { t } = useI18n();
   return <span className="chat-event-status" data-status={status}>{t(`chat.activity.${status}`)}</span>;

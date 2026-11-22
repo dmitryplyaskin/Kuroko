@@ -4,13 +4,19 @@ import { memo, useId, useLayoutEffect, useMemo, useRef, useState, type Ref } fro
 import type { ChatMessage } from '@kuroko/contracts/chat';
 import type { JsonValue } from '@kuroko/contracts/llm';
 import { useI18n } from '../../shared/i18n/i18n';
-import { activityLabels, activityObject, activitySections, ActivityStatus, type ActivityEntry } from './ChatActivity';
+import { activityObject, ActivityStatus, type ActivityEntry } from './ChatActivity';
 import { chatLogTurns, logRowPreview, withLiveLogReply, type LogRow, type LogTurn } from './chatLogActivity';
 import { ChatText } from './ChatText';
 import './chatLog.css';
 
-const rowLabels = { ...activityLabels, model: 'common.model', user: 'chat.logUser', assistant: 'chat.logAssistant' } as const;
-const rowIcons = { user: UserRound, assistant: MessageSquare, model: Cpu, tool: Wrench, agent: Bot, reply: CircleAlert };
+const rowLabels = {
+  user: 'chat.logUser', assistant: 'chat.logAssistant', model: 'common.model', tool: 'chat.eventTool', reply: 'chat.eventReply',
+} as const;
+const rowIcons = { user: UserRound, assistant: MessageSquare, model: Cpu, tool: Wrench, reply: CircleAlert };
+const detailLabels = {
+  request: 'chat.eventRequest', response: 'chat.eventResponse', arguments: 'chat.toolArguments', result: 'chat.toolResult',
+  modelResult: 'chat.eventModelResult', error: 'chat.eventError',
+} as const;
 const detailTabs = {
   request: ['request'],
   arguments: ['arguments'],
@@ -37,10 +43,11 @@ function RawDetail({ value, limit }: { value: JsonValue; limit?: number }) {
 
 function LogInspector({ row, turn, source, heading, id, onClose, onSource, onOpenAgent }: {
   row: LogRow; turn: number; source?: LogRow; heading: Ref<HTMLHeadingElement>; id: string;
-  onClose: () => void; onSource: () => void; onOpenAgent?: (key: string) => void;
+  onClose: () => void; onSource: () => void; onOpenAgent: (key: string) => void;
 }) {
   const { t, date, number } = useI18n();
   const { event, text } = row;
+  const targetAgentKey = event?.targetAgentKey;
   const details = event?.details ?? {};
   const completion = activityObject(details.response);
   const usage = activityObject(completion?.usage);
@@ -64,24 +71,24 @@ function LogInspector({ row, turn, source, heading, id, onClose, onSource, onOpe
       </div>}
       {row.kind === 'tool' && (['arguments', 'result'] as const).map((key) => details[key] !== undefined && (
         <section className="chat-log-inspector-section" key={key}>
-          <h3>{t(activitySections[key])}</h3>
+          <h3>{t(detailLabels[key])}</h3>
           <RawDetail value={details[key]} limit={350} />
         </section>
       ))}
       {Object.entries(details).filter(([key]) => !tabs.some(([, keys]) => keys.some((item) => item === key)))
         .map(([key, value]) => (
           <section className="chat-log-inspector-section" key={key}>
-            <h3>{Object.hasOwn(activitySections, key) ? t(activitySections[key as keyof typeof activitySections]) : key}</h3>
+            <h3>{Object.hasOwn(detailLabels, key) ? t(detailLabels[key as keyof typeof detailLabels]) : key}</h3>
             <RawDetail value={value} />
           </section>
         ))}
       <dl className="chat-log-metadata">
         {metadata.map(([label, value]) => value && <div key={label}><dt>{label}</dt><dd><bdi>{value}</bdi></dd></div>)}
       </dl>
-      {(source || (onOpenAgent && event?.targetAgentKey)) && (
+      {(source || targetAgentKey) && (
         <div className="chat-log-related">
-          {onOpenAgent && event?.targetAgentKey && <Button variant="light" size="compact-sm"
-            onClick={() => onOpenAgent(event.targetAgentKey!)} leftSection={<Bot size={15} aria-hidden="true" />}>
+          {targetAgentKey && <Button variant="light" size="compact-sm"
+            onClick={() => onOpenAgent(targetAgentKey)} leftSection={<Bot size={15} aria-hidden="true" />}>
             {t('chat.logOpenAgent')}
           </Button>}
           {source && <Button variant="subtle" size="compact-sm" className="chat-log-source" onClick={onSource}
@@ -114,13 +121,13 @@ function LogInspector({ row, turn, source, heading, id, onClose, onSource, onOpe
         <Tabs className="chat-log-detail-tabs" defaultValue="overview" keepMounted={false} color="var(--kr-accent)">
           <Tabs.List aria-label={t('chat.logDetails')}>
             <Tabs.Tab value="overview">{t('chat.logOverview')}</Tabs.Tab>
-            {tabs.map(([key]) => <Tabs.Tab key={key} value={key}>{t(activitySections[key as keyof typeof detailTabs])}</Tabs.Tab>)}
+            {tabs.map(([key]) => <Tabs.Tab key={key} value={key}>{t(detailLabels[key as keyof typeof detailTabs])}</Tabs.Tab>)}
           </Tabs.List>
           <Tabs.Panel value="overview" className="chat-log-detail-panel">{overview}</Tabs.Panel>
           {tabs.map(([tab, keys]) => (
             <Tabs.Panel key={tab} value={tab} className="chat-log-detail-panel">
               {keys.map((key) => details[key] !== undefined && <section className="chat-log-inspector-section" key={key}>
-                <h3>{t(activitySections[key])}</h3>
+                <h3>{t(detailLabels[key])}</h3>
                 <RawDetail value={details[key]} />
               </section>)}
             </Tabs.Panel>
@@ -272,7 +279,7 @@ export function ChatLogView({ turns, emptyMessage, onOpenAgent }: {
                   const renderRow = (row: LogRow) => <LogEventRow row={row} key={row.key} inspectorId={inspectorId}
                     current={row.key === selectedKey} select={openRow} />;
                   if (!folded) return renderRow(rows[0]!);
-                  const names = [...new Set(rows.flatMap(({ kind, event }) => kind === 'tool' && event?.name ? [event.name] : []))];
+                  const names = [...new Set(rows.flatMap(({ event }) => event?.name ? [event.name] : []))];
                   return (
                     <li className="chat-log-fold" key={rows[0]!.key}>
                       <details>

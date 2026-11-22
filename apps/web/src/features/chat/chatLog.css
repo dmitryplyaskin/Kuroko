@@ -51,10 +51,8 @@
 .chat-log-track > span { flex: 1; background: var(--log-row-color); }
 
 .chat-log [data-kind='user'] { --log-row-color: var(--kr-muted); }
-.chat-log [data-kind='assistant'] { --log-row-color: var(--kr-accent); }
-.chat-log [data-kind='model'] { --log-row-color: var(--kr-accent); }
+.chat-log :is([data-kind='assistant'], [data-kind='model']) { --log-row-color: var(--kr-accent); }
 .chat-log [data-kind='tool'] { --log-row-color: var(--kr-text); }
-.chat-log [data-kind='agent'] { --log-row-color: var(--kr-accent-hover); }
 .chat-log [data-kind='reply'] { --log-row-color: var(--kr-danger); }
 
 .chat-log-body { grid-area: body; display: grid; grid-template-columns: minmax(0, 1fr); min-block-size: 0; }
