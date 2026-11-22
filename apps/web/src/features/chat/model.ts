@@ -9,7 +9,7 @@ import { $activeSession, protectedRequestFailed, sessionEnded, type ActiveSessio
 import { inActiveSession } from '../../platform/session/request';
 import { $enabledTools, $toolSettingsBusy } from '../tools/model';
 import { chatApi, streamChatReply } from './chatApi';
-import { editMessageText, hasMessageContent, type ActiveSubagent, type Message, type ReplyPhase } from './message';
+import { editMessageText, hasMessageContent, messageDraftTexts, type ActiveSubagent, type Message, type ReplyPhase } from './message';
 
 type Generation = { session: ActiveSession; controller: AbortController; enabledTools: readonly ToolId[] };
 type Reply = { generation: Generation; message: Message; activity: ChatActivityEntry[]; activeSubagents?: readonly ActiveSubagent[] };
@@ -30,7 +30,7 @@ export const chatLoadRetryRequested = createEvent();
 export const chatSaveRetryRequested = createEvent();
 export const chatGmModeChanged = createEvent<boolean>();
 export const messageEditRequested = createEvent<number>();
-export const messageEditChanged = createEvent<{ id: number; text: string }>();
+export const messageEditChanged = createEvent<{ id: number; text: string; index?: number }>();
 export const messageEditCancelled = createEvent();
 export const messageEditSubmitted = createEvent<number>();
 export const messageDeleteRequested = createEvent<number>();
@@ -348,31 +348,37 @@ export const $chatError = createStore<ErrorCode | null>(null)
   .on(replyFailed, (_, { error }) => errorCode(error))
   .reset(messageSent, chatOpened, sessionEnded);
 
-type Editor = { id: number; text: string };
+type Editor = { id: number; texts: string[] };
 const editOpened = sample({
   clock: messageEditRequested,
   source: $messages,
   filter: $chatLocked.map((locked) => !locked),
   fn: (messages, id) => messages.find((message) => message.id === id),
-}).filterMap((message) => message && { id: message.id, text: message.text });
+}).filterMap((message) => message && { id: message.id, texts: messageDraftTexts(message) });
 
 const $editor = createStore<Editor | null>(null)
   .on(editOpened, (editor, draft) => editor?.id === draft.id ? editor : draft)
-  .on(messageEditChanged, (editor, draft) => editor?.id === draft.id ? draft : editor)
+  .on(messageEditChanged, (editor, { id, index = 0, text }) => editor?.id === id
+    ? { id, texts: editor.texts.map((value, part) => part === index ? text : value) }
+    : editor)
   .reset(messageEditCancelled, chatOpened, sessionEnded);
 
-export const $messageEditor = combine($editor, $messages, $chatLocked, (editor, messages, locked) => {
+const $editorCandidate = combine($editor, $messages, $chatLocked, (editor, messages, locked) => {
   if (!editor) return null;
   const original = messages.find((message) => message.id === editor.id);
-  const text = editor.text.trim();
-  return { ...editor, canSave: Boolean(!locked && original && (text || original.image) && text !== original.text) };
+  if (locked || !original) return { ...editor, update: undefined };
+  const draft = editMessageText(original, editor.texts);
+  const changed = (draft.text || original.image) && (draft.text !== original.text || draft.toolCalls !== original.toolCalls);
+  return { ...editor, update: changed ? draft : undefined };
 });
+export const $messageEditor = $editorCandidate.map((editor) => editor && ({
+  id: editor.id, texts: editor.texts, canSave: Boolean(editor.update),
+}));
 const messageEdited = sample({
   clock: messageEditSubmitted,
-  source: $messageEditor,
-  filter: (editor, id) => editor?.id === id && editor.canSave,
-  fn: (editor) => ({ id: editor!.id, text: editor!.text.trim() }),
-});
+  source: $editorCandidate,
+  fn: (editor, id) => editor?.id === id ? editor.update : undefined,
+}).filterMap((message) => message);
 
 const messageDeleted = sample({
   clock: messageDeleteRequested,
@@ -382,7 +388,7 @@ const messageDeleted = sample({
 }).filterMap((message) => message);
 
 $messages
-  .on(messageEdited, (messages, { id, text }) => messages.map((message) => message.id === id ? editMessageText(message, text) : message))
+  .on(messageEdited, (messages, edited) => messages.map((message) => message.id === edited.id ? edited : message))
   .on(messageDeleted, (messages, { id }) => messages.filter((message) => message.id !== id));
 $activity.on(messageDeleted, (turns, { id, role }) => turns.filter(({ promptId }) => promptId !== (role === 'user' ? id : id - 1)));
 $editor

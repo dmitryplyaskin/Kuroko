@@ -657,6 +657,8 @@ test('account tool settings control chat declarations and keep full dice traces 
   const batch = { ...dice, id: 'dice-3', arguments: { purpose: 'Проверка', rolls: { base: 'd1', total: 'if($base == 1,$base + 4,d20)' } } };
   const intro = 'Проверю инструменты. 🎲';
   const between = 'Теперь броски.';
+  const editedIntro = 'Проверю ещё раз. 🐸';
+  const editedBetween = 'Теперь повторю броски.';
   const toolRequest = {
     role: 'assistant', parts: [{ type: 'text', text: intro }, echo, { type: 'text', text: between }, dice, invalid, batch],
     openrouterReasoning: [{ type: 'reasoning.encrypted', data: 'signed-data' }],
@@ -674,7 +676,7 @@ test('account tool settings control chat declarations and keep full dice traces 
       assert.deepEqual(body.tools.map(({ name }: { name: string }) => name), ['roll_dice']);
       assert.deepEqual(body.messages[0], prompt);
       const previousText = body.messages[1].parts[0].text as string;
-      const ordered = [intro, 'test_echo', between, `roll_dice({"sides":20}) returned {"rollId":"dice-1","sides":20,"roll":${roll}}`, 'Готово'];
+      const ordered = [editedIntro, 'test_echo', editedBetween, `roll_dice({"sides":20}) returned {"rollId":"dice-1","sides":20,"roll":${roll}}`, 'Готово'];
       let position = -1;
       for (const fragment of ordered) {
         const next = previousText.indexOf(fragment);
@@ -729,11 +731,23 @@ test('account tool settings control chat declarations and keep full dice traces 
       result: { schemaVersion: 3, purpose: 'Проверка', values: { base: 1, total: 5 }, details: [{ dice: [{ results: [1] }] }] },
       modelResult: { rollId: batch.id, values: { base: 1, total: 5 } },
     });
-    await allSettled(toolSettingChanged, { scope: reloaded, params: { id: 'test_echo', enabled: false } });
-    await allSettled(chatDraftChanged, { scope: reloaded, params: followUp.content });
-    await allSettled(chatSendRequested, { scope: reloaded });
+    const id = reloaded.getState($chatRows).at(-1)!.id;
+    await allSettled(messageEditRequested, { scope: reloaded, params: id });
+    await allSettled(messageEditChanged, { scope: reloaded, params: { id, index: 0, text: `  ${editedIntro}` } });
+    await allSettled(messageEditChanged, { scope: reloaded, params: { id, index: 1, text: editedBetween } });
+    await allSettled(messageEditSubmitted, { scope: reloaded, params: id });
+    const afterEdit = await openChat();
+    const updated = afterEdit.getState($chatRows).at(-1)!;
+    assert.equal(updated.text, `${editedIntro}${editedBetween}\n\nГотово`);
+    assert.equal(updated.edited, true);
+    assert.deepEqual(updated.toolCalls?.map(({ textOffset }) => textOffset), [
+      editedIntro.length, ...Array(3).fill(editedIntro.length + editedBetween.length),
+    ]);
+    await allSettled(toolSettingChanged, { scope: afterEdit, params: { id: 'test_echo', enabled: false } });
+    await allSettled(chatDraftChanged, { scope: afterEdit, params: followUp.content });
+    await allSettled(chatSendRequested, { scope: afterEdit });
     assert.equal(requests, 3);
-    assert.equal(reloaded.getState($chatRows).at(-1)?.text, `${roll}`);
+    assert.equal(afterEdit.getState($chatRows).at(-1)?.text, `${roll}`);
   } finally {
     globalThis.fetch = originalFetch;
   }

@@ -1,8 +1,8 @@
 import { useI18n } from '../../shared/i18n/i18n';
 import type { ChatToolCall } from '@kuroko/contracts/chat';
 import { readSubagentName } from '@kuroko/contracts/tools';
-import { Button, Menu, Textarea } from '@mantine/core';
-import { Bot, ChevronRight, Ellipsis, LoaderCircle, Pencil, Trash2 } from 'lucide-react';
+import { Button, Menu } from '@mantine/core';
+import { Bot, ChevronRight, Copy, Ellipsis, LoaderCircle, Pencil, RotateCw, Trash2 } from 'lucide-react';
 import { memo, useCallback, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { useModuleExtensions } from '../../modules/ModuleExtensions';
 import { notify } from '../../shared/notifications/notifications';
@@ -10,14 +10,14 @@ import { ChatText } from './ChatText';
 import { messageBlocks, type ActiveSubagent, type ChatImage, type Message, type ReplyPhase } from './message';
 import type { MessageAction, MessageActionContext } from './messageActions';
 
-export function ChatMessageFrame({ role, author, time, edited, editing, image, actions, heading: Heading = 'h2', children }: {
-  role: Message['role']; author: string; time: number; edited?: boolean; editing?: boolean; image?: boolean;
+export function ChatMessageFrame({ role, author, time, edited, image, actions, heading: Heading = 'h2', children }: {
+  role: Message['role']; author: string; time: number; edited?: boolean; image?: boolean;
   actions?: ReactNode; heading?: 'h2' | 'h3'; children: ReactNode;
 }) {
   const { locale, t, clock, date } = useI18n();
   const title = useId();
   return (
-    <article className="chat-message" data-author={role} data-editing={editing || undefined} data-image={image || undefined} aria-labelledby={title}>
+    <article className="chat-message" data-author={role} data-image={image || undefined} aria-labelledby={title}>
       <span className="icon-tile account-avatar chat-avatar" aria-hidden="true">
         {role === 'assistant' ? <Bot size={19} strokeWidth={1.8} /> : Array.from(author)[0]?.toLocaleUpperCase(locale)}
       </span>
@@ -26,9 +26,9 @@ export function ChatMessageFrame({ role, author, time, edited, editing, image, a
           <Heading id={title}><bdi>{author}</bdi></Heading>
           <time dateTime={new Date(time).toISOString()} title={date.format(time)}>{clock.format(time)}</time>
           {edited && <span className="chat-edited">{t('chat.edited')}</span>}
-          {actions}
         </header>
         <div className="chat-message-content">{children}</div>
+        {actions}
       </div>
     </article>
   );
@@ -88,11 +88,11 @@ type Props = {
   phase?: ReplyPhase;
   activeSubagents?: readonly ActiveSubagent[];
   locked?: boolean;
-  editor?: { text: string; canSave: boolean };
+  editor?: { texts: readonly string[]; canSave: boolean };
   reasoningOpen: boolean;
   onToggleReasoning: (id: number, open: boolean) => void;
   onEdit: (id: number) => void;
-  onDraftChange: (id: number, value: string) => void;
+  onDraftChange: (id: number, index: number, value: string) => void;
   onCancelEdit: () => void;
   onSaveEdit: (id: number) => void;
   onDelete: (message: Message) => void;
@@ -103,29 +103,38 @@ export const ChatMessage = memo(function ChatMessage({
   message, username, phase, activeSubagents, locked, editor, reasoningOpen, onToggleReasoning,
   onEdit, onDraftChange, onSaveEdit, onCancelEdit, onDelete, onPreview,
 }: Props) {
-  const { t } = useI18n();
-  const { id, text, time, image, edited, reasoning, toolCalls } = message;
+  const { t, number } = useI18n();
+  const { id, text, time, image, edited, reasoning } = message;
   const assistant = message.role === 'assistant';
   const author = assistant ? t('common.model') : username;
   const editing = editor !== undefined;
   const actions = useModuleExtensions('chat.message.actions');
   const actionContext: MessageActionContext = { text };
-  const menuButton = useRef<HTMLButtonElement>(null);
+  const visibleActions = actions.filter((action) => action.isVisible?.(actionContext) ?? true);
+  const copyAction = visibleActions.find((action) => action.placement === 'copy');
+  const menuActions = visibleActions.filter((action) => action !== copyAction);
+  const toolbar = useRef<HTMLDivElement>(null);
+  const editButton = useRef<HTMLButtonElement>(null);
   const editInput = useRef<HTMLTextAreaElement>(null);
-  const focusEditor = useRef(false);
+  const editFormId = useId();
+  const moveFocus = useRef(false);
 
   useLayoutEffect(() => {
-    if (!editing || !focusEditor.current) return;
-    focusEditor.current = false;
+    if (!moveFocus.current) return;
+    moveFocus.current = false;
+    if (!editing) {
+      (editButton.current?.disabled ? toolbar.current : editButton.current)?.focus({ preventScroll: true });
+      return;
+    }
     const input = editInput.current;
     input?.focus({ preventScroll: true });
     input?.setSelectionRange(input.value.length, input.value.length);
-    input?.form?.scrollIntoView({ block: 'nearest' });
+    input?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   }, [editing]);
 
   function cancelEdit() {
+    moveFocus.current = true;
     onCancelEdit();
-    menuButton.current?.focus({ preventScroll: true });
   }
 
   async function runAction(action: MessageAction) {
@@ -149,28 +158,83 @@ export const ChatMessage = memo(function ChatMessage({
     });
   }
 
+  const blocks = messageBlocks(message);
+  if (editing && !blocks.some((block) => block.kind === 'text')) blocks.push({ kind: 'text', text: '' });
+  const content: ReactNode[] = [];
+  let textIndex = 0;
+  for (const block of blocks) {
+    if (block.kind === 'tools') {
+      content.push(<ToolCalls key={`calls-${block.calls[0]!.id}`} calls={block.calls} />);
+      continue;
+    }
+    const index = textIndex++;
+    const draft = editor?.texts[index];
+    if (!block.text.trim() && !editor) continue;
+    content.push(
+      <div key={`text-${index}`} className="chat-message-text" data-draft={draft}>
+        <ChatText user={!assistant}>{block.text}</ChatText>
+        {editor && <textarea ref={index === 0 ? editInput : undefined} form={editFormId} rows={1} className="chat-editor-input"
+          aria-label={editor.texts.length === 1 ? t('chat.messageText') : t('chat.messageTextPart', { number: number.format(index + 1) })}
+          value={draft} onChange={(event) => onDraftChange(id, index, event.currentTarget.value)} onKeyDown={(event) => {
+            if (event.nativeEvent.isComposing) return;
+            if (event.key === 'Escape') {
+              event.preventDefault();
+              cancelEdit();
+            } else if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+              event.preventDefault();
+              event.currentTarget.form?.requestSubmit();
+            }
+          }} />}
+      </div>
+    );
+  }
+  const copyLabel = t(copyAction?.label ?? 'chat.copy');
+  const ellipsis = <Ellipsis size={17} aria-hidden="true" />;
+
   return (
-    <ChatMessageFrame role={message.role} author={author} time={time} edited={edited} editing={editing} image={Boolean(image)}
-      actions={!phase && (
-        <Menu position="bottom-end" returnFocus={!editing} transitionProps={{ duration: 0 }}>
-          <Menu.Target>
-            <button ref={menuButton} type="button" className="icon-button chat-message-menu" aria-label={t('chat.actions', { author })}>
-              <Ellipsis size={19} aria-hidden="true" />
-            </button>
-          </Menu.Target>
-          <Menu.Dropdown>
-            {!editing && (
-              <Menu.Item disabled={locked} leftSection={<Pencil size={15} aria-hidden="true" />} onClick={() => {
-                focusEditor.current = true;
-                onEdit(id);
-              }}>{t('chat.edit')}</Menu.Item>
-            )}
-            {!editing && actions.map((action) => (action.isVisible?.(actionContext) ?? true) && (
-              <Menu.Item key={action.id} onClick={() => void runAction(action)}>{t(action.label)}</Menu.Item>
-            ))}
-            <Menu.Item disabled={locked} color="var(--kr-danger)" leftSection={<Trash2 size={15} aria-hidden="true" />} onClick={() => onDelete(message)}>{t('common.delete')}</Menu.Item>
-          </Menu.Dropdown>
-        </Menu>
+    <ChatMessageFrame role={message.role} author={author} time={time} edited={edited} image={Boolean(image)}
+      actions={editor ? (
+        <form id={editFormId} className="chat-editor-actions" onSubmit={(event) => {
+          event.preventDefault();
+          if (!editor.canSave) return;
+          moveFocus.current = true;
+          onSaveEdit(id);
+        }}>
+          <Button type="button" variant="subtle" size="compact-sm" onClick={cancelEdit}>{t('common.cancel')}</Button>
+          <Button type="submit" size="compact-sm" disabled={!editor.canSave}>{t('common.save')}</Button>
+        </form>
+      ) : !phase && (
+        // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- This groups message commands outside the editor form.
+        <div ref={toolbar} className="chat-message-actions" role="group" aria-label={t('chat.actions', { author })} tabIndex={-1}>
+          <button type="button" className="icon-button" aria-label={copyLabel} title={copyLabel} disabled={!copyAction}
+            onClick={copyAction && (() => void runAction(copyAction))}>
+            <Copy size={16} aria-hidden="true" />
+          </button>
+          <button ref={editButton} type="button" className="icon-button" aria-label={t('chat.edit')} title={t('chat.edit')}
+            disabled={locked} onClick={() => {
+              moveFocus.current = true;
+              onEdit(id);
+            }}>
+            <Pencil size={16} aria-hidden="true" />
+          </button>
+          <button type="button" className="icon-button" aria-label={t('chat.regenerate')} title={t('chat.regenerate')} disabled>
+            <RotateCw size={16} aria-hidden="true" />
+          </button>
+          <button type="button" className="icon-button chat-message-delete" aria-label={t('common.delete')} title={t('common.delete')}
+            disabled={locked} onClick={() => onDelete(message)}>
+            <Trash2 size={16} aria-hidden="true" />
+          </button>
+          {menuActions.length ? (
+            <Menu position="bottom-end" transitionProps={{ duration: 0 }}>
+              <Menu.Target>
+                <button type="button" className="icon-button" aria-label={t('chat.moreActions')} title={t('chat.moreActions')}>{ellipsis}</button>
+              </Menu.Target>
+              <Menu.Dropdown>
+                {menuActions.map((action) => <Menu.Item key={action.id} onClick={() => void runAction(action)}>{t(action.label)}</Menu.Item>)}
+              </Menu.Dropdown>
+            </Menu>
+          ) : <button type="button" className="icon-button" aria-label={t('chat.moreActions')} title={t('chat.moreActions')} disabled>{ellipsis}</button>}
+        </div>
       )}>
       {assistant && reasoning !== undefined && (
         <div className="chat-reasoning">
@@ -184,44 +248,15 @@ export const ChatMessage = memo(function ChatMessage({
           </div>
         </div>
       )}
-      {editing ? (
-        <form className="chat-message-editor" onSubmit={(event) => {
-          event.preventDefault();
-          if (!editor?.canSave) return;
-          onSaveEdit(id);
-          menuButton.current?.focus({ preventScroll: true });
-        }}>
-          <Textarea ref={editInput} aria-label={t('chat.messageText')} placeholder={t('chat.messageText')} variant="unstyled"
-            classNames={{ input: 'chat-editor-input' }} autosize minRows={1} maxRows={8}
-            value={editor?.text} onChange={(event) => onDraftChange(message.id, event.currentTarget.value)} onKeyDown={(event) => {
-              if (event.nativeEvent.isComposing) return;
-              if (event.key === 'Escape') {
-                event.preventDefault();
-                cancelEdit();
-              } else if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
-                event.preventDefault();
-                event.currentTarget.form?.requestSubmit();
-              }
-            }} />
-          <div className="chat-editor-actions">
-            <Button type="button" variant="subtle" size="compact-sm" onClick={cancelEdit}>{t('common.cancel')}</Button>
-            <Button type="submit" size="compact-sm" disabled={!editor?.canSave}>{t('common.save')}</Button>
-          </div>
-        </form>
-      ) : toolCalls?.length ? (
-        <div className="chat-message-blocks">
-          {messageBlocks(message).map((block, index) => block.kind === 'tools'
-            ? <ToolCalls key={`calls-${block.calls[0]!.id}`} calls={block.calls} />
-            : block.text.trim() && <ChatText key={`text-${index}`}>{block.text}</ChatText>)}
-        </div>
-      ) : text ? <ChatText user={!assistant}>{text}</ChatText> : phase === 'answer' && <p className="chat-typing">{t('chat.answering')}</p>}
+      {blocks.length ? (
+        <div className="chat-message-blocks">{content}</div>
+      ) : phase === 'answer' && <p className="chat-typing">{t('chat.answering')}</p>}
       {activeSubagents?.map(({ id, name }) => (
         <p key={id} className="chat-tool-call chat-subagent-progress">
           <LoaderCircle size={16} className="chat-subagent-spinner" aria-hidden="true" />
           {name ? t('chat.namedSubagentWorking', { name }) : t('chat.subagentWorking')}
         </p>
       ))}
-      {editing && !!toolCalls?.length && <ToolCalls calls={toolCalls} />}
       {image && (
         <button type="button" className="chat-picture" aria-label={t('chat.openImage')} onClick={() => onPreview(image)}>
           <ChatPicture image={image} />

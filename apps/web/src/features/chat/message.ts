@@ -1,6 +1,8 @@
 import type { ChatMessage } from '@kuroko/contracts/chat';
+import { messageBlocks } from '@kuroko/tool-runtime/chatHistory';
 
-export { hasMessageContent, messageBlocks } from '@kuroko/tool-runtime/chatHistory';
+export { hasMessageContent } from '@kuroko/tool-runtime/chatHistory';
+export { messageBlocks };
 
 export type ChatImage = {
   src: string;
@@ -14,30 +16,36 @@ export type Message = ChatMessage & {
   image?: ChatImage;
 };
 
-export function editMessageText(message: Message, text: string): Message {
-  const oldText = message.text;
-  const edited = { ...message, text, edited: true };
-  if (!message.toolCalls?.some(({ textOffset }) => textOffset)) return edited;
+export function messageDraftTexts(message: Message): string[] {
+  const texts = messageBlocks(message).flatMap((block) => block.kind === 'text' ? [block.text] : []);
+  return texts.length ? texts : [''];
+}
 
-  let prefix = 0;
-  const sharedLength = Math.min(oldText.length, text.length);
-  while (prefix < sharedLength && oldText[prefix] === text[prefix]) prefix++;
-  let oldEnd = oldText.length;
-  let newEnd = text.length;
-  while (oldEnd > prefix && newEnd > prefix && oldText[oldEnd - 1] === text[newEnd - 1]) {
-    oldEnd--;
-    newEnd--;
-  }
-  return {
-    ...edited,
-    toolCalls: message.toolCalls.map((call) => {
-      const offset = call.textOffset;
-      if (offset === undefined || offset <= prefix) return call;
-      const moved = offset >= oldEnd ? offset + newEnd - oldEnd : newEnd;
-      const code = text.charCodeAt(moved);
-      return { ...call, textOffset: code >= 0xdc00 && code <= 0xdfff ? moved - 1 : moved };
-    }),
-  };
+export function editMessageText(message: Message, texts: readonly string[]): Message {
+  const draft = texts.join('');
+  const text = draft.trim();
+  const edited = { ...message, text, edited: true };
+  if (!message.toolCalls?.length) return edited;
+
+  const leadingWhitespace = draft.length - draft.trimStart().length;
+  let index = 0;
+  let position = 0;
+  let moved = false;
+  const toolCalls = messageBlocks(message).flatMap((block) => {
+    if (block.kind === 'text') {
+      position += texts[index++]!.length;
+      return [];
+    }
+    const boundary = Math.max(0, Math.min(text.length, position - leadingWhitespace));
+    const code = text.charCodeAt(boundary);
+    const offset = boundary > 0 && code >= 0xdc00 && code <= 0xdfff ? boundary - 1 : boundary;
+    return block.calls.map((call) => {
+      if ((call.textOffset ?? 0) === offset) return call;
+      moved = true;
+      return { ...call, textOffset: offset };
+    });
+  });
+  return moved ? { ...edited, toolCalls } : edited;
 }
 
 export type ReplyPhase = 'reasoning' | 'answer' | 'subagent';

@@ -7,6 +7,7 @@ declare module '../../modules/contracts' {
   interface ExtensionContributions {
     'chat.message.actions': {
       label: MessageKey;
+      placement?: 'copy';
       isVisible?: (message: MessageActionContext) => boolean;
       run: (message: MessageActionContext) => void | Promise<void>;
     };

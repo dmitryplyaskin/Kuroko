@@ -7,6 +7,7 @@ const copyMessageText: MessageAction = {
   id: 'kuroko.copy-message-text.copy',
   label: 'chat.copy',
   order: 10,
+  placement: 'copy',
   isVisible: ({ text }) => text.trim().length > 0,
   async run({ text }) {
     try {
