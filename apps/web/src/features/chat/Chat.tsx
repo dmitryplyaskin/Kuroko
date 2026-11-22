@@ -4,8 +4,10 @@ import { createWatch } from 'effector';
 import { useProvidedScope, useUnit } from 'effector-react';
 import { Bot, List, MessageSquare } from 'lucide-react';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { chatActivityView, ChatAgents, ChatLog } from './ChatActivity';
+import { chatActivityView } from './ChatActivity';
+import { AgentToolbar, ChatAgents } from './ChatAgents';
 import { ChatComposer } from './ChatComposer';
+import { ChatLog } from './ChatLog';
 import { ChatMenu } from './ChatMenu';
 import { ChatHistory, type ChatHistoryHandle } from './ChatHistory';
 import { ChatMessage, ChatPicture } from './ChatMessage';
@@ -30,6 +32,7 @@ export default function Chat() {
   const scheme = useComputedColorScheme('light');
   const [dialog, setDialog] = useState<Preview | Delete>();
   const [tab, setTab] = useState<string | null>('chat');
+  const [agentView, setAgentView] = useState<{ chatId: string; key: string; showLog: boolean }>();
   const scope = useProvidedScope();
   const {
     session, settings, rows, replyId, replyPhase, activeSubagents, announcement, editor, expandedReasoning, show, hide, openEditor,
@@ -48,11 +51,19 @@ export default function Chat() {
   const username = session?.user.username ?? '';
   const title = useRef<HTMLHeadingElement>(null);
   const chatTab = useRef<HTMLButtonElement>(null);
+  const agentHeading = useRef<HTMLHeadingElement>(null);
   const history = useRef<ChatHistoryHandle>(null);
   const jumpOnSend = useRef(false);
   const focusAfterDelete = useRef(false);
   const { entries, agents } = useMemo(() => chatActivityView(activity, messages), [activity, messages]);
   const activeTab = tab === 'agents' && !agents.length ? 'chat' : tab;
+  const currentAgentView = agentView?.chatId === chatId ? agentView : undefined;
+  const agent = currentAgentView && agents.find(({ key }) => key === currentAgentView.key);
+  const showAgentLog = currentAgentView?.showLog ?? false;
+  const selectAgent = useCallback((key?: string) => {
+    setAgentView(key === undefined ? undefined : { chatId, key, showLog: false });
+    setTab('agents');
+  }, [chatId]);
 
   useEffect(() => {
     if (tab !== activeTab && document.activeElement === document.body) chatTab.current?.focus({ preventScroll: true });
@@ -100,19 +111,26 @@ export default function Chat() {
     <Tabs className="chat-panel" data-user-side={settings.userSide} value={activeTab} onChange={setTab}
       keepMountedMode="display-none" variant="unstyled" style={chatDisplayStyle(settings, scheme)}>
       <h1 className="chat-sr-only" id="chat-title" ref={title} tabIndex={-1}>{t('chat.title')}</h1>
-      <Tabs.List className="chat-tabs" aria-labelledby="chat-title">
-        <Tabs.Tab ref={chatTab} className="chat-tab" value="chat" leftSection={<MessageSquare size={15} aria-hidden="true" />}>
-          {t('chat.title')}
-        </Tabs.Tab>
-        <Tabs.Tab className="chat-tab" value="log" leftSection={<List size={16} aria-hidden="true" />}>
-          {t('chat.log')}
-        </Tabs.Tab>
-        {agents.length > 0 && (
-          <Tabs.Tab className="chat-tab" value="agents" leftSection={<Bot size={16} aria-hidden="true" />}>
-            {t('chat.agents')}
+      <header className="chat-workspace-header">
+        <Tabs.List className="chat-tabs" aria-labelledby="chat-title">
+          <Tabs.Tab ref={chatTab} className="chat-tab" value="chat" leftSection={<MessageSquare size={15} aria-hidden="true" />}>
+            {t('chat.title')}
           </Tabs.Tab>
+          <Tabs.Tab className="chat-tab" value="log" leftSection={<List size={16} aria-hidden="true" />}>
+            {t('chat.log')}
+          </Tabs.Tab>
+          {agents.length > 0 && (
+            <Tabs.Tab className="chat-tab" value="agents" leftSection={<Bot size={16} aria-hidden="true" />}>
+              {t('chat.agents')}
+            </Tabs.Tab>
+          )}
+        </Tabs.List>
+        {activeTab === 'agents' && agent && (
+          <AgentToolbar agent={agent} heading={agentHeading} showLog={showAgentLog}
+            onBack={() => selectAgent(agent.parentKey)}
+            onToggleLog={() => setAgentView((view) => view && { ...view, showLog: !view.showLog })} />
         )}
-      </Tabs.List>
+      </header>
       {(loadError || saveError) && (
         <div className="chat-status">
           <p role="alert">{t(`error.${loadError ?? saveError!}`)}</p>
@@ -128,12 +146,13 @@ export default function Chat() {
         <ChatComposer menu={<ChatMenu hasMessages={Boolean(rows.length)} scrollToStart={() => history.current?.scrollToStart()}
           scrollToEnd={() => history.current?.scrollToEnd()} />} />
       </Tabs.Panel>
-      <Tabs.Panel className="chat-activity-pane" value="log" tabIndex={0}>
-        <ChatLog key={chatId} entries={entries} gmMode={gmMode} />
+      <Tabs.Panel className="chat-log-pane" value="log">
+        <ChatLog key={chatId} entries={entries} messages={messages} gmMode={gmMode} onOpenAgent={selectAgent}
+          liveReply={activeTab === 'log' && replyId !== null ? rows.at(-1) : undefined} />
       </Tabs.Panel>
       {agents.length > 0 && (
-        <Tabs.Panel className="chat-activity-pane" value="agents" tabIndex={0}>
-          <ChatAgents key={chatId} agents={agents} />
+        <Tabs.Panel className="chat-agents-pane" value="agents">
+          <ChatAgents key={chatId} agents={agents} agent={agent} heading={agentHeading} showLog={showAgentLog} onSelect={selectAgent} />
         </Tabs.Panel>
       )}
       <output className="chat-sr-only">{announcement && t(announcement)}</output>

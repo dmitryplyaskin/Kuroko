@@ -306,11 +306,10 @@ const replyCompleted = sample({
   fn: (reply, { result }) => typeof result === 'string'
     ? {
       message: { ...reply!.message, text: result },
-      noToolsCalled: Boolean(reply!.generation.enabledTools.length && !reply!.message.toolCalls?.length),
       activity: finishActivity(reply!, 'completed'),
       saved: null,
     }
-    : { message: result.messages.at(-1)!, noToolsCalled: false, saved: result, activity: undefined },
+    : { message: result.messages.at(-1)!, saved: result, activity: undefined },
 });
 const replyFailed = sample({
   clock: inActiveSession(generateReplyFx.fail, ({ reply }) => reply.generation.session),
@@ -344,10 +343,6 @@ export const $replyId = $reply.map((reply) => reply?.message.id ?? null);
 const $liveActivity = $reply.map((reply) => reply?.activity ?? null);
 export const $chatActivity = combine($activity, $replyId, $liveActivity, (turns, replyId, entries) =>
   replyId !== null && entries?.length ? [...turns, { promptId: replyId - 1, entries }] : turns);
-
-export const $chatNoToolsCalled = createStore(false)
-  .on(replyCompleted, (_, { noToolsCalled }) => noToolsCalled)
-  .reset(messageSent, chatOpened, sessionEnded);
 
 export const $chatError = createStore<ErrorCode | null>(null)
   .on(replyFailed, (_, { error }) => errorCode(error))

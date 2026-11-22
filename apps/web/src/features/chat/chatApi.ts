@@ -90,7 +90,7 @@ export async function streamChatReply(
     presetId ??= completion.presetId;
     const recordedCalls = [...savedCalls, ...toolCalls];
     const delegateTask = createSubagentBatch(recordedCalls, async (request, signal, id) => {
-      const agent = start('agent', { task: request.task }, request.name);
+      const agent = start('agent', { task: request.task, callId: id }, request.name);
       const nestedEntries = new Map<string, ChatActivityEntry>();
       activeSubagents = [...activeSubagents, { id, name: request.name }];
       onSubagentActivity(activeSubagents);
@@ -123,7 +123,7 @@ export async function streamChatReply(
       let recordId = call.id;
       while (recordedIds.has(recordId)) recordId = `call_${nextRecordNumber++}`;
       recordedIds.add(recordId);
-      const tool = start('tool', { arguments: call.arguments }, call.name);
+      const tool = start('tool', { arguments: call.arguments, ...(call.name === 'delegate_task' && { callId: recordId }) }, call.name);
       const { entry, message } = await runToolCall(call, enabledTools, { signal, id: recordId, history: recordedCalls, delegateTask });
       tool.finish(entry.isError ? 'failed' : 'completed', {
         result: entry.result, ...(message.content !== entry.result && { modelResult: message.content }),

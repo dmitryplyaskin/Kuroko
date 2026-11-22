@@ -22,7 +22,7 @@ import {
 import { $modelCatalog, loadModelCatalogFx } from '../features/connection/modelCatalog';
 import { $enabledTools, toolsInitialized, toolSettingChanged } from '../features/tools/model';
 import {
-  $activeSubagents, $chatAnnouncement, $chatError, $chatGmMode, $chatId, $chatNoToolsCalled, $chatRows, $replyId, $replyPhase,
+  $activeSubagents, $chatAnnouncement, $chatError, $chatGmMode, $chatId, $chatRows, $replyId, $replyPhase,
   chatCreateRequested, chatDraftChanged, chatGmModeChanged,
   chatOpenRequested, chatSendRequested, chatShown, chatStopRequested,
   messageDeleteRequested, messageEditChanged, messageEditRequested, messageEditSubmitted,
@@ -351,7 +351,6 @@ test('GM chat uses the server publication and restores its mode without re-savin
     scene.resolve('Ворота приоткрыты.');
     await allSettled(scope);
     assert.equal(scope.getState($chatError), null);
-    assert.equal(scope.getState($chatNoToolsCalled), false);
     assert.deepEqual(scope.getState($chatRows).map(({ text }) => text), ['Осматриваю ворота', 'Ворота приоткрыты.']);
 
     const id = scope.getState($chatId);

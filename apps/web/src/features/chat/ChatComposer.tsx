@@ -4,15 +4,14 @@ import { ArrowUp, Square } from 'lucide-react';
 import { useUnit } from 'effector-react';
 import { useRef, type ReactNode, type SubmitEvent } from 'react';
 import {
-  $chatError, $chatCanSend, $chatDraft, $chatNoToolsCalled, $replyId,
+  $chatError, $chatCanSend, $chatDraft, $replyId,
   chatDraftChanged, chatSendRequested, chatStopRequested,
 } from './model';
 
 export function ChatComposer({ menu }: { menu: ReactNode }) {
   const { t } = useI18n();
-  const { draft, error, canSend, replyId, noToolsCalled, setDraft, send, stop } = useUnit({
+  const { draft, error, canSend, replyId, setDraft, send, stop } = useUnit({
     draft: $chatDraft, error: $chatError, canSend: $chatCanSend, replyId: $replyId,
-    noToolsCalled: $chatNoToolsCalled,
     setDraft: chatDraftChanged, send: chatSendRequested, stop: chatStopRequested,
   });
   const textarea = useRef<HTMLTextAreaElement>(null);
@@ -59,9 +58,6 @@ export function ChatComposer({ menu }: { menu: ReactNode }) {
           )}
         </form>
         {error && <p className="chat-input-error" role="alert">{t(`error.${error}`)}</p>}
-      </div>
-      <div className="chat-tool-feedback chat-column">
-        <output>{noToolsCalled && t('chat.noToolsCalled')}</output>
       </div>
     </footer>
   );

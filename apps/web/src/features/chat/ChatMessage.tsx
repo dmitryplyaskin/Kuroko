@@ -3,12 +3,36 @@ import type { ChatToolCall } from '@kuroko/contracts/chat';
 import { readSubagentName } from '@kuroko/contracts/tools';
 import { Button, Menu, Textarea } from '@mantine/core';
 import { Bot, ChevronRight, Ellipsis, LoaderCircle, Pencil, Trash2 } from 'lucide-react';
-import { memo, useCallback, useLayoutEffect, useRef, useState } from 'react';
+import { memo, useCallback, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { useModuleExtensions } from '../../modules/ModuleExtensions';
 import { notify } from '../../shared/notifications/notifications';
 import { ChatText } from './ChatText';
 import { messageBlocks, type ActiveSubagent, type ChatImage, type Message, type ReplyPhase } from './message';
 import type { MessageAction, MessageActionContext } from './messageActions';
+
+export function ChatMessageFrame({ role, author, time, edited, editing, image, actions, heading: Heading = 'h2', children }: {
+  role: Message['role']; author: string; time: number; edited?: boolean; editing?: boolean; image?: boolean;
+  actions?: ReactNode; heading?: 'h2' | 'h3'; children: ReactNode;
+}) {
+  const { locale, t, clock, date } = useI18n();
+  const title = useId();
+  return (
+    <article className="chat-message" data-author={role} data-editing={editing || undefined} data-image={image || undefined} aria-labelledby={title}>
+      <span className="icon-tile account-avatar chat-avatar" aria-hidden="true">
+        {role === 'assistant' ? <Bot size={19} strokeWidth={1.8} /> : Array.from(author)[0]?.toLocaleUpperCase(locale)}
+      </span>
+      <div className="chat-message-body">
+        <header className="chat-message-header">
+          <Heading id={title}><bdi>{author}</bdi></Heading>
+          <time dateTime={new Date(time).toISOString()} title={date.format(time)}>{clock.format(time)}</time>
+          {edited && <span className="chat-edited">{t('chat.edited')}</span>}
+          {actions}
+        </header>
+        <div className="chat-message-content">{children}</div>
+      </div>
+    </article>
+  );
+}
 
 export function ChatPicture({ image }: { image: ChatImage }) {
   const { t } = useI18n();
@@ -79,7 +103,7 @@ export const ChatMessage = memo(function ChatMessage({
   message, username, phase, activeSubagents, locked, editor, reasoningOpen, onToggleReasoning,
   onEdit, onDraftChange, onSaveEdit, onCancelEdit, onDelete, onPreview,
 }: Props) {
-  const { locale, t, clock, date } = useI18n();
+  const { t } = useI18n();
   const { id, text, time, image, edited, reasoning, toolCalls } = message;
   const assistant = message.role === 'assistant';
   const author = assistant ? t('common.model') : username;
@@ -126,96 +150,83 @@ export const ChatMessage = memo(function ChatMessage({
   }
 
   return (
-    <article className="chat-message" data-author={message.role} data-editing={editing || undefined} data-image={Boolean(image) || undefined}
-      aria-labelledby={`chat-author-${message.id}`}>
-      <span className="icon-tile account-avatar chat-avatar" aria-hidden="true">
-        {assistant ? <Bot size={19} strokeWidth={1.8} /> : Array.from(username)[0]?.toLocaleUpperCase(locale)}
-      </span>
-      <div className="chat-message-body">
-        <header className="chat-message-header">
-          <h2 id={`chat-author-${message.id}`}>{author}</h2>
-          <time dateTime={new Date(time).toISOString()} title={date.format(time)}>{clock.format(time)}</time>
-          {edited && <span className="chat-edited">{t('chat.edited')}</span>}
-          {!phase && (
-            <Menu position="bottom-end" returnFocus={!editing} transitionProps={{ duration: 0 }}>
-              <Menu.Target>
-                <button ref={menuButton} type="button" className="icon-button chat-message-menu" aria-label={t('chat.actions', { author })}>
-                  <Ellipsis size={19} aria-hidden="true" />
-                </button>
-              </Menu.Target>
-              <Menu.Dropdown>
-                {!editing && (
-                  <Menu.Item disabled={locked} leftSection={<Pencil size={15} aria-hidden="true" />} onClick={() => {
-                    focusEditor.current = true;
-                    onEdit(id);
-                  }}>{t('chat.edit')}</Menu.Item>
-                )}
-                {!editing && actions.map((action) => (action.isVisible?.(actionContext) ?? true) && (
-                  <Menu.Item key={action.id} onClick={() => void runAction(action)}>{t(action.label)}</Menu.Item>
-                ))}
-                <Menu.Item disabled={locked} color="var(--kr-danger)" leftSection={<Trash2 size={15} aria-hidden="true" />} onClick={() => onDelete(message)}>{t('common.delete')}</Menu.Item>
-              </Menu.Dropdown>
-            </Menu>
-          )}
-        </header>
-        <div className="chat-message-content">
-          {assistant && reasoning !== undefined && (
-            <div className="chat-reasoning">
-              <button type="button" className="chat-reasoning-toggle" aria-expanded={reasoningOpen}
-                aria-controls={`chat-reasoning-${id}`} onClick={(event) => toggleReasoning(event.currentTarget)}>
-                <ChevronRight size={16} aria-hidden="true" />
-                {phase === 'reasoning' ? t('chat.reasoningPending') : t('chat.reasoning')}
-              </button>
-              <div id={`chat-reasoning-${id}`} className="chat-reasoning-body" hidden={!reasoningOpen}>
-                {reasoningOpen && reasoning && <ChatText>{reasoning}</ChatText>}
-              </div>
-            </div>
-          )}
-          {editing ? (
-            <form className="chat-message-editor" onSubmit={(event) => {
-              event.preventDefault();
-              if (!editor?.canSave) return;
-              onSaveEdit(id);
-              menuButton.current?.focus({ preventScroll: true });
-            }}>
-              <Textarea ref={editInput} aria-label={t('chat.messageText')} placeholder={t('chat.messageText')} variant="unstyled"
-                classNames={{ input: 'chat-editor-input' }} autosize minRows={1} maxRows={8}
-                value={editor?.text} onChange={(event) => onDraftChange(message.id, event.currentTarget.value)} onKeyDown={(event) => {
-                  if (event.nativeEvent.isComposing) return;
-                  if (event.key === 'Escape') {
-                    event.preventDefault();
-                    cancelEdit();
-                  } else if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
-                    event.preventDefault();
-                    event.currentTarget.form?.requestSubmit();
-                  }
-                }} />
-              <div className="chat-editor-actions">
-                <Button type="button" variant="subtle" size="compact-sm" onClick={cancelEdit}>{t('common.cancel')}</Button>
-                <Button type="submit" size="compact-sm" disabled={!editor?.canSave}>{t('common.save')}</Button>
-              </div>
-            </form>
-          ) : toolCalls?.length ? (
-            <div className="chat-message-blocks">
-              {messageBlocks(message).map((block, index) => block.kind === 'tools'
-                ? <ToolCalls key={`calls-${block.calls[0]!.id}`} calls={block.calls} />
-                : block.text.trim() && <ChatText key={`text-${index}`}>{block.text}</ChatText>)}
-            </div>
-          ) : text ? <ChatText user={!assistant}>{text}</ChatText> : phase === 'answer' && <p className="chat-typing">{t('chat.answering')}</p>}
-          {activeSubagents?.map(({ id, name }) => (
-            <p key={id} className="chat-tool-call chat-subagent-progress">
-              <LoaderCircle size={16} className="chat-subagent-spinner" aria-hidden="true" />
-              {name ? t('chat.namedSubagentWorking', { name }) : t('chat.subagentWorking')}
-            </p>
-          ))}
-          {editing && !!toolCalls?.length && <ToolCalls calls={toolCalls} />}
-          {image && (
-            <button type="button" className="chat-picture" aria-label={t('chat.openImage')} onClick={() => onPreview(image)}>
-              <ChatPicture image={image} />
+    <ChatMessageFrame role={message.role} author={author} time={time} edited={edited} editing={editing} image={Boolean(image)}
+      actions={!phase && (
+        <Menu position="bottom-end" returnFocus={!editing} transitionProps={{ duration: 0 }}>
+          <Menu.Target>
+            <button ref={menuButton} type="button" className="icon-button chat-message-menu" aria-label={t('chat.actions', { author })}>
+              <Ellipsis size={19} aria-hidden="true" />
             </button>
-          )}
+          </Menu.Target>
+          <Menu.Dropdown>
+            {!editing && (
+              <Menu.Item disabled={locked} leftSection={<Pencil size={15} aria-hidden="true" />} onClick={() => {
+                focusEditor.current = true;
+                onEdit(id);
+              }}>{t('chat.edit')}</Menu.Item>
+            )}
+            {!editing && actions.map((action) => (action.isVisible?.(actionContext) ?? true) && (
+              <Menu.Item key={action.id} onClick={() => void runAction(action)}>{t(action.label)}</Menu.Item>
+            ))}
+            <Menu.Item disabled={locked} color="var(--kr-danger)" leftSection={<Trash2 size={15} aria-hidden="true" />} onClick={() => onDelete(message)}>{t('common.delete')}</Menu.Item>
+          </Menu.Dropdown>
+        </Menu>
+      )}>
+      {assistant && reasoning !== undefined && (
+        <div className="chat-reasoning">
+          <button type="button" className="chat-reasoning-toggle" aria-expanded={reasoningOpen}
+            aria-controls={`chat-reasoning-${id}`} onClick={(event) => toggleReasoning(event.currentTarget)}>
+            <ChevronRight size={16} aria-hidden="true" />
+            {phase === 'reasoning' ? t('chat.reasoningPending') : t('chat.reasoning')}
+          </button>
+          <div id={`chat-reasoning-${id}`} className="chat-reasoning-body" hidden={!reasoningOpen}>
+            {reasoningOpen && reasoning && <ChatText>{reasoning}</ChatText>}
+          </div>
         </div>
-      </div>
-    </article>
+      )}
+      {editing ? (
+        <form className="chat-message-editor" onSubmit={(event) => {
+          event.preventDefault();
+          if (!editor?.canSave) return;
+          onSaveEdit(id);
+          menuButton.current?.focus({ preventScroll: true });
+        }}>
+          <Textarea ref={editInput} aria-label={t('chat.messageText')} placeholder={t('chat.messageText')} variant="unstyled"
+            classNames={{ input: 'chat-editor-input' }} autosize minRows={1} maxRows={8}
+            value={editor?.text} onChange={(event) => onDraftChange(message.id, event.currentTarget.value)} onKeyDown={(event) => {
+              if (event.nativeEvent.isComposing) return;
+              if (event.key === 'Escape') {
+                event.preventDefault();
+                cancelEdit();
+              } else if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+                event.preventDefault();
+                event.currentTarget.form?.requestSubmit();
+              }
+            }} />
+          <div className="chat-editor-actions">
+            <Button type="button" variant="subtle" size="compact-sm" onClick={cancelEdit}>{t('common.cancel')}</Button>
+            <Button type="submit" size="compact-sm" disabled={!editor?.canSave}>{t('common.save')}</Button>
+          </div>
+        </form>
+      ) : toolCalls?.length ? (
+        <div className="chat-message-blocks">
+          {messageBlocks(message).map((block, index) => block.kind === 'tools'
+            ? <ToolCalls key={`calls-${block.calls[0]!.id}`} calls={block.calls} />
+            : block.text.trim() && <ChatText key={`text-${index}`}>{block.text}</ChatText>)}
+        </div>
+      ) : text ? <ChatText user={!assistant}>{text}</ChatText> : phase === 'answer' && <p className="chat-typing">{t('chat.answering')}</p>}
+      {activeSubagents?.map(({ id, name }) => (
+        <p key={id} className="chat-tool-call chat-subagent-progress">
+          <LoaderCircle size={16} className="chat-subagent-spinner" aria-hidden="true" />
+          {name ? t('chat.namedSubagentWorking', { name }) : t('chat.subagentWorking')}
+        </p>
+      ))}
+      {editing && !!toolCalls?.length && <ToolCalls calls={toolCalls} />}
+      {image && (
+        <button type="button" className="chat-picture" aria-label={t('chat.openImage')} onClick={() => onPreview(image)}>
+          <ChatPicture image={image} />
+        </button>
+      )}
+    </ChatMessageFrame>
   );
 });
