@@ -7,12 +7,34 @@ import { Provider } from 'effector-react';
 import { Window, type HTMLButtonElement as DOMButton } from 'happy-dom';
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
+import { renderToStaticMarkup } from 'react-dom/server';
 import { corePlugin } from '../../core';
 import type { WebModule } from '../../modules/contracts';
 import { ModuleExtensionsProvider } from '../../modules/ModuleExtensions';
 import { createModuleRegistry } from '../../modules/registry';
 import { localeChanged } from '../../shared/i18n/i18n';
 import { ChatMessage } from './ChatMessage';
+
+test('shows subagent activity in the current reply alongside existing text', () => {
+  const registry = createModuleRegistry(corePlugin);
+  const noop = () => {};
+  const html = renderToStaticMarkup(
+    <Provider value={fork()}>
+      <MantineProvider>
+        <ModuleExtensionsProvider registry={registry}>
+          <ChatMessage message={{ id: 1, role: 'assistant', text: 'Проверю хронологию.', time: 0 }} username="Пользователь"
+            phase="subagent" activeSubagents={[{ id: 'a', name: 'Хронолог' }, { id: 'b' }]}
+            reasoningOpen={false} onToggleReasoning={noop} onEdit={noop} onDraftChange={noop}
+            onCancelEdit={noop} onSaveEdit={noop} onDelete={noop} onPreview={noop} />
+        </ModuleExtensionsProvider>
+      </MantineProvider>
+    </Provider>,
+  );
+  assert.match(html, /Проверю хронологию\./);
+  assert.match(html, /<p class="chat-tool-call chat-subagent-progress">.*Субагент работает…<\/p>/);
+  assert.match(html, /Субагент Хронолог работает…/);
+  assert.equal([...html.matchAll(/chat-subagent-spinner/g)].length, 2);
+});
 
 test('dispatches registered menu actions for the selected message', async () => {
   const window = new Window();

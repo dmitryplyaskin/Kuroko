@@ -2,12 +2,13 @@ import { afterEach, beforeEach, expect, spyOn, test } from 'bun:test';
 import { randomBytes } from 'node:crypto';
 import { once } from 'node:events';
 import type { Server } from 'node:http';
-import type { ChatSnapshot, SavedChat } from '@kuroko/contracts/chat';
+import type { ChatSnapshot, ChatToolCall, SavedChat } from '@kuroko/contracts/chat';
 import { defaultChatSettings } from '@kuroko/contracts/chatSettings';
 import { defaultConnectionSettings, type ConnectionState, type ProviderKey } from '@kuroko/contracts/connectionSettings';
 import type { LlmRequest } from '@kuroko/contracts/llm';
 import type { Realm, RealmList, SavedRealm } from '@kuroko/contracts/realms';
-import type { ToolsResponse } from '@kuroko/contracts/tools';
+import type { DelegateTaskResult, ToolsResponse } from '@kuroko/contracts/tools';
+import { runToolCall } from '@kuroko/tool-runtime';
 import { createApp } from './app';
 import { openDatabase } from './storage/database';
 
@@ -32,15 +33,15 @@ afterEach(async () => {
   db.close();
 });
 
-type RequestOptions = { method?: string; body?: object; cookie?: string; account?: number; withHeader?: boolean };
+type RequestOptions = { method?: string; body?: object; cookie?: string; account?: number; withHeader?: boolean; signal?: AbortSignal };
 
-function request(path: string, { method = 'GET', body, cookie, account, withHeader = true }: RequestOptions = {}) {
+function request(path: string, { method = 'GET', body, cookie, account, withHeader = true, signal }: RequestOptions = {}) {
   const headers = new Headers();
   if (method !== 'GET' && withHeader) headers.set('X-Kuroko-Request', '1');
   if (body) headers.set('Content-Type', 'application/json');
   if (cookie) headers.set('Cookie', cookie);
   if (account !== undefined) headers.set('X-Kuroko-Account', String(account));
-  return fetch(`${baseUrl}${path}`, { method, headers, body: body && JSON.stringify(body) });
+  return fetch(`${baseUrl}${path}`, { method, headers, body: body && JSON.stringify(body), signal });
 }
 
 const password = 'example-long-passphrase';
@@ -649,11 +650,11 @@ test('loads models with the selected provider’s stored key without echoing pro
 const generatePath = '/llm/generate';
 const greeting = [{ role: 'user', content: 'Привет' }] satisfies LlmRequest['messages'];
 
-async function saveGenerationPreset(cookie: string, provider: string, apiKey: string) {
+async function saveGenerationPreset(cookie: string, provider: string, apiKey: string, model = 'test-model') {
   const key = await (await addKey(cookie, provider, 'Generation key', apiKey)).json() as ProviderKey;
   const saved = await request(`${connectionPath}/presets`, { method: 'POST', cookie, body: {
     name: provider, provider, keyId: key.id,
-    settings: { ...defaultConnectionSettings, model: 'test-model', responseTokens: 100, contextTokens: 12, temperature: 0.5 },
+    settings: { ...defaultConnectionSettings, model, responseTokens: 100, contextTokens: 12, temperature: 0.5 },
   } });
   expect(saved.status).toBe(201);
   const { activePresetId } = await saved.json() as { activePresetId: string };
@@ -681,6 +682,231 @@ function gmProviderStream(content: string, calls: { name: string; arguments: obj
     headers: { 'Content-Type': 'text/event-stream' },
   });
 }
+
+test('delegates a task using the active connection preset when it is selected for the subagent', async () => {
+  await register('subagent-owner');
+  await register('subagent-other');
+  const cookie = sessionCookie(await login('subagent-owner')).token;
+  const other = sessionCookie(await login('subagent-other')).token;
+  const otherPresetId = await saveGenerationPreset(cookie, 'openai', 'other-preset-test-key', 'other-model');
+  const presetId = await saveGenerationPreset(cookie, 'openrouter', 'worker-test-key', 'author/worker');
+  const foreignPresetId = await saveGenerationPreset(other, 'openai', 'other-test-key');
+  const select = (presetId: string) => request('/settings/tools/subagent', { method: 'PUT', cookie, body: { presetId } });
+  const task = 'Проверь, согласуются ли две даты.';
+  const delegate = (input: object = { task }) => request('/llm/delegate', {
+    method: 'POST', cookie, body: input,
+  });
+  const history = [{ task: 'Найди даты.', answer: '3 и 4 марта.' }];
+
+  expect((await delegate({ task: ' ' })).status).toBe(400);
+  expect((await delegate({ task, name: '\nХронолог' })).status).toBe(400);
+  expect((await delegate({ task, history })).status).toBe(400);
+  expect(await (await delegate()).json()).toEqual({ isError: true, result: 'Tool is not enabled.' });
+  await request('/settings/tools/delegate_task', { method: 'PUT', cookie, body: { enabled: true } });
+  expect(await (await delegate()).json()).toMatchObject({ isError: true, result: expect.stringContaining('Tools settings') });
+  const selected = await (await select(presetId)).json() as ToolsResponse;
+  expect(selected).toEqual({
+    enabled: ['delegate_task'], subagent: { presetId, presets: [
+      { id: otherPresetId, name: 'openai', model: 'other-model', provider: 'openai' },
+      { id: presetId, name: 'openrouter', model: 'author/worker', provider: 'openrouter' },
+    ] },
+  });
+  expect((await select(foreignPresetId)).status).toBe(404);
+  expect(await (await request(connectionPath, { cookie })).json()).toMatchObject({ activePresetId: presetId });
+
+  let calls = 0;
+  const mock = mockGeneration((_url, init) => {
+    expect(new Headers(init?.headers).get('Authorization')).toBe('Bearer worker-test-key');
+    const body = JSON.parse(String(init?.body));
+    expect(body).toMatchObject({ model: 'author/worker', stream: false });
+    expect(body.tools).toBeUndefined();
+    const previous = ++calls === 3 ? [
+      { role: 'user', content: history[0]!.task }, { role: 'assistant', content: history[0]!.answer },
+    ] : [];
+    expect(body.messages).toEqual([{ role: 'system', content: expect.any(String) }, ...previous, { role: 'user', content: task }]);
+    if (calls === 2) return new Response(null, { status: 429 });
+    return Response.json({ choices: [{ message: { content: 'Вторая дата на день раньше.' }, finish_reason: 'stop' }] });
+  });
+  try {
+    expect(await (await delegate()).json()).toEqual({ result: { answer: 'Вторая дата на день раньше.' } });
+    expect(await (await delegate()).json()).toMatchObject({ isError: true, result: expect.stringContaining('provider_rate_limit') });
+    expect(await (await delegate({ task, name: 'Хронолог', history })).json()).toEqual({ result: {
+      answer: 'Вторая дата на день раньше.', name: 'Хронолог',
+    } });
+    expect(calls).toBe(3);
+    expect((await request(`${connectionPath}/presets/${presetId}`, { method: 'DELETE', cookie })).status).toBe(200);
+    expect(await (await request('/settings/tools', { cookie })).json()).toMatchObject({ subagent: { presetId: null } });
+  } finally {
+    mock.mockRestore();
+  }
+});
+
+test('cancels subagent generation when the calling chat disconnects', async () => {
+  await register('subagent-cancel');
+  const cookie = sessionCookie(await login('subagent-cancel')).token;
+  const presetId = await saveGenerationPreset(cookie, 'openrouter', 'worker-test-key');
+  await request('/settings/tools/subagent', { method: 'PUT', cookie, body: { presetId } });
+  await request('/settings/tools/delegate_task', { method: 'PUT', cookie, body: { enabled: true } });
+
+  const started = Promise.withResolvers<AbortSignal>();
+  const upstream = Promise.withResolvers<Response>();
+  const mock = mockGeneration((_url, init) => {
+    started.resolve(init!.signal!);
+    return upstream.promise;
+  });
+  const client = new AbortController();
+  try {
+    const reply = request('/llm/delegate', {
+      method: 'POST', cookie, signal: client.signal, body: { task: 'Проверь расчёт.' },
+    });
+    const signal = await Promise.race([started.promise, reply.then(() => { throw new Error('Expected a subagent request'); })]);
+    const cancelled = once(signal, 'abort', { signal: AbortSignal.timeout(2_000) });
+    client.abort();
+    await expect(reply).rejects.toHaveProperty('name', 'AbortError');
+    await cancelled;
+    expect(signal.aborted).toBe(true);
+  } finally {
+    client.abort();
+    upstream.resolve(new Response(null, { status: 502 }));
+    mock.mockRestore();
+  }
+});
+
+test('a subagent can roll dice, read the actual faces and save the trace for the calling model', async () => {
+  await register('subagent-dice');
+  const cookie = sessionCookie(await login('subagent-dice')).token;
+  const presetId = await saveGenerationPreset(cookie, 'openai', 'worker-test-key');
+  await request('/settings/tools/subagent', { method: 'PUT', cookie, body: { presetId } });
+  for (const tool of ['delegate_task', 'roll_dice', 'getRollDetails']) {
+    await request(`/settings/tools/${tool}`, { method: 'PUT', cookie, body: { enabled: true } });
+  }
+
+  let round = 0;
+  let rollId = '';
+  let answer = '';
+  const toolResponse = (...calls: { id: string; name: string; arguments: object }[]) => Response.json({ choices: [{
+    message: { tool_calls: calls.map(({ id, name, arguments: args }) => ({ id, function: { name, arguments: JSON.stringify(args) } })) },
+    finish_reason: 'tool_calls',
+  }] });
+  const mock = mockGeneration((_url, init) => {
+    const { tools, messages } = JSON.parse(String(init?.body));
+    expect(tools.map(({ function: { name } }: { function: { name: string } }) => name)).toEqual(['roll_dice', 'getRollDetails']);
+    switch (++round) {
+      case 1:
+        return toolResponse(
+          { id: 'dice', name: 'roll_dice', arguments: { rolls: { d20: '1d20', d8x3: '3d8', d12: '1d12' } } },
+          { id: 'disabled', name: 'test_echo', arguments: { text: 'disabled' } },
+          { id: 'nested', name: 'delegate_task', arguments: { task: 'Nested delegation' } },
+        );
+      case 2: {
+        const [dice, disabled, nested] = messages.slice(-3);
+        expect(disabled).toMatchObject({ role: 'tool', tool_call_id: 'disabled', content: '{"error":"Tool is not enabled."}' });
+        expect(nested).toMatchObject({ role: 'tool', tool_call_id: 'nested', content: '{"error":"Tool is not enabled."}' });
+        const { rollId: id } = JSON.parse(dice.content);
+        rollId = id;
+        expect(rollId).toMatch(/^sub_/);
+        return toolResponse({ id: 'details', name: 'getRollDetails', arguments: { rollIds: [rollId] } });
+      }
+      case 3: {
+        const { rolls } = JSON.parse(messages.at(-1).content);
+        const faces = rolls[0].result.details.find(({ path }: { path: string[] }) => path[0] === 'd8x3').dice[0].results as number[];
+        expect(faces).toHaveLength(3);
+        expect(faces.every((value) => value >= 1 && value <= 8)).toBe(true);
+        const { d20, d8x3, d12 } = rolls[0].result.values;
+        expect(d20).toBeGreaterThanOrEqual(1);
+        expect(d20).toBeLessThanOrEqual(20);
+        expect(d12).toBeGreaterThanOrEqual(1);
+        expect(d12).toBeLessThanOrEqual(12);
+        expect(faces.reduce((sum, value) => sum + value, 0)).toBe(d8x3);
+        answer = `d20: ${d20}; 3d8: ${faces.join(' + ')} = ${d8x3}; d12: ${d12}`;
+        return Response.json({ choices: [{ message: { content: answer }, finish_reason: 'stop' }] });
+      }
+      default:
+        throw new Error('Unexpected subagent generation round');
+    }
+  });
+
+  try {
+    const signal = new AbortController().signal;
+    const { entry, message } = await runToolCall({
+      type: 'toolCall', id: 'delegate', name: 'delegate_task', arguments: { name: 'Subagent-B', task: 'Брось d20, 3d8 и d12.' },
+    }, ['delegate_task'], {
+      signal, id: 'delegate', history: [],
+      delegateTask: async (body) => (await request('/llm/delegate', { method: 'POST', cookie, body })).json() as Promise<DelegateTaskResult>,
+    });
+    expect(round).toBe(3);
+    expect(message.content).toEqual({ answer, name: 'Subagent-B', rollIds: [rollId] });
+    const stored = JSON.parse(JSON.stringify(entry)) as ChatToolCall;
+    const lookup = await runToolCall({ type: 'toolCall', id: 'lookup', name: 'getRollDetails', arguments: { rollIds: [rollId] } },
+      ['getRollDetails'], { signal, id: 'lookup', history: [stored] });
+    expect(lookup.message.content).toMatchObject({ rolls: [{ rollId, tool: 'roll_dice', result: { details: expect.any(Array) } }] });
+    expect(entry.result).toMatchObject({ answer, toolCalls: expect.arrayContaining([{ id: rollId, name: 'roll_dice',
+      arguments: expect.any(Object), result: expect.objectContaining({ details: expect.any(Array) }), modelResult: expect.any(Object),
+    }]) });
+  } finally {
+    mock.mockRestore();
+  }
+});
+
+test('restores a named GM subagent’s private history across published scenes', async () => {
+  await register('gm-subagent-owner');
+  const cookie = sessionCookie(await login('gm-subagent-owner')).token;
+  const presetId = await saveGenerationPreset(cookie, 'openrouter', 'gm-worker-test-key', 'author/worker');
+  await saveGenerationPreset(cookie, 'openai', 'gm-main-test-key', 'main-model');
+  expect((await request('/settings/tools/subagent', { method: 'PUT', cookie, body: { presetId } })).status).toBe(200);
+  expect((await request('/settings/tools/delegate_task', { method: 'PUT', cookie, body: { enabled: true } })).status).toBe(200);
+  const chat = await (await request('/chats', { method: 'POST', cookie })).json() as SavedChat;
+  const path = `/chats/${chat.id}`;
+  const saved = await (await request(path, { method: 'PUT', cookie, body: {
+    revision: chat.revision, gmMode: true, messages: [{ id: 1, role: 'user', text: 'Открываю дверь', time: 1 }],
+  } })).json() as SavedChat;
+
+  const task = 'Предложи тайную причину потухшего света.';
+  const answer = 'Хозяин дома спрятался в подвале.';
+  const name = 'Автор тайн';
+  const followUp = 'Развей тайну короткой подсказкой.';
+  const secondAnswer = 'Из подвала слышен кашель.';
+  const models: string[] = [];
+  const mock = mockGeneration((_url, init) => {
+    const body = JSON.parse(String(init?.body));
+    models.push(body.model);
+    const round = models.length;
+    if (round === 1 || round === 4) {
+      expect(body.tools.map(({ function: { name } }: { function: { name: string } }) => name)).toEqual(['delegate_task', 'publishScene']);
+      if (round === 4) expect(body.messages[0].content).toContain(name);
+      return gmProviderStream('', [{ name: 'delegate_task', arguments: { name, task: round === 1 ? task : followUp } }]);
+    }
+    if (round === 2 || round === 5) {
+      const expected = [{ role: 'user', content: task }];
+      if (round === 5) expected.push({ role: 'assistant', content: answer }, { role: 'user', content: followUp });
+      expect(body.messages[0].content).toContain(name);
+      expect(body.messages.slice(1)).toEqual(expected);
+      expect(body.tools).toBeUndefined();
+      return Response.json({ choices: [{ message: { content: round === 2 ? answer : secondAnswer }, finish_reason: 'stop' }] });
+    }
+    expect(body.messages.at(-1)).toEqual({
+      role: 'tool', tool_call_id: 'call_0', content: JSON.stringify({ answer: round === 3 ? answer : secondAnswer, name }),
+    });
+    return gmProviderStream('', [{ name: 'publishScene', arguments: { text: 'В коридоре темно.' } }]);
+  });
+  try {
+    const reply = await request(`${path}/gm-reply`, { method: 'POST', cookie, body: { revision: saved.revision } });
+    expect(reply.status).toBe(200);
+    const scene = await reply.json() as SavedChat;
+    expect(scene.messages.at(-1)).toEqual({ id: 2, role: 'assistant', text: 'В коридоре темно.', time: expect.any(Number) });
+    expect(db.query<{ turn_json: string }, []>('SELECT turn_json FROM chat_private_turns').get()?.turn_json).toContain(answer);
+    const next = await (await request(path, { method: 'PUT', cookie, body: {
+      revision: scene.revision, messages: [...scene.messages, { id: 3, role: 'user', text: 'Прислушиваюсь.', time: 3 }],
+    } })).json() as SavedChat;
+    const second = await request(`${path}/gm-reply`, { method: 'POST', cookie, body: { revision: next.revision } });
+    expect(second.status).toBe(200);
+    const published = await second.text();
+    for (const secret of [answer, secondAnswer, name]) expect(published).not.toContain(secret);
+    expect(models).toEqual(['main-model', 'author/worker', 'main-model', 'main-model', 'author/worker', 'main-model']);
+  } finally {
+    mock.mockRestore();
+  }
+});
 
 test('publishes only the player scene and can retrieve a private roll in a later GM turn', async () => {
   await register('gm-owner');

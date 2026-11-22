@@ -1,12 +1,13 @@
 import { useI18n } from '../../shared/i18n/i18n';
 import type { ChatToolCall } from '@kuroko/contracts/chat';
+import { readSubagentName } from '@kuroko/contracts/tools';
 import { Button, Menu, Textarea } from '@mantine/core';
-import { Bot, ChevronRight, Ellipsis, Pencil, Trash2 } from 'lucide-react';
+import { Bot, ChevronRight, Ellipsis, LoaderCircle, Pencil, Trash2 } from 'lucide-react';
 import { memo, useCallback, useLayoutEffect, useRef, useState } from 'react';
 import { useModuleExtensions } from '../../modules/ModuleExtensions';
 import { notify } from '../../shared/notifications/notifications';
 import { ChatText } from './ChatText';
-import { messageBlocks, type ChatImage, type Message, type ReplyPhase } from './message';
+import { messageBlocks, type ActiveSubagent, type ChatImage, type Message, type ReplyPhase } from './message';
 import type { MessageAction, MessageActionContext } from './messageActions';
 
 export function ChatPicture({ image }: { image: ChatImage }) {
@@ -34,11 +35,12 @@ function ToolCalls({ calls }: { calls: ChatToolCall[] }) {
   const { t } = useI18n();
   return (
     <ul className="chat-tool-calls" aria-label={t('chat.toolCalls')}>
-      {calls.map((call) => (
-        <li key={call.id}>
+      {calls.map((call) => {
+        const name = call.name === 'delegate_task' ? readSubagentName(call.arguments.name) : undefined;
+        return <li key={call.id}>
           <details className="chat-tool-call">
             <summary>
-              <code>{call.name}</code>{' '}
+              <code>{call.name}</code>{name && <> <bdi>{name}</bdi></>}{' '}
               <span className="chat-tool-status" data-error={call.isError || undefined}>
                 {t(call.isError ? 'chat.toolFailed' : 'chat.toolSucceeded')}
               </span>
@@ -50,8 +52,8 @@ function ToolCalls({ calls }: { calls: ChatToolCall[] }) {
               <dd><pre>{JSON.stringify(call.result, null, 2)}</pre></dd>
             </dl>
           </details>
-        </li>
-      ))}
+        </li>;
+      })}
     </ul>
   );
 }
@@ -60,6 +62,7 @@ type Props = {
   message: Message;
   username: string;
   phase?: ReplyPhase;
+  activeSubagents?: readonly ActiveSubagent[];
   locked?: boolean;
   editor?: { text: string; canSave: boolean };
   reasoningOpen: boolean;
@@ -73,7 +76,7 @@ type Props = {
 };
 
 export const ChatMessage = memo(function ChatMessage({
-  message, username, phase, locked, editor, reasoningOpen, onToggleReasoning,
+  message, username, phase, activeSubagents, locked, editor, reasoningOpen, onToggleReasoning,
   onEdit, onDraftChange, onSaveEdit, onCancelEdit, onDelete, onPreview,
 }: Props) {
   const { locale, t, clock, date } = useI18n();
@@ -199,6 +202,12 @@ export const ChatMessage = memo(function ChatMessage({
                 : block.text.trim() && <ChatText key={`text-${index}`}>{block.text}</ChatText>)}
             </div>
           ) : text ? <ChatText user={!assistant}>{text}</ChatText> : phase === 'answer' && <p className="chat-typing">{t('chat.answering')}</p>}
+          {activeSubagents?.map(({ id, name }) => (
+            <p key={id} className="chat-tool-call chat-subagent-progress">
+              <LoaderCircle size={16} className="chat-subagent-spinner" aria-hidden="true" />
+              {name ? t('chat.namedSubagentWorking', { name }) : t('chat.subagentWorking')}
+            </p>
+          ))}
           {editing && !!toolCalls?.length && <ToolCalls calls={toolCalls} />}
           {image && (
             <button type="button" className="chat-picture" aria-label={t('chat.openImage')} onClick={() => onPreview(image)}>

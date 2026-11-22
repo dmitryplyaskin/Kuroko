@@ -24,6 +24,13 @@ export function createToolsStore(db: Database) {
   const rename = db.query('UPDATE OR IGNORE tool_presets SET name = ? WHERE user_id = ? AND id = ?');
   const deactivate = db.query('UPDATE tool_presets SET active = 0 WHERE user_id = ? AND active = 1');
   const activate = db.query('UPDATE tool_presets SET active = 1 WHERE user_id = ? AND id = ?');
+  const findSubagent = db.query<{ preset_id: string }, [number]>('SELECT preset_id FROM subagent_settings WHERE user_id = ?');
+  const setSubagent = db.query(`
+    INSERT INTO subagent_settings (user_id, preset_id)
+      SELECT user_id, id FROM connection_presets WHERE user_id = ? AND id = ?
+      ON CONFLICT (user_id) DO UPDATE SET preset_id = excluded.preset_id
+  `);
+  const clearSubagent = db.query('DELETE FROM subagent_settings WHERE user_id = ?');
 
   const enabledTools = (userId: number) => list.all(userId).map(({ tool_id }) => tool_id).filter(isToolId);
   const read = db.transaction((userId: number): ToolsResponse => {
@@ -70,6 +77,12 @@ export function createToolsStore(db: Database) {
 
   return {
     list: enabledTools,
+    subagentPresetId: (userId: number) => findSubagent.get(userId)?.preset_id ?? null,
+    selectSubagent(userId: number, presetId: string | null) {
+      if (presetId !== null) return setSubagent.run(userId, presetId).changes > 0;
+      clearSubagent.run(userId);
+      return true;
+    },
     read: read.deferred,
     set(userId: number, id: ToolId, enabled: boolean) {
       (enabled ? enable : disable).run(userId, id);

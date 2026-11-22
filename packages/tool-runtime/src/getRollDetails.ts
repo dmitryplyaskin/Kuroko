@@ -18,6 +18,25 @@ function object(value: JsonValue): JsonObject | undefined {
   return value && typeof value === 'object' && !Array.isArray(value) ? value : undefined;
 }
 
+type RollRecord = Pick<ChatToolCall, 'id' | 'name' | 'result' | 'isError'>;
+
+function savedRolls(history: readonly ChatToolCall[]) {
+  return history.flatMap<RollRecord>((call) => {
+    if (call.name === 'roll_dice' || call.name === 'resolveCheck') return [call];
+    if (call.name !== 'delegate_task') return [];
+    const children = object(call.result)?.toolCalls;
+    if (!Array.isArray(children)) return [];
+
+    return children.flatMap<RollRecord>((value) => {
+      const entry = object(value);
+      if (!entry) return [];
+      const { id, name, result, isError } = entry;
+      if ((name !== 'roll_dice' && name !== 'resolveCheck') || typeof id !== 'string' || result === undefined) return [];
+      return [{ id, name, result, isError: isError === true }];
+    });
+  });
+}
+
 export function toolHistoryResult(call: ChatToolCall): JsonValue {
   if (call.modelResult !== undefined) return call.modelResult;
   const data = object(call.result);
@@ -37,9 +56,9 @@ export async function getRollDetails({ rollIds }: JsonObject, history: readonly 
   const [{ validateDiceResult }, { validateCheckResult }] = await Promise.all([
     import('./dice/result.mjs'), import('./rules/result.mjs'),
   ]);
+  const records = savedRolls(history);
   const rolls = rollIds.map((rollId) => {
-    const matches = history.filter((call) => (call.name === 'roll_dice' || call.name === 'resolveCheck') &&
-      (call.id === rollId || object(call.result)?.rollId === rollId));
+    const matches = records.filter((call) => call.id === rollId || object(call.result)?.rollId === rollId);
     if (!matches.length) return failure(rollId, 'not_found', 'No saved roll with this rollId in this chat. Do not reroll it.');
     if (matches.length > 1) return failure(rollId, 'ambiguous_id', 'Multiple saved rolls use this rollId.');
     const call = matches[0]!;

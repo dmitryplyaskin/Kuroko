@@ -8,10 +8,10 @@ import { $activeSession, protectedRequestFailed, sessionEnded, type ActiveSessio
 import { inActiveSession } from '../../platform/session/request';
 import { $enabledTools, $toolSettingsBusy } from '../tools/model';
 import { chatApi, streamChatReply } from './chatApi';
-import { editMessageText, hasMessageContent, type Message } from './message';
+import { editMessageText, hasMessageContent, type ActiveSubagent, type Message, type ReplyPhase } from './message';
 
 type Generation = { session: ActiveSession; controller: AbortController; enabledTools: readonly ToolId[] };
-type Reply = { generation: Generation; message: Message };
+type Reply = { generation: Generation; message: Message; activeSubagents?: readonly ActiveSubagent[] };
 type Navigation = { session: ActiveSession; action: 'initial' | 'create' | 'open'; id?: string };
 type Save = ChatSnapshot & { session: ActiveSession; id: string; reply?: Reply };
 
@@ -164,12 +164,15 @@ $chatDraft.reset(messageSent);
 
 const replyDelta = createEvent<{ generation: Generation; text: string }>();
 const replyContentReceived = createEvent<{ generation: Generation; text: string; toolCalls: ChatToolCall[] }>();
+const replySubagentActivity = createEvent<{ generation: Generation; active: readonly ActiveSubagent[] }>();
 const generateReplyFx = createEffect(async ({ reply: { generation }, chat }: { reply: Reply; chat: SavedChat }) => {
   if (chat.gmMode) return chatApi.gmReply(generation.session, chat, generation.controller.signal);
   const publish = scopeBind(replyDelta, { safe: true });
   const report = scopeBind(replyContentReceived, { safe: true });
+  const reportSubagent = scopeBind(replySubagentActivity, { safe: true });
   return streamChatReply(generation.session, chat.messages, generation.enabledTools, generation.controller.signal,
-    (delta) => publish({ generation, text: delta }), (text, toolCalls) => report({ generation, text, toolCalls }));
+    (delta) => publish({ generation, text: delta }), (text, toolCalls) => report({ generation, text, toolCalls }),
+    (active) => reportSubagent({ generation, active }));
 });
 
 const replyContentUpdated = sample({
@@ -181,6 +184,14 @@ const replyContentUpdated = sample({
   }),
 });
 $reply.on(replyContentUpdated, (_, reply) => reply);
+
+const replySubagentUpdated = sample({
+  clock: replySubagentActivity,
+  source: $reply,
+  filter: (reply, { generation }) => reply?.generation === generation,
+  fn: (reply, { active }): Reply => ({ ...reply!, activeSubagents: active }),
+});
+$reply.on(replySubagentUpdated, (_, reply) => reply);
 
 const replyPrepared = saveSucceeded.filterMap(({ params, result }) => params.reply && { reply: params.reply, chat: result });
 sample({
@@ -327,6 +338,11 @@ export const $expandedReasoning = createStore<ReadonlySet<number>>(new Set())
 
 export const $chatAnnouncement = createStore<MessageKey | null>(null)
   .on(generateReplyFx, () => 'chat.announcementAnswering')
+  .on(replySubagentUpdated, (_, { activeSubagents }) => {
+    const count = activeSubagents?.length ?? 0;
+    if (count > 1) return 'chat.subagentsWorking';
+    return count ? 'chat.subagentWorking' : 'chat.announcementAnswering';
+  })
   .on(replyCompleted, () => 'chat.announcementReady')
   .reset(replyFailed)
   .on(replyStopped, () => 'chat.announcementStopped')
@@ -335,7 +351,14 @@ export const $chatAnnouncement = createStore<MessageKey | null>(null)
   .reset(chatOpened, sessionEnded);
 
 export const $replyId = $reply.map((reply) => reply?.message.id ?? null);
+export const $replyPhase = $reply.map((reply): ReplyPhase | null => {
+  if (!reply) return null;
+  return reply.activeSubagents?.length ? 'subagent' : 'answer';
+});
+const noSubagents: readonly ActiveSubagent[] = [];
+export const $activeSubagents = $reply.map((reply) => reply?.activeSubagents ?? noSubagents);
 export const $chatRows = combine($messages, $reply, (messages, reply) => reply ? [...messages, reply.message] : messages);
 export const keepHistoryAtEndRequested = sample({
-  clock: [replyUpdated, replyContentUpdated, replyCompleted, replyFailed, replyStopped, messageEdited], fn: () => undefined,
+  clock: [replyUpdated, replyContentUpdated, replySubagentUpdated, replyCompleted, replyFailed, replyStopped, messageEdited],
+  fn: () => undefined,
 });

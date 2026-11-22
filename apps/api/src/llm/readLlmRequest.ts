@@ -1,4 +1,4 @@
-import { connectionParameterRanges, isOptionalConnectionNumber, providers, type Provider } from '@kuroko/contracts/connectionSettings';
+import { connectionParameterRanges, isConnectionPresetId, isOptionalConnectionNumber, providers, type Provider } from '@kuroko/contracts/connectionSettings';
 import type {
   LlmAssistantPart, LlmMessage, LlmParameters, LlmRequest, LlmTool, LlmToolChoice,
 } from '@kuroko/contracts/llm';
@@ -119,7 +119,7 @@ export function readLlmRequest(value: unknown): LlmRequest {
   if (!input) invalid();
   if (Object.keys(input).some((key) => !['presetId', 'messages', 'parameters', 'tools', 'toolChoice', 'stream'].includes(key))) invalid();
   const { presetId, messages, parameters, tools, toolChoice, stream } = input;
-  if ((presetId !== undefined && (typeof presetId !== 'string' || !/^[a-f\d-]{32,36}$/i.test(presetId))) ||
+  if ((presetId !== undefined && !isConnectionPresetId(presetId)) ||
     (stream !== undefined && typeof stream !== 'boolean')) invalid();
   const declarations = readTools(tools);
   return {

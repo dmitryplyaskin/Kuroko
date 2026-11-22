@@ -1,12 +1,13 @@
 import { isLlmErrorCode } from '@kuroko/contracts/errors';
 import type { ChatSnapshot, ChatSummary, ChatToolCall, SavedChat } from '@kuroko/contracts/chat';
 import type { LlmAssistantPart, LlmCompletion, LlmEvent, LlmMessage, LlmRequest, LlmToolCall } from '@kuroko/contracts/llm';
-import type { ToolId } from '@kuroko/contracts/tools';
-import { runToolCall, toolDeclarations } from '@kuroko/tool-runtime';
+import type { DelegateTaskRequest, DelegateTaskResult, ToolId } from '@kuroko/contracts/tools';
+import { createSubagentBatch, runToolCall, toolDeclarations } from '@kuroko/tool-runtime';
 import { toLlmMessages } from '@kuroko/tool-runtime/chatHistory';
 import type { ActiveSession } from '../../platform/session/model';
 import { sessionRequest, sessionResponse } from '../../platform/session/request';
-import { ApiError } from '../../shared/http/api';
+import { ApiError, errorCode } from '../../shared/http/api';
+import type { ActiveSubagent } from './message';
 
 export const chatApi = {
   list: (session: ActiveSession) => sessionRequest<ChatSummary[]>(session, '/chats'),
@@ -37,6 +38,7 @@ function readEvent(frame: string): LlmEvent | undefined {
 export async function streamChatReply(
   session: ActiveSession, messages: ChatSnapshot['messages'], enabledTools: readonly ToolId[], signal: AbortSignal,
   onText: (delta: string) => void, onContent: (text: string, calls: ChatToolCall[]) => void,
+  onSubagentActivity: (active: readonly ActiveSubagent[]) => void,
 ): Promise<string> {
   const tools = enabledTools.length ? toolDeclarations(enabledTools) : undefined;
   const history: LlmMessage[] = toLlmMessages(messages);
@@ -46,6 +48,7 @@ export async function streamChatReply(
   let nextRecordNumber = 1;
   let presetId: string | undefined;
   let text = '';
+  let activeSubagents: readonly ActiveSubagent[] = [];
 
   for (let round = 0; ; round++) {
     signal.throwIfAborted();
@@ -79,17 +82,37 @@ export async function streamChatReply(
     if (typeof completion.presetId !== 'string') throw new ApiError(502, 'invalid_response');
     presetId ??= completion.presetId;
     const recordedCalls = [...savedCalls, ...toolCalls];
+    const delegateTask = createSubagentBatch(recordedCalls, async (request, signal, id) => {
+      activeSubagents = [...activeSubagents, { id, name: request.name }];
+      onSubagentActivity(activeSubagents);
+      try {
+        return await requestSubagent(session, request, signal);
+      } finally {
+        activeSubagents = activeSubagents.filter((agent) => agent.id !== id);
+        onSubagentActivity(activeSubagents);
+      }
+    });
     const results = await Promise.all(calls.map(async ({ call, textOffset }) => {
       let recordId = call.id;
       while (recordedIds.has(recordId)) recordId = `call_${nextRecordNumber++}`;
       recordedIds.add(recordId);
-      const { entry, message } = await runToolCall(call, enabledTools, { signal, id: recordId, history: recordedCalls });
+      const { entry, message } = await runToolCall(call, enabledTools, { signal, id: recordId, history: recordedCalls, delegateTask });
       return { entry: { ...entry, textOffset: start + textOffset }, message };
     }));
     signal.throwIfAborted();
     toolCalls.push(...results.map(({ entry }) => entry));
     onContent(text, [...toolCalls]);
     history.push(completion.message, ...results.map(({ message }) => message));
+  }
+}
+
+async function requestSubagent(session: ActiveSession, body: DelegateTaskRequest, signal: AbortSignal): Promise<DelegateTaskResult> {
+  try {
+    return await sessionRequest<DelegateTaskResult>(session, '/llm/delegate', { method: 'POST', body, signal, timeoutMs: 130_000 });
+  } catch (error) {
+    signal.throwIfAborted();
+    session.signal.throwIfAborted();
+    return { result: `Subagent request failed (${errorCode(error)}).`, isError: true };
   }
 }
 

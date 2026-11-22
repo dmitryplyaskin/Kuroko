@@ -1,6 +1,6 @@
 import type { JsonObject } from '@kuroko/contracts/llm';
 import type { ToolId } from '@kuroko/contracts/tools';
-import { CircleCheck, Dices, History, Radio, type LucideIcon } from 'lucide-react';
+import { CircleCheck, Dices, History, Radio, Workflow, type LucideIcon } from 'lucide-react';
 import type { MessageKey } from '../../shared/i18n/i18n';
 type ToolDefinition = {
   icon: LucideIcon;
@@ -51,5 +51,12 @@ export const tools: Record<ToolId, ToolDefinition> = {
     description: 'tools.echoDescription',
     parameters: [{ name: 'text', description: 'tools.echoText' }],
     example: { text: 'ping' },
+  },
+  delegate_task: {
+    icon: Workflow,
+    label: 'tools.delegate',
+    description: 'tools.delegateDescription',
+    parameters: [{ name: 'task', description: 'tools.delegateTask' }, { name: 'name', description: 'tools.delegateName' }],
+    example: { name: 'Chronologist', task: 'Check whether the timeline and character decisions are consistent. Context: …' },
   },
 };

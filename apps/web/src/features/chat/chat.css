@@ -230,6 +230,21 @@
 .chat-tool-call dd + dt { margin-block-start: 4px; }
 .chat-tool-call pre { margin: 0; padding: 6px 8px; background: var(--kr-hover); white-space: pre-wrap; overflow-wrap: anywhere; }
 
+.chat-subagent-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-block: 8px 0;
+  padding: 8px 10px;
+  overflow-wrap: anywhere;
+}
+.chat-subagent-progress:first-child { margin-block-start: 0; }
+.chat-subagent-spinner { flex: none; color: var(--kr-accent); }
+@media (prefers-reduced-motion: no-preference) {
+  .chat-subagent-spinner { animation: chat-subagent-spin .9s linear infinite; }
+}
+@keyframes chat-subagent-spin { to { transform: rotate(360deg); } }
+
 .chat-picture {
   display: grid;
   place-items: center;

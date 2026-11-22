@@ -40,4 +40,5 @@ export function editMessageText(message: Message, text: string): Message {
   };
 }
 
-export type ReplyPhase = 'reasoning' | 'answer';
+export type ReplyPhase = 'reasoning' | 'answer' | 'subagent';
+export type ActiveSubagent = { id: string; name?: string };

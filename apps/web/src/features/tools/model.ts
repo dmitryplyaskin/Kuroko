@@ -7,12 +7,13 @@ import { errorCode, type ErrorCode } from '../../shared/http/api';
 import { requestPresetAction } from '../../platform/presets';
 
 type Toggle = { id: ToolId; enabled: boolean };
-type Change = { kind: 'toggle'; tool: Toggle } | { kind: 'clear' } | PresetAction;
+type Change = { kind: 'toggle'; tool: Toggle } | { kind: 'clear' } | { kind: 'subagent'; presetId: string | null } | PresetAction;
 type Preferences = {
   status: 'idle' | 'loading' | 'ready' | 'loadError' | 'saving';
   enabled: ToolId[];
   presets: ToolPreset[];
   activePresetId: string | null;
+  subagent?: ToolsResponse['subagent'];
   error?: ErrorCode;
 };
 
@@ -20,6 +21,7 @@ const path = '/settings/tools';
 const presetsPath = `${path}/presets`;
 const initial: Preferences = { status: 'idle', enabled: [], presets: [], activePresetId: null };
 export const toolsInitialized = createEvent();
+export const toolManagerOpened = createEvent();
 export const toolSettingsRetried = createEvent();
 export const toolSettingChanged = createEvent<Toggle>();
 
@@ -32,6 +34,8 @@ const saveToolSettingFx = createEffect(({ session, change, enabled }: { session:
         { method: 'PUT', body: { enabled: change.tool.enabled } });
     case 'clear':
       return sessionRequest<ToolsResponse>(session, `${path}/enabled`, { method: 'DELETE' });
+    case 'subagent':
+      return sessionRequest<ToolsResponse>(session, `${path}/subagent`, { method: 'PUT', body: { presetId: change.presetId } });
     case 'create':
       return sessionRequest<ToolsResponse>(session, presetsPath, { method: 'POST', body: { name: change.name, enabled, apply: true } });
     case 'update':
@@ -53,10 +57,12 @@ export const $toolSettings = createStore<Preferences>(initial)
   .on(saveToolSettingFx, (current) => ({ ...current, status: 'saving', error: undefined }))
   .on([loaded, saved], (_, { result }) => ({
     status: 'ready', enabled: result.enabled, presets: result.presets ?? [], activePresetId: result.activePresetId ?? null,
+    subagent: result.subagent,
   }))
   .on(loadFailed, (current, { error }) => ({ ...current, status: 'loadError', error: errorCode(error) }))
   .on(saveFailed, (current, { change, error }) => ({
-    ...current, status: 'ready', error: change.kind === 'toggle' || change.kind === 'clear' ? errorCode(error) : undefined,
+    ...current, status: 'ready', error: change.kind === 'toggle' || change.kind === 'clear' || change.kind === 'subagent'
+      ? errorCode(error) : undefined,
   }))
   .reset(sessionEnded);
 
@@ -75,6 +81,13 @@ export const $enabledTools = $toolSettings.map(({ enabled }) => enabled);
 export const $toolSettingsBusy = $toolSettings.map(({ status }) => status === 'loading' || status === 'saving');
 
 sample({ clock: sessionStarted, filter: $initialized, target: loadToolSettingsFx });
+sample({
+  clock: toolManagerOpened,
+  source: { session: $activeSession, settings: $toolSettings },
+  filter: ({ session, settings }) => session !== null && settings.status === 'ready',
+  fn: ({ session }) => session!,
+  target: loadToolSettingsFx,
+});
 sample({
   clock: toolSettingsRetried,
   source: { session: $activeSession, settings: $toolSettings },

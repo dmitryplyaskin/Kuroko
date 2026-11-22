@@ -11,7 +11,7 @@ import { $activeSession } from '../../platform/session/model';
 import { chatDisplayStyle } from './chatDisplayStyle';
 import type { ChatImage, Message } from './message';
 import {
-  $chatAnnouncement, $chatRows, $expandedReasoning, $messageEditor, $replyId,
+  $activeSubagents, $chatAnnouncement, $chatRows, $expandedReasoning, $messageEditor, $replyId, $replyPhase,
   $chatGmMode, $chatId, $chatLoadError, $chatLoading, $chatLocked, $chatSaveError, $chats,
   chatCreateRequested, chatGmModeChanged, chatLoadRetryRequested, chatOpenRequested, chatSaveRetryRequested,
   chatHidden, chatShown, keepHistoryAtEndRequested, messageDeleteRequested, messageEditCancelled,
@@ -29,12 +29,12 @@ export default function Chat() {
   const [dialog, setDialog] = useState<Preview | Delete>();
   const scope = useProvidedScope();
   const {
-    session, settings, rows, replyId, announcement, editor, expandedReasoning, show, hide, openEditor,
+    session, settings, rows, replyId, replyPhase, activeSubagents, announcement, editor, expandedReasoning, show, hide, openEditor,
     changeDraft, closeEditor, saveEdit, remove, toggleReasoning,
     chatId, chats, gmMode, loading, locked, loadError, saveError, createChat, changeGmMode, openChat, retryLoad, retrySave,
   } = useUnit({
     session: $activeSession, settings: $appliedChatSettings,
-    rows: $chatRows, replyId: $replyId, announcement: $chatAnnouncement,
+    rows: $chatRows, replyId: $replyId, replyPhase: $replyPhase, activeSubagents: $activeSubagents, announcement: $chatAnnouncement,
     editor: $messageEditor, expandedReasoning: $expandedReasoning, show: chatShown, hide: chatHidden,
     openEditor: messageEditRequested, changeDraft: messageEditChanged, closeEditor: messageEditCancelled,
     saveEdit: messageEditSubmitted, remove: messageDeleteRequested, toggleReasoning: reasoningToggled,
@@ -53,12 +53,14 @@ export default function Chat() {
   const setReasoningOpen = useCallback((id: number, open: boolean) => toggleReasoning({ id, open }), [toggleReasoning]);
   const updateMessageDraft = useCallback((id: number, text: string) => changeDraft({ id, text }), [changeDraft]);
   const renderMessage = useCallback((message: Message) => (
-    <ChatMessage message={message} username={username} phase={message.id === replyId ? 'answer' : undefined} locked={locked}
+    <ChatMessage message={message} username={username} phase={message.id === replyId && replyPhase ? replyPhase : undefined} locked={locked}
+      activeSubagents={message.id === replyId ? activeSubagents : undefined}
       editor={editor?.id === message.id ? editor : undefined}
       reasoningOpen={expandedReasoning.has(message.id)} onToggleReasoning={setReasoningOpen}
       onEdit={openEditor} onDraftChange={updateMessageDraft} onCancelEdit={closeEditor} onSaveEdit={saveEdit}
       onDelete={openDelete} onPreview={openPreview} />
-  ), [username, replyId, locked, editor, expandedReasoning, setReasoningOpen, openEditor, updateMessageDraft, closeEditor, saveEdit, openDelete, openPreview]);
+  ), [username, replyId, replyPhase, activeSubagents, locked, editor, expandedReasoning, setReasoningOpen, openEditor, updateMessageDraft,
+    closeEditor, saveEdit, openDelete, openPreview]);
 
   useEffect(() => {
     if (!scope) return;

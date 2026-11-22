@@ -22,7 +22,7 @@ import {
 import { $modelCatalog, loadModelCatalogFx } from '../features/connection/modelCatalog';
 import { $enabledTools, toolsInitialized, toolSettingChanged } from '../features/tools/model';
 import {
-  $chatAnnouncement, $chatError, $chatGmMode, $chatId, $chatNoToolsCalled, $chatRows, $replyId,
+  $activeSubagents, $chatAnnouncement, $chatError, $chatGmMode, $chatId, $chatNoToolsCalled, $chatRows, $replyId, $replyPhase,
   chatCreateRequested, chatDraftChanged, chatGmModeChanged,
   chatOpenRequested, chatSendRequested, chatShown, chatStopRequested,
   messageDeleteRequested, messageEditChanged, messageEditRequested, messageEditSubmitted,
@@ -561,6 +561,89 @@ test('chat keeps tools available after each batch and records successive rolls i
     assert.deepEqual(answer.toolCalls?.map(({ textOffset }) => textOffset), [initiative.length, initiative.length + 2 + attack.length]);
     assert.equal(new Set(answer.toolCalls?.map(({ id }) => id)).size, 2);
   } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('chat runs named subagents in parallel and restores their separate histories after reopening', async () => {
+  const originalFetch = globalThis.fetch;
+  const presetId = 'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa';
+  const agents = [
+    { id: 'chronology', name: 'Хронолог', task: 'Проверь хронологию.', answer: 'Хронология последовательна.' },
+    { id: 'dialogue', name: 'Редактор', task: 'Проверь диалоги.', answer: 'Вторая реплика длинная.' },
+  ];
+  const followUp = { name: 'хронолог', task: 'Уточни порядок событий.' };
+  const followUpAnswer = 'Сначала утро, затем вечер.';
+  const calls = agents.map(({ id, name, task }) => ({ type: 'toolCall', id, name: 'delegate_task', arguments: { name, task } }));
+  const results = agents.map(({ id, name, answer }) => ({ role: 'tool', callId: id, content: { answer, name } }));
+  const first = agents[0]!;
+  const workers = new Map(agents.map(({ name }) => [name, Promise.withResolvers<Response>()]));
+  const started: string[] = [];
+  const waiting = Promise.withResolvers<void>();
+  const toolReply = (...parts: object[]) => new Response(sse({ type: 'done', completion: {
+    presetId, message: { role: 'assistant', parts }, finishReason: 'tool_calls',
+  } }), { headers: sseHeaders });
+  let rounds = 0;
+  globalThis.fetch = withSavedChats(async (input, init) => {
+    const body = JSON.parse(String(init?.body));
+    if (input === '/api/llm/delegate') {
+      assert.equal(init?.method, 'POST');
+      if (body.task === followUp.task) {
+        assert.deepEqual(body, { ...followUp, history: [{ task: first.task, answer: first.answer }] });
+        return Response.json({ result: { answer: followUpAnswer, name: followUp.name } });
+      }
+      const agent = agents.find(({ name }) => name === body.name)!;
+      assert.deepEqual(body, { name: agent.name, task: agent.task });
+      started.push(agent.name);
+      waiting.resolve();
+      return workers.get(agent.name)!.promise;
+    }
+    assert.equal(input, '/api/llm/generate');
+    switch (++rounds) {
+      case 1:
+        assert.deepEqual(body.tools.map(({ name }: { name: string }) => name), ['delegate_task']);
+        return toolReply(...calls, { ...calls[0], id: 'duplicate', arguments: { ...followUp } });
+      case 2:
+        assert.equal(body.presetId, presetId);
+        assert.deepEqual(body.messages.slice(-3, -1), results);
+        assert.equal(body.messages.at(-1).isError, true);
+        return new Response(completed('Порядок сцен верный.'), { headers: sseHeaders });
+      case 3:
+        return toolReply({ ...calls[0], arguments: followUp });
+      case 4:
+        assert.deepEqual(body.messages.at(-1), { role: 'tool', callId: first.id, content: { answer: followUpAnswer, name: followUp.name } });
+        return new Response(completed(followUpAnswer), { headers: sseHeaders });
+      default:
+        assert.fail('Unexpected main model request');
+    }
+  });
+  try {
+    const scope = await openChat();
+    await allSettled(toolSettingChanged, { scope, params: { id: 'delegate_task', enabled: true } });
+    await allSettled(chatDraftChanged, { scope, params: 'Проверь порядок сцен.' });
+    const sending = allSettled(chatSendRequested, { scope });
+    await Promise.race([waiting.promise, sending]);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(rounds, 1);
+    assert.deepEqual(started, agents.map(({ name }) => name));
+    assert.deepEqual(scope.getState($activeSubagents), agents.map(({ id, name }) => ({ id, name })));
+    assert.equal(scope.getState($replyPhase), 'subagent');
+    assert.equal(scope.getState($chatAnnouncement), 'chat.subagentsWorking');
+    workers.get(first.name)!.resolve(Response.json({ result: { answer: first.answer, name: first.name } }));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(rounds, 1);
+    assert.deepEqual(scope.getState($activeSubagents).map(({ name }) => name), [agents[1]!.name]);
+    for (const { name, answer } of agents.slice(1)) workers.get(name)!.resolve(Response.json({ result: { answer, name } }));
+    await sending;
+    assert.equal(scope.getState($replyPhase), null);
+    const reloaded = await openChat();
+    assert.equal(reloaded.getState($chatRows).at(-1)?.text, 'Порядок сцен верный.');
+    await allSettled(chatDraftChanged, { scope: reloaded, params: 'Вернись к Хронологу.' });
+    await allSettled(chatSendRequested, { scope: reloaded });
+    assert.equal(reloaded.getState($chatRows).at(-1)?.text, followUpAnswer);
+    assert.equal(rounds, 4);
+  } finally {
+    for (const { name, answer } of agents) workers.get(name)!.resolve(Response.json({ result: { answer, name } }));
     globalThis.fetch = originalFetch;
   }
 });

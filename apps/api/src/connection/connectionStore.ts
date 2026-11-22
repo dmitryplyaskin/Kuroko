@@ -75,6 +75,7 @@ export function createConnectionStore(db: Database, keys: ProviderKeyStore) {
 
   return {
     read,
+    listPresets: (userId: number) => list.all(userId).map(readPreset),
     find(userId: number, id?: string) {
       const row = id === undefined ? findActive.get(userId) : find.get(userId, id);
       return row ? readPreset(row) : null;

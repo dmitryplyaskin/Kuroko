@@ -2,10 +2,11 @@ import type { SavedChat } from '@kuroko/contracts/chat';
 import { CodedError } from '@kuroko/contracts/errors';
 import type { JsonObject, LlmMessage, LlmTool } from '@kuroko/contracts/llm';
 import type { ToolId } from '@kuroko/contracts/tools';
-import { runToolCall, toolDeclarations } from '@kuroko/tool-runtime';
+import { createSubagentBatch, recentSubagentNames, runToolCall, toolDeclarations } from '@kuroko/tool-runtime';
 import { toLlmMessages } from '@kuroko/tool-runtime/chatHistory';
 import { randomUUID } from 'node:crypto';
 import type { createLlmService } from '../llm/llmService';
+import type { createDelegateTask } from '../tools/delegateTask';
 import type { createChatStore, PrivateTurn } from './chatStore';
 
 const instructions = [
@@ -39,6 +40,7 @@ export function createGmReply(
   store: ReturnType<typeof createChatStore>,
   llm: Pick<ReturnType<typeof createLlmService>, 'generate'>,
   enabledTools: (userId: number) => readonly ToolId[],
+  delegateTask: ReturnType<typeof createDelegateTask>,
 ) {
   return async (userId: number, chat: SavedChat, signal: AbortSignal) => {
     const enabled = enabledTools(userId);
@@ -46,9 +48,13 @@ export function createGmReply(
     const privateTurns = store.privateTurns(userId, chat.id);
     const notesByReply = new Map(privateTurns.flatMap(({ replyId, turn }) =>
       turn.notes ? [[replyId, `Private GM notes (do not quote to player):\n${turn.notes}`] as const] : []));
-    const messages: LlmMessage[] = [{ role: 'system', content: instructions }, ...toLlmMessages(chat.messages, notesByReply)];
-    const callHistory = privateTurns.flatMap(({ turn }) => turn.rounds.flatMap(({ calls }) => calls));
-    callHistory.push(...chat.messages.flatMap(({ toolCalls }) => toolCalls ?? []));
+    const privateCalls = privateTurns.flatMap(({ turn }) => turn.rounds.flatMap(({ calls }) => calls));
+    const names = enabled.includes('delegate_task') ? recentSubagentNames(privateCalls) : [];
+    const context = names.length
+      ? `${instructions}\nUse these private subagent names as identifiers for follow-up tasks: ${JSON.stringify(names)}.`
+      : instructions;
+    const messages: LlmMessage[] = [{ role: 'system', content: context }, ...toLlmMessages(chat.messages, notesByReply)];
+    const callHistory = [...privateCalls, ...chat.messages.flatMap(({ toolCalls }) => toolCalls ?? [])];
     const rounds: PrivateTurn['rounds'] = [];
     let presetId: string | undefined;
     let finalize = false;
@@ -85,9 +91,13 @@ export function createGmReply(
       }
       if (round === 16) break;
 
+      const runSubagent = createSubagentBatch(privateCalls, (input, signal) => delegateTask(userId, input, signal));
       const results = await Promise.all(calls.map((call) => {
         if (call.name !== publishScene.name) {
-          return runToolCall(call, enabled, { signal, id: `gm_${randomUUID()}`, history: callHistory });
+          return runToolCall(call, enabled, {
+            signal, id: `gm_${randomUUID()}`, history: callHistory,
+            delegateTask: runSubagent,
+          });
         }
         const message: Extract<LlmMessage, { role: 'tool' }> = {
           role: 'tool', callId: call.id, isError: true,
@@ -98,6 +108,7 @@ export function createGmReply(
       const entries = results.flatMap((result) => 'entry' in result ? [result.entry] : []);
       rounds.push({ assistant, calls: entries });
       callHistory.push(...entries);
+      privateCalls.push(...entries);
       messages.push(assistant, ...results.map(({ message }) => message));
     }
     throw new GmReplyError('gm_scene_unpublished');

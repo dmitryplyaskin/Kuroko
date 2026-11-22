@@ -1,19 +1,21 @@
-import { ActionIcon, Button, Switch, TextInput } from '@mantine/core';
+import { ActionIcon, Button, NativeSelect, Switch, TextInput } from '@mantine/core';
+import { providers } from '@kuroko/contracts/connectionSettings';
 import { toolIds, type ToolId } from '@kuroko/contracts/tools';
 import { useUnit } from 'effector-react';
 import { ChevronDown, Power, Search, X } from 'lucide-react';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useI18n } from '../../shared/i18n/i18n';
 import { tools } from './catalog';
-import { $toolSettings, toolSettingChanged, toolSettingsChangeFx, toolSettingsRetried } from './model';
+import { $toolSettings, toolManagerOpened, toolSettingChanged, toolSettingsChangeFx, toolSettingsRetried } from './model';
 import { PresetControls } from '../../shared/presets/PresetControls';
 import './toolManager.css';
 
 export default function ToolManager() {
   const { t, locale, number } = useI18n();
-  const { settings, toggle, change, retry } = useUnit({
-    settings: $toolSettings, toggle: toolSettingChanged, change: toolSettingsChangeFx, retry: toolSettingsRetried,
+  const { settings, toggle, change, retry, open } = useUnit({
+    settings: $toolSettings, toggle: toolSettingChanged, change: toolSettingsChangeFx, retry: toolSettingsRetried, open: toolManagerOpened,
   });
+  useEffect(() => { open(); }, [open]);
   const [search, setSearch] = useState('');
   const searchInput = useRef<HTMLInputElement>(null);
   const query = search.trim().normalize('NFKC').toLocaleLowerCase(locale);
@@ -24,6 +26,9 @@ export default function ToolManager() {
     return terms.every((term) => text.includes(term));
   }) : toolIds;
   const disabled = settings.status !== 'ready';
+  const subagentOptions = settings.subagent?.presets.map(({ id, name, model, provider }) => ({
+    value: id, label: `${name} · ${providers[provider].label} · ${model}`,
+  })) ?? [];
 
   function clearSearch() {
     setSearch('');
@@ -63,6 +68,14 @@ export default function ToolManager() {
         </div>
         {visible.length ? <ul className="tool-manager-list" aria-label={t('tools.label')}>
           {visible.map((id) => <ToolRow key={id} id={id} enabled={settings.enabled.includes(id)} disabled={disabled}
+            configuration={id === 'delegate_task' && <NativeSelect
+              label={t('tools.delegatePreset')}
+              description={t(subagentOptions.length ? 'tools.delegatePresetHint' : 'tools.delegatePresetEmpty')}
+              disabled={disabled || !subagentOptions.length}
+              value={settings.subagent?.presetId ?? ''}
+              data={[{ value: '', label: t('tools.delegatePresetNone') }, ...subagentOptions]}
+              onChange={({ currentTarget: { value } }) => void change({ kind: 'subagent', presetId: value || null }).catch(() => {})}
+            />}
             onToggle={(enabled) => toggle({ id, enabled })} />)}
         </ul> : <div className="tool-manager-empty">
           <output>{t('tools.noResults')}</output>
@@ -73,10 +86,11 @@ export default function ToolManager() {
   );
 }
 
-function ToolRow({ id, enabled, disabled, onToggle }: {
+function ToolRow({ id, enabled, disabled, configuration, onToggle }: {
   id: ToolId;
   enabled: boolean;
   disabled: boolean;
+  configuration?: ReactNode;
   onToggle: (enabled: boolean) => void;
 }) {
   const { t } = useI18n();
@@ -94,6 +108,7 @@ function ToolRow({ id, enabled, disabled, onToggle }: {
         <ChevronDown size={16} className="tool-manager-chevron" aria-hidden="true" />
       </summary>
       <div className="tool-manager-details">
+        {configuration}
         <div className="tool-manager-details-heading">
           <h2>{t('tools.parameters')}</h2>
           <code>{id}</code>

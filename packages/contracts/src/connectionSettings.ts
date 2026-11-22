@@ -28,6 +28,10 @@ export type ConnectionState = {
   presets: ConnectionPreset[];
   keys: ProviderKey[];
 };
+
+export function isConnectionPresetId(value: unknown): value is string {
+  return typeof value === 'string' && /^[a-f\d-]{32,36}$/i.test(value);
+}
 export type ProviderModel = { id: string; inputLimit?: number; outputLimit?: number; contextLimit?: number };
 export type OpenRouterEndpoint = { tag: string; name: string };
 export const customUrlLimit = 2048;
