@@ -9,9 +9,10 @@ import { useI18n } from '../../shared/i18n/i18n';
 import { loadRealmFx } from './model';
 import { RealmEditor } from './RealmEditor';
 import { RealmLibrary, type LibraryCriteria } from './RealmLibrary';
+import type { ImportedRealm } from './realmFile';
 import './realms.css';
 
-type View = { kind: 'library' } | { kind: 'editor'; id?: string };
+type View = { kind: 'library' } | { kind: 'editor'; id?: string; imported?: ImportedRealm };
 
 export default function Realms() {
   const session = useUnit($activeSession);
@@ -27,13 +28,17 @@ export default function Realms() {
   return (
     <div className="realms-page" ref={container}>
       {view.kind === 'library' ? <RealmLibrary session={session} criteria={criteria} onCriteria={setCriteria}
-        onCreate={() => setView({ kind: 'editor' })} onOpen={(id) => setView({ kind: 'editor', id })} />
-        : <OpenRealm key={view.id ?? 'new'} session={session} id={view.id} onClose={() => setView({ kind: 'library' })} />}
+        onCreate={() => setView({ kind: 'editor' })} onOpen={(id) => setView({ kind: 'editor', id })}
+        onImport={(imported) => setView({ kind: 'editor', imported })} />
+        : <OpenRealm key={view.id ?? 'new'} session={session} id={view.id} imported={view.imported}
+          onClose={() => setView({ kind: 'library' })} />}
     </div>
   );
 }
 
-function OpenRealm({ session, id, onClose }: { session: ActiveSession; id?: string; onClose: () => void }) {
+function OpenRealm({ session, id, imported, onClose }: {
+  session: ActiveSession; id?: string; imported?: ImportedRealm; onClose: () => void;
+}) {
   const { t } = useI18n();
   const load = useUnit(loadRealmFx);
   const [saved, setSaved] = useState<SavedRealm | null>(null);
@@ -52,7 +57,7 @@ function OpenRealm({ session, id, onClose }: { session: ActiveSession; id?: stri
     return () => controller.abort();
   }, [id, load, retry, saved, session]);
 
-  if (!id || saved) return <RealmEditor session={session} initialSaved={saved ?? undefined} onClose={onClose} />;
+  if (!id || saved) return <RealmEditor session={session} initialSaved={saved ?? undefined} imported={imported} onClose={onClose} />;
   return <>
     <button type="button" className="realms-back" onClick={onClose}><ArrowLeft size={16} aria-hidden="true" />{t('realms.back')}</button>
     <header className="page-heading realms-heading"><h1 tabIndex={-1}>{t('realms.label')}</h1></header>

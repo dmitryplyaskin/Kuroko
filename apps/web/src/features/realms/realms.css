@@ -41,6 +41,7 @@
 .realms-view-label { display: flex; align-items: center; gap: 6px; }
 .realms-columns { display: flex; align-items: center; gap: 8px; }
 .realms-columns select { inline-size: 4rem; }
+.realms-filter-toggle { --ai-radius: var(--kr-radius-control); }
 .realms-filter-toggle[data-selected] { background: var(--kr-accent-surface); color: var(--kr-accent); }
 .realms-filters-panel { display: grid; gap: 12px; padding: 16px; border-block-end: 1px solid var(--kr-border); }
 .realms-filter-fields { display: grid; align-items: start; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
@@ -385,12 +386,8 @@
 }
 
 @container (max-width: 26rem) {
-  .realms-toolbar-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .realms-toolbar-options > .mantine-NativeSelect-root { grid-column: 1 / -1; }
   .realms-toolbar-options, .realms-toolbar > .mantine-TextInput-root { flex-basis: 100%; }
-  .realms-toolbar-options { inline-size: 100%; }
-  .realms-filter-toggle { padding-inline: 8px; }
-  .realms-filter-toggle .mantine-Button-label { white-space: normal; }
+  .realms-toolbar-options > .mantine-NativeSelect-root { flex: 1; }
   .realms-filter-fields { grid-template-columns: minmax(0, 1fr); }
   .realms-view-options { margin-inline-start: 0; }
 }
@@ -400,8 +397,4 @@
   .realms-ordered-label { gap: 8px; }
   .realms-modal-actions, .realms-record-toolbar, .realms-section-settings { display: grid; grid-template-columns: minmax(0, 1fr); }
   .realms-record-toolbar > .realms-actions { grid-column: 1; }
-}
-
-@container (max-width: 20rem) {
-  .realms-filter-toggle .mantine-Button-section { display: none; }
 }

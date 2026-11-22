@@ -1,4 +1,4 @@
-import { Button, FileButton, Modal, NativeSelect, SegmentedControl, TextInput } from '@mantine/core';
+import { ActionIcon, Button, FileButton, Modal, NativeSelect, SegmentedControl, TextInput } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { defaultRealmFilters, realmPageSize, realmSearchMaxLength, realmSorts, type Realm, type RealmFilters,
   type RealmSort, type RealmSummary } from '@kuroko/contracts/realms';
@@ -13,16 +13,17 @@ import { realmGridColumnOptions, realmGridColumns, realmLibraryView } from './mo
 import { RealmAvatar } from './RealmAvatar';
 import { RealmFavoriteButton } from './RealmFavoriteButton';
 import { advancedRealmFilterCount, RealmFiltersPanel } from './RealmFiltersPanel';
-import { readRealmFile } from './realmFile';
+import { readRealmFile, type ImportedRealm } from './realmFile';
 
 export type LibraryCriteria = { q: string; sort: RealmSort; offset: number; filters: RealmFilters };
 
-export function RealmLibrary({ session, criteria, onCriteria, onOpen, onCreate }: {
+export function RealmLibrary({ session, criteria, onCriteria, onOpen, onCreate, onImport }: {
   session: ActiveSession;
   criteria: LibraryCriteria;
   onCriteria: (criteria: LibraryCriteria) => void;
   onOpen: (id: string) => void;
   onCreate: () => void;
+  onImport: (imported: ImportedRealm) => void;
 }) {
   const { t, number } = useI18n();
   const [state, list, save] = useUnit([$realmList, listRealmsFx, saveRealmFx]);
@@ -42,6 +43,8 @@ export function RealmLibrary({ session, criteria, onCriteria, onOpen, onCreate }
   const searching = query !== q.trim();
   const filterCount = advancedRealmFilterCount(filters);
   const narrowed = Boolean(query || filterCount || filters.favorites);
+  const filterLabel = filterCount ? t('realms.filtersCount', { count: number.format(filterCount) }) : t('realms.filters');
+  const favoritesLabel = t('realms.favorites');
 
   useEffect(() => {
     if (searching) return;
@@ -64,14 +67,26 @@ export function RealmLibrary({ session, criteria, onCriteria, onOpen, onCreate }
     onCriteria({ ...criteria, filters, offset: 0 });
   }
 
-  async function importCard(read: () => Realm | Promise<Realm>) {
+  async function importCard(input: File | Realm) {
     if (importing) return;
     setImportIssue(null);
     setImporting(true);
     let realm: Realm | undefined;
     try {
-      realm = await read();
-      if (session.signal.aborted) return;
+      if (input instanceof File) {
+        const result = await readRealmFile(input, {
+          start: t('realms.importStart'),
+          alternateStart: (index) => t('realms.importAlternateStart', { number: number.format(index) }),
+        });
+        if (session.signal.aborted) return;
+        if (result.source === 'sillytavern') {
+          onImport(result);
+          return;
+        }
+        realm = result.realm;
+      } else {
+        realm = input;
+      }
       const saved = await save({ session, realm });
       if (!session.signal.aborted) onOpen(saved.id);
     } catch (error) {
@@ -87,7 +102,7 @@ export function RealmLibrary({ session, criteria, onCriteria, onOpen, onCreate }
   function pickFile(file: File | null) {
     if (!file) return;
     resetFile.current?.();
-    void importCard(() => readRealmFile(file));
+    void importCard(file);
   }
 
   function closeCopy() {
@@ -104,7 +119,7 @@ export function RealmLibrary({ session, criteria, onCriteria, onOpen, onCreate }
       <header className="page-heading realms-heading">
         <h1 tabIndex={-1}>{t('realms.label')}</h1>
         <div className="realms-actions realms-heading-actions">
-          <FileButton accept=".json,application/json" resetRef={resetFile} onChange={pickFile}>
+          <FileButton accept=".json,application/json,.png,image/png" resetRef={resetFile} onChange={pickFile}>
             {(props) => <Button {...props} variant="default" loading={importing && !copy}
               leftSection={<Upload size={16} aria-hidden="true" />}>{t('realms.import')}</Button>}
           </FileButton>
@@ -122,16 +137,16 @@ export function RealmLibrary({ session, criteria, onCriteria, onOpen, onCreate }
             <NativeSelect aria-label={t('realms.sort')} value={sort}
               data={realmSorts.map((value) => ({ value, label: t(`realms.sort.${value}`) }))}
               onChange={(event) => onCriteria({ ...criteria, sort: event.currentTarget.value as RealmSort, offset: 0 })} />
-            <Button type="button" variant="default" className="realms-filter-toggle" aria-expanded={filtersOpen} aria-controls={panelId}
-              data-selected={filtersOpen || filterCount > 0 || undefined} onClick={() => setFiltersOpen((open) => !open)}
-              leftSection={<SlidersHorizontal size={16} aria-hidden="true" />}>
-              {filterCount ? t('realms.filtersCount', { count: number.format(filterCount) }) : t('realms.filters')}
-            </Button>
-            <Button type="button" variant="default" className="realms-filter-toggle" aria-pressed={filters.favorites}
-              data-selected={filters.favorites || undefined} onClick={() => changeFilters({ ...filters, favorites: !filters.favorites })}
-              leftSection={<Star size={16} fill={filters.favorites ? 'currentColor' : 'none'} aria-hidden="true" />}>
-              {t('realms.favorites')}
-            </Button>
+            <ActionIcon type="button" variant="default" size={40} className="realms-filter-toggle" aria-label={filterLabel} title={filterLabel}
+              aria-expanded={filtersOpen} aria-controls={panelId} data-selected={filtersOpen || filterCount > 0 || undefined}
+              onClick={() => setFiltersOpen((open) => !open)}>
+              <SlidersHorizontal size={18} aria-hidden="true" />
+            </ActionIcon>
+            <ActionIcon type="button" variant="default" size={40} className="realms-filter-toggle" aria-label={favoritesLabel} title={favoritesLabel}
+              aria-pressed={filters.favorites} data-selected={filters.favorites || undefined}
+              onClick={() => changeFilters({ ...filters, favorites: !filters.favorites })}>
+              <Star size={18} fill={filters.favorites ? 'currentColor' : 'none'} aria-hidden="true" />
+            </ActionIcon>
           </div>
           <div className="realms-view-options">
             <SegmentedControl aria-label={t('realms.view')} value={view} onChange={changeView}
@@ -186,7 +201,7 @@ export function RealmLibrary({ session, criteria, onCriteria, onOpen, onCreate }
         {error}
         <div className="realms-modal-actions">
           <Button variant="default" data-autofocus disabled={importing} onClick={closeCopy}>{t('common.cancel')}</Button>
-          <Button loading={importing} onClick={() => { if (copy) void importCard(() => copy); }}>{t('realms.importCopy')}</Button>
+          <Button loading={importing} onClick={() => { if (copy) void importCard(copy); }}>{t('realms.importCopy')}</Button>
         </div>
       </Modal>
     </>

@@ -11,19 +11,21 @@ import { AvatarEditor, PreviewableRealmAvatar } from './RealmAvatar';
 import { getRealmSection, RealmContents, realmParts, sectionPart, type RealmPart } from './RealmContents';
 import { RealmFavoriteButton } from './RealmFavoriteButton';
 import { EntriesEditor, RecordEditor, StartFields } from './RealmFields';
-import { downloadRealmFile } from './realmFile';
+import { downloadRealmFile, type ImportedRealm } from './realmFile';
 
 type SaveIssue = { code: ErrorCode; field?: string };
 
-export function RealmEditor({ session, initialSaved, onClose }: {
+export function RealmEditor({ session, initialSaved, imported, onClose }: {
   session: ActiveSession;
   initialSaved?: SavedRealm;
+  imported?: ImportedRealm;
   onClose: () => void;
 }) {
   const { t } = useI18n();
   const [save, remove] = useUnit([saveRealmFx, deleteRealmFx]);
   const [saved, setSaved] = useState(initialSaved);
-  const [blank] = useState<Realm>(() => ({ specVersion: realmSpecVersion, id: initialSaved?.realm.id ?? newRealmId(), title: '', base: '' }));
+  const [blank] = useState<Realm>(() => imported?.realm ??
+    ({ specVersion: realmSpecVersion, id: initialSaved?.realm.id ?? newRealmId(), title: '', base: '' }));
   const initial = saved?.realm ?? blank;
   const [draft, setDraft] = useState(initial);
   const [part, onPart] = useState<RealmPart>('base');
@@ -38,15 +40,16 @@ export function RealmEditor({ session, initialSaved, onClose }: {
   const [favoriteError, setFavoriteError] = useState<ErrorCode | null>(null);
   const focusSection = useRef<string>(null);
   const dirty = draft !== initial;
+  const unsavedImport = Boolean(imported && !saved);
   const section = getRealmSection(draft, part);
   const busy = saving || deleting || avatarPending;
 
   useEffect(() => {
-    if (!dirty) return;
+    if (!dirty && !unsavedImport) return;
     const confirmUnload = (event: BeforeUnloadEvent) => { event.preventDefault(); };
     window.addEventListener('beforeunload', confirmUnload);
     return () => window.removeEventListener('beforeunload', confirmUnload);
-  }, [dirty]);
+  }, [dirty, unsavedImport]);
 
   function patch(patch: Partial<Realm>, removed?: boolean) {
     setDraft((current) => {
@@ -157,7 +160,7 @@ export function RealmEditor({ session, initialSaved, onClose }: {
   return (
     <form className="realms-editor" onSubmit={(event) => void submit(event)} noValidate>
       <div className="realms-editor-nav">
-        <button type="button" className="realms-back" disabled={busy} onClick={() => dirty ? setDialog('leave') : onClose()}>
+        <button type="button" className="realms-back" disabled={busy} onClick={() => dirty || unsavedImport ? setDialog('leave') : onClose()}>
           <ArrowLeft size={16} aria-hidden="true" />{t('realms.back')}
         </button>
         <div className="realms-actions">
@@ -170,8 +173,8 @@ export function RealmEditor({ session, initialSaved, onClose }: {
       </div>
       <header className="page-heading realms-heading">
         <div className="realms-title">
-          {saved && <PreviewableRealmAvatar src={draft.avatar} kind="realm" />}
-          <h1 tabIndex={-1}>{saved?.realm.title ?? t('realms.create')}</h1>
+          {(saved || unsavedImport) && <PreviewableRealmAvatar src={draft.avatar} kind="realm" />}
+          <h1 tabIndex={-1}>{saved?.realm.title ?? (unsavedImport && draft.title ? draft.title : t('realms.create'))}</h1>
         </div>
         <div className="realms-actions realms-heading-actions">
           {saveNotice && <output className="realms-muted">{t('realms.saved')}</output>}
@@ -185,6 +188,9 @@ export function RealmEditor({ session, initialSaved, onClose }: {
       </header>
       {favoriteError && <p className="realms-error realms-save-error" role="alert">{t(`error.${favoriteError}`)}</p>}
       {issue && <p className="realms-error realms-save-error" role="alert">{t(issueMessage(issue))}</p>}
+      {unsavedImport && imported?.avatarFailed && !draft.avatar && <div className="realms-save-error">
+        <output className="realms-muted">{t('realms.importAvatarWarning')}</output>
+      </div>}
       <fieldset className="realms-edit-fields" disabled={busy}>
         <RealmContents realm={draft} part={part} onPart={onPart} onCreateSection={createSection}>
           {part === 'base' && <div className="realms-record-fields">
