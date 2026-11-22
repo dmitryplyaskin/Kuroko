@@ -103,7 +103,6 @@ export const ru = {
   'realms.view': "Вид библиотеки",
   'realms.view.list': "Список",
   'realms.view.grid': "Сетка",
-  'realms.columns': "Колонки",
   'realms.sort': "Сортировка миров",
   'realms.sort.updated': "Недавно изменённые",
   'realms.sort.created': "Недавно созданные",

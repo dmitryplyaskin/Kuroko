@@ -39,8 +39,6 @@
 .realms-toolbar-options .mantine-NativeSelect-root { min-inline-size: 0; }
 .realms-view-options { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-inline-start: auto; }
 .realms-view-label { display: flex; align-items: center; gap: 6px; }
-.realms-columns { display: flex; align-items: center; gap: 8px; }
-.realms-columns select { inline-size: 4rem; }
 .realms-filter-toggle { --ai-radius: var(--kr-radius-control); }
 .realms-filter-toggle[data-selected] { background: var(--kr-accent-surface); color: var(--kr-accent); }
 .realms-filters-panel { display: grid; gap: 12px; padding: 16px; border-block-end: 1px solid var(--kr-border); }
@@ -119,11 +117,9 @@
 }
 
 .realms-list[data-view='grid'] {
-  --realms-grid-gap: 12px;
-  --realms-column-width: calc((100% - (var(--realms-columns) - 1) * var(--realms-grid-gap)) / var(--realms-columns));
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, max(10rem, var(--realms-column-width))), 1fr));
-  gap: var(--realms-grid-gap);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
   padding: 16px;
 }
 
@@ -369,6 +365,10 @@
   .realms-index-custom { margin: 0; padding: 0; padding-inline-start: 8px; border: 0; border-inline-start: 1px solid var(--kr-border); }
   .realms-index-choice { justify-content: start; max-inline-size: 12rem; }
   .realms-create-section { justify-self: end; }
+}
+
+@media (max-width: 740px) {
+  .realms-list[data-view='grid'] { grid-template-columns: minmax(0, 1fr); }
 }
 
 @container (max-width: 34rem) {

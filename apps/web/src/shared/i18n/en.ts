@@ -105,7 +105,6 @@ export const en = {
   'realms.view': "Library view",
   'realms.view.list': "List",
   'realms.view.grid': "Grid",
-  'realms.columns': "Columns",
   'realms.sort': "Sort realms",
   'realms.sort.updated': "Recently updated",
   'realms.sort.created': "Recently created",

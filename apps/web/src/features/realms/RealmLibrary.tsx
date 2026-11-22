@@ -4,12 +4,12 @@ import { defaultRealmFilters, realmPageSize, realmSearchMaxLength, realmSorts, t
   type RealmSort, type RealmSummary } from '@kuroko/contracts/realms';
 import { useUnit } from 'effector-react';
 import { ChevronLeft, ChevronRight, LayoutGrid, List, Plus, Search, SlidersHorizontal, Star, Upload } from 'lucide-react';
-import { useEffect, useId, useRef, useState, type CSSProperties } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import type { ActiveSession } from '../../platform/session/model';
 import { ApiError, errorCode, type ErrorCode } from '../../shared/http/api';
 import { useI18n } from '../../shared/i18n/i18n';
 import { $realmList, listRealmsFx, newRealmId, saveRealmFx } from './model';
-import { realmGridColumnOptions, realmGridColumns, realmLibraryView } from './module';
+import { realmLibraryView } from './module';
 import { RealmAvatar } from './RealmAvatar';
 import { RealmFavoriteButton } from './RealmFavoriteButton';
 import { advancedRealmFilterCount, RealmFiltersPanel } from './RealmFiltersPanel';
@@ -27,9 +27,7 @@ export function RealmLibrary({ session, criteria, onCriteria, onOpen, onCreate, 
 }) {
   const { t, number } = useI18n();
   const [state, list, save] = useUnit([$realmList, listRealmsFx, saveRealmFx]);
-  const [view, changeView, columns, changeColumns] = useUnit([
-    realmLibraryView.$value, realmLibraryView.changed, realmGridColumns.$value, realmGridColumns.changed,
-  ]);
+  const [view, changeView] = useUnit([realmLibraryView.$value, realmLibraryView.changed]);
   const [retry, setRetry] = useState(0);
   const resetFile = useRef<() => void>(null);
   const [importing, setImporting] = useState(false);
@@ -154,8 +152,6 @@ export function RealmLibrary({ session, criteria, onCriteria, onOpen, onCreate, 
                 { value: 'list', label: <span className="realms-view-label"><List size={16} aria-hidden="true" />{t('realms.view.list')}</span> },
                 { value: 'grid', label: <span className="realms-view-label"><LayoutGrid size={16} aria-hidden="true" />{t('realms.view.grid')}</span> },
               ]} />
-            {view === 'grid' && <NativeSelect className="realms-columns" label={t('realms.columns')} value={columns}
-              data={realmGridColumnOptions} onChange={(event) => changeColumns(event.currentTarget.value)} />}
           </div>
         </div>
         <div id={panelId} hidden={!filtersOpen}>
@@ -176,8 +172,7 @@ export function RealmLibrary({ session, criteria, onCriteria, onOpen, onCreate, 
           </div>}
           {data && data.items.length > 0 && (
             <>
-              <ul className="realms-list" data-view={view} aria-label={t('realms.label')}
-                style={{ '--realms-columns': columns } as CSSProperties}>
+              <ul className="realms-list" data-view={view} aria-label={t('realms.label')}>
                 {data.items.map((item) => <RealmLibraryItem key={item.id} session={session} item={item} disabled={importing}
                   onOpen={() => onOpen(item.id)} onFavoriteError={setFavoriteError} />)}
               </ul>
