@@ -1,14 +1,15 @@
-import { Button, FileButton, Modal, NativeSelect, TextInput } from '@mantine/core';
+import { Button, FileButton, Modal, NativeSelect, SegmentedControl, TextInput } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { defaultRealmFilters, realmPageSize, realmSearchMaxLength, realmSorts, type Realm, type RealmFilters,
   type RealmSort, type RealmSummary } from '@kuroko/contracts/realms';
 import { useUnit } from 'effector-react';
-import { ChevronLeft, ChevronRight, Plus, Search, SlidersHorizontal, Star, Upload } from 'lucide-react';
-import { useEffect, useId, useRef, useState } from 'react';
+import { ChevronLeft, ChevronRight, LayoutGrid, List, Plus, Search, SlidersHorizontal, Star, Upload } from 'lucide-react';
+import { useEffect, useId, useRef, useState, type CSSProperties } from 'react';
 import type { ActiveSession } from '../../platform/session/model';
 import { ApiError, errorCode, type ErrorCode } from '../../shared/http/api';
 import { useI18n } from '../../shared/i18n/i18n';
 import { $realmList, listRealmsFx, newRealmId, saveRealmFx } from './model';
+import { realmGridColumnOptions, realmGridColumns, realmLibraryView } from './module';
 import { RealmAvatar } from './RealmAvatar';
 import { RealmFavoriteButton } from './RealmFavoriteButton';
 import { advancedRealmFilterCount, RealmFiltersPanel } from './RealmFiltersPanel';
@@ -25,6 +26,9 @@ export function RealmLibrary({ session, criteria, onCriteria, onOpen, onCreate }
 }) {
   const { t, number } = useI18n();
   const [state, list, save] = useUnit([$realmList, listRealmsFx, saveRealmFx]);
+  const [view, changeView, columns, changeColumns] = useUnit([
+    realmLibraryView.$value, realmLibraryView.changed, realmGridColumns.$value, realmGridColumns.changed,
+  ]);
   const [retry, setRetry] = useState(0);
   const resetFile = useRef<() => void>(null);
   const [importing, setImporting] = useState(false);
@@ -129,6 +133,15 @@ export function RealmLibrary({ session, criteria, onCriteria, onOpen, onCreate }
               {t('realms.favorites')}
             </Button>
           </div>
+          <div className="realms-view-options">
+            <SegmentedControl aria-label={t('realms.view')} value={view} onChange={changeView}
+              data={[
+                { value: 'list', label: <span className="realms-view-label"><List size={16} aria-hidden="true" />{t('realms.view.list')}</span> },
+                { value: 'grid', label: <span className="realms-view-label"><LayoutGrid size={16} aria-hidden="true" />{t('realms.view.grid')}</span> },
+              ]} />
+            {view === 'grid' && <NativeSelect className="realms-columns" label={t('realms.columns')} value={columns}
+              data={realmGridColumnOptions} onChange={(event) => changeColumns(event.currentTarget.value)} />}
+          </div>
         </div>
         <div id={panelId} hidden={!filtersOpen}>
           {filtersOpen && <RealmFiltersPanel session={session} filters={filters} onChange={changeFilters} />}
@@ -148,8 +161,9 @@ export function RealmLibrary({ session, criteria, onCriteria, onOpen, onCreate }
           </div>}
           {data && data.items.length > 0 && (
             <>
-              <ul className="realms-list" aria-label={t('realms.label')}>
-                {data.items.map((item) => <RealmRow key={item.id} session={session} item={item} disabled={importing}
+              <ul className="realms-list" data-view={view} aria-label={t('realms.label')}
+                style={{ '--realms-columns': columns } as CSSProperties}>
+                {data.items.map((item) => <RealmLibraryItem key={item.id} session={session} item={item} disabled={importing}
                   onOpen={() => onOpen(item.id)} onFavoriteError={setFavoriteError} />)}
               </ul>
               {data.total > realmPageSize && <nav className="realms-pagination" aria-label={t('realms.pagination')}>
@@ -179,7 +193,7 @@ export function RealmLibrary({ session, criteria, onCriteria, onOpen, onCreate }
   );
 }
 
-function RealmRow({ session, item, disabled, onOpen, onFavoriteError }: {
+function RealmLibraryItem({ session, item, disabled, onOpen, onFavoriteError }: {
   session: ActiveSession;
   item: RealmSummary;
   disabled: boolean;
@@ -190,14 +204,17 @@ function RealmRow({ session, item, disabled, onOpen, onFavoriteError }: {
   const modified = new Date(item.updatedAt);
   return (
     <li>
-      <button type="button" className="realms-row" disabled={disabled} onClick={onOpen}>
-        <RealmAvatar src={item.hasAvatar ? `/api/realms/${encodeURIComponent(item.id)}/avatar` : undefined} kind="realm" />
-        <span className="realms-row-copy">
+      <button type="button" className="realms-item" disabled={disabled} onClick={onOpen}>
+        <RealmAvatar src={item.hasAvatar ? `/api/realms/${encodeURIComponent(item.id)}/avatar` : undefined} kind="realm" lazy />
+        <span className="realms-item-copy">
           <strong>{item.title}</strong>
-          <span className="realms-row-excerpt">{item.excerpt}</span>
+          {item.excerpt && <span className="realms-item-excerpt">{item.excerpt}</span>}
+          {Boolean(item.tags?.length) && <span className="realms-item-tags">
+            {item.tags?.map((tag) => <span key={tag}>{tag}</span>)}
+          </span>}
         </span>
-        <span className="realms-row-meta">
-          <span className="realms-row-counts">
+        <span className="realms-item-meta">
+          <span className="realms-item-counts">
             <span>{t('realms.part.characters')} {number.format(item.characters)}</span>
             <span>{t('realms.part.starts')} {number.format(item.starts)}</span>
           </span>

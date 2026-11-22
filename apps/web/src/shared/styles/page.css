@@ -9,13 +9,10 @@
 }
 
 .page-container {
-  --page-container-width: 68rem;
   min-inline-size: 0;
-  inline-size: min(100%, var(--page-container-width));
+  inline-size: min(100%, 77rem);
   margin-inline: auto;
 }
-
-.page-container[data-size='wide'] { --page-container-width: 77rem; }
 
 .page-heading { margin-block-end: 26px; }
 .page-heading p { margin-block-start: 9px; color: var(--kr-muted); }

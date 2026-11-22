@@ -7,7 +7,7 @@ import type { ActiveSession } from '../../platform/session/model';
 import { ApiError, errorCode, type ErrorCode } from '../../shared/http/api';
 import { useI18n, type MessageKey } from '../../shared/i18n/i18n';
 import { deleteRealmFx, newRealmId, saveRealmFx } from './model';
-import { AvatarEditor, RealmAvatar } from './RealmAvatar';
+import { AvatarEditor, PreviewableRealmAvatar } from './RealmAvatar';
 import { getRealmSection, RealmContents, realmParts, sectionPart, type RealmPart } from './RealmContents';
 import { RealmFavoriteButton } from './RealmFavoriteButton';
 import { EntriesEditor, RecordEditor, StartFields } from './RealmFields';
@@ -170,7 +170,7 @@ export function RealmEditor({ session, initialSaved, onClose }: {
       </div>
       <header className="page-heading realms-heading">
         <div className="realms-title">
-          {saved && <RealmAvatar src={draft.avatar} kind="realm" />}
+          {saved && <PreviewableRealmAvatar src={draft.avatar} kind="realm" />}
           <h1 tabIndex={-1}>{saved?.realm.title ?? t('realms.create')}</h1>
         </div>
         <div className="realms-actions realms-heading-actions">

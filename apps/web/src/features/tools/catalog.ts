@@ -1,7 +1,9 @@
 import type { JsonObject } from '@kuroko/contracts/llm';
 import type { ToolId } from '@kuroko/contracts/tools';
+import { CircleCheck, Dices, History, Radio, type LucideIcon } from 'lucide-react';
 import type { MessageKey } from '../../shared/i18n/i18n';
 type ToolDefinition = {
+  icon: LucideIcon;
   label: MessageKey;
   description: MessageKey;
   parameters: readonly { name: string; description: MessageKey }[];
@@ -10,6 +12,7 @@ type ToolDefinition = {
 
 export const tools: Record<ToolId, ToolDefinition> = {
   roll_dice: {
+    icon: Dices,
     label: 'tools.dice',
     description: 'tools.diceDescription',
     parameters: [
@@ -20,6 +23,7 @@ export const tools: Record<ToolId, ToolDefinition> = {
     example: { rolls: { attack: '2d20kh1 + 5', hit: '$attack >= 15', damage: 'if($hit, 2d6! + 3, 0)' } },
   },
   resolveCheck: {
+    icon: CircleCheck,
     label: 'tools.check',
     description: 'tools.checkDescription',
     parameters: [
@@ -35,12 +39,14 @@ export const tools: Record<ToolId, ToolDefinition> = {
     example: { profile: 'attack', sides: 12, target: 9, modifier: 2, mode: 'advantage', damage: { normal: 'd6 + 3', critical: '2d6 + 3' } },
   },
   getRollDetails: {
+    icon: History,
     label: 'tools.rollDetails',
     description: 'tools.rollDetailsDescription',
     parameters: [{ name: 'rollIds', description: 'tools.rollDetailsIds' }],
     example: { rollIds: ['roll-id'] },
   },
   test_echo: {
+    icon: Radio,
     label: 'tools.echo',
     description: 'tools.echoDescription',
     parameters: [{ name: 'text', description: 'tools.echoText' }],

@@ -81,7 +81,7 @@ export function Workspace({ user, registry, model }: {
         </nav>
         <Profile user={user} />
       </aside>
-      <main className="workspace-content page-container" data-size="wide" data-layout={screen.layout} ref={main} tabIndex={-1}>
+      <main className="workspace-content page-container" data-layout={screen.layout} ref={main} tabIndex={-1}>
         <ModuleExtensionsProvider registry={registry}>
           <SettingsNavigationProvider value={settings}>
             {registry.screens.map((entry) => {

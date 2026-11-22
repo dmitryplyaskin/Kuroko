@@ -38,6 +38,7 @@ export type RealmSummary = Pick<SavedRealm, 'id' | 'createdAt' | 'updatedAt' | '
   excerpt: string;
   characters: number;
   starts: number;
+  tags?: string[];
   hasAvatar?: true;
 };
 export const realmSorts = ['updated', 'created', 'title-asc', 'title-desc'] as const;

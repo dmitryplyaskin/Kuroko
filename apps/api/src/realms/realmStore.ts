@@ -7,7 +7,11 @@ import { randomUUID } from 'node:crypto';
 import { realmFilterKey, realmTagKeys } from './realmFilterKeys';
 
 type Row = Omit<SavedRealm, 'realm' | 'favorite'> & { documentId: string; documentJson: string; favorite: 0 | 1 };
-type SummaryRow = Omit<RealmSummary, 'hasAvatar' | 'favorite'> & { hasAvatar: 0 | 1; favorite: 0 | 1 };
+type SummaryRow = Omit<RealmSummary, 'hasAvatar' | 'favorite' | 'tags'> & {
+  hasAvatar: 0 | 1;
+  favorite: 0 | 1;
+  tagsJson: string | null;
+};
 type FilterArgs = [number, string, string, string, RealmStartsFilter, number];
 
 const rowFields = 'id, revision, created_at AS createdAt, updated_at AS updatedAt, document_id AS documentId, document_json AS documentJson, favorite';
@@ -70,6 +74,7 @@ function sortedOptions(options: Map<string, string>): RealmFilterOption[] {
 export function createRealmStore(db: Database) {
   const lists = new Map(realmSorts.map((sort) => [sort, db.query<SummaryRow, [...FilterArgs, number, number]>(`
     SELECT id, title, excerpt, created_at AS createdAt, updated_at AS updatedAt, favorite,
+      json_extract(document_json, '$.tags') AS tagsJson,
       json_type(document_json, '$.avatar') IS NOT NULL AS hasAvatar,
       coalesce(json_array_length(document_json, '$.characters'), 0) AS characters,
       coalesce(json_array_length(document_json, '$.starts'), 0) AS starts
@@ -103,9 +108,10 @@ export function createRealmStore(db: Database) {
   const list = db.transaction((userId: number, { q, sort, limit, offset, filters }: RealmListQuery) => {
     const args: FilterArgs = [userId, realmSearchKey(q), realmFilterKey(filters.author), realmTagKeys(filters.tags),
       filters.starts, Number(filters.favorites)];
-    const items: RealmSummary[] = lists.get(sort)!.all(...args, limit, offset).map(({ hasAvatar, favorite, ...row }) => ({
-      ...row, ...(hasAvatar ? { hasAvatar: true } : {}), ...favoriteMetadata(favorite),
-    }));
+    const items: RealmSummary[] = lists.get(sort)!.all(...args, limit, offset).map(({ hasAvatar, favorite, tagsJson, ...row }) => {
+      const tags = tagsJson ? JSON.parse(tagsJson) as string[] : [];
+      return { ...row, ...(tags.length ? { tags } : {}), ...(hasAvatar ? { hasAvatar: true } : {}), ...favoriteMetadata(favorite) };
+    });
     return { items, total: count.get(...args)!.total };
   });
 

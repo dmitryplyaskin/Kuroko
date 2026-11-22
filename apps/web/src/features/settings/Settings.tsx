@@ -11,7 +11,7 @@ export default function SettingsPage() {
   const description = tabs.find(({ key }) => key === selectedKey)?.description;
 
   return (
-    <div className="page-container">
+    <>
       <header className="page-heading">
         <h1 tabIndex={-1}>{t('settings.label')}</h1>
         {description && <p>{t(description)}</p>}
@@ -29,6 +29,6 @@ export default function SettingsPage() {
           <Tabs.Panel key={tab.id} value={tab.key}><ModuleView entry={tab} /></Tabs.Panel>
         ))}
       </Tabs>
-    </div>
+    </>
   );
 }

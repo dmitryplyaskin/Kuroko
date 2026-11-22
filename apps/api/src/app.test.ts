@@ -7,6 +7,7 @@ import { defaultChatSettings } from '@kuroko/contracts/chatSettings';
 import { defaultConnectionSettings, type ConnectionState, type ProviderKey } from '@kuroko/contracts/connectionSettings';
 import type { LlmRequest } from '@kuroko/contracts/llm';
 import type { Realm, RealmList, SavedRealm } from '@kuroko/contracts/realms';
+import type { ToolsResponse } from '@kuroko/contracts/tools';
 import { createApp } from './app';
 import { openDatabase } from './storage/database';
 
@@ -150,7 +151,7 @@ test('stores realm metadata and avatars and serves the library image only to its
     const list = await request(`/realms?${new URLSearchParams({ q })}`, { cookie });
     expect(await list.json()).toEqual({ items: [{
       id: saved.id, title: realm.title, excerpt: realm.description, createdAt: saved.createdAt, updatedAt: saved.updatedAt,
-      characters: 1, starts: 0, hasAvatar: true,
+      characters: 1, starts: 0, hasAvatar: true, tags: ['Навигация'],
     }], total: 1 });
   }
   const image = await request(`${path}/avatar`, { cookie });
@@ -207,6 +208,7 @@ test('combines realm filters and keeps favorites separate from the card revision
   } });
   expect(edited.status).toBe(200);
   expect(await edited.json()).toMatchObject({ favorite: true, revision: 1 });
+  expect((await list('favorites=1')).items[0]?.tags).toEqual(['Ветер']);
   expect(await titles(query([['favorites', '1'], ['tag', 'ветер']]))).toEqual(['Маяк']);
   expect(await titles(query([['favorites', '1'], ['tag', 'море']]))).toEqual([]);
   expect(await (await favorite(false)).json()).toEqual({ id: island.id, favorite: false });
@@ -267,6 +269,42 @@ test('persists independently enabled tools for the signed-in account', async () 
   expect(await (await set('resolveCheck', true)).json()).toEqual({ enabled: ['resolveCheck', 'test_echo'] });
   expect(await (await set('getRollDetails', true)).json()).toEqual({ enabled: ['getRollDetails', 'resolveCheck', 'test_echo'] });
   expect(await (await request(path, { cookie: other })).json()).toEqual({ enabled: [] });
+});
+
+test('saves private tool selections and applies or clears them as a whole', async () => {
+  await register('presets-owner');
+  await register('presets-other');
+  const cookie = sessionCookie(await login('presets-owner')).token;
+  const other = sessionCookie(await login('presets-other')).token;
+  const path = '/settings/tools';
+  const create = (name: string, enabled: unknown, owner = cookie) => request(`${path}/presets`, {
+    method: 'POST', cookie: owner, body: { name, enabled },
+  });
+  const clear = () => request(`${path}/enabled`, { method: 'DELETE', cookie });
+
+  expect((await create(' ', [])).status).toBe(400);
+  expect((await create('Unknown', ['unknown'])).status).toBe(400);
+  expect((await create('Duplicate', ['roll_dice', 'roll_dice'])).status).toBe(400);
+  const result = await create('  Проверки  ', ['roll_dice', 'resolveCheck']);
+  expect(result.status).toBe(201);
+  const state = await result.json() as ToolsResponse;
+  const preset = state.presets![0]!;
+  expect(state).toEqual({ enabled: [], presets: [{ id: preset.id, name: 'Проверки', enabled: ['roll_dice', 'resolveCheck'] }] });
+  expect((await create('Проверки', [])).status).toBe(409);
+  expect((await create('Проверки', [], other)).status).toBe(201);
+  const presetPath = `${path}/presets/${preset.id}`;
+  const apply = (owner = cookie) => request(`${presetPath}/apply`, { method: 'PUT', cookie: owner });
+  expect((await apply(other)).status).toBe(404);
+  expect((await request(presetPath, { method: 'DELETE', cookie: other })).status).toBe(404);
+  await request(`${path}/test_echo`, { method: 'PUT', cookie, body: { enabled: true } });
+  expect(await (await apply()).json()).toEqual({ enabled: ['resolveCheck', 'roll_dice'], presets: [preset] });
+  expect(await (await clear()).json()).toEqual(state);
+  expect(await (await clear()).json()).toEqual(state);
+  expect(await (await request(path, { cookie })).json()).toEqual(state);
+
+  await apply();
+  expect(await (await request(presetPath, { method: 'DELETE', cookie })).json()).toEqual({ enabled: ['resolveCheck', 'roll_dice'] });
+  expect((await apply()).status).toBe(404);
 });
 
 test('stores chats by account and rejects stale writes without losing the saved history', async () => {

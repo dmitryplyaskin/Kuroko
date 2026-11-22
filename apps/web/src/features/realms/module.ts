@@ -1,4 +1,14 @@
 import type { WebModule } from '../../modules/contracts';
+import { createBrowserPreference } from '../../shared/browser/preferences';
+
+export const realmLibraryView = createBrowserPreference<'list' | 'grid'>(
+  'kuroko-realms-view', 'list', (value) => value === 'grid' ? 'grid' : 'list', String,
+);
+
+export const realmGridColumnOptions = ['1', '2', '3', '4', '5', '6'];
+export const realmGridColumns = createBrowserPreference(
+  'kuroko-realms-columns', '3', (value) => value && realmGridColumnOptions.includes(value) ? value : '3', String,
+);
 
 export const realmsModule = {
   id: 'kuroko.realms',
