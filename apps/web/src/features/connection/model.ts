@@ -1,7 +1,8 @@
-import { combine, createEffect, createEvent, createStore, sample, type StoreValue } from 'effector';
+import { attach, combine, createEffect, createEvent, createStore, sample, type StoreValue } from 'effector';
 import {
   isApiKey, providers, readConnectionName, type ConnectionState, type Provider, type ProviderKey, type SaveConnectionPreset,
 } from '@kuroko/contracts/connectionSettings';
+import { readPresetName, type PresetAction, type PresetManagementAction } from '@kuroko/contracts/presets';
 import { abortFx } from '../../shared/async/abort';
 import { ApiError, errorCode, type ErrorCode } from '../../shared/http/api';
 import { $activeSession, protectedRequestFailed, sessionEnded, type ActiveSession } from '../../platform/session/model';
@@ -12,13 +13,11 @@ import { $modelCatalog, $openRouterEndpoints, catalogInvalidated, catalogRequest
 
 type Page = { session: ActiveSession; controller: AbortController };
 type LoadState = { status: 'loading' } | { status: 'error'; code: ErrorCode } | { status: 'ready'; data: ConnectionState };
-type PresetSubmission = { status: 'idle' } | { status: 'saved' | 'deleted' }
-  | { status: 'error'; code: ErrorCode; field?: 'name' };
 type KeySubmission = { status: 'idle' | 'added' | 'removed' } | { status: 'error'; code: ErrorCode };
-type Action = { kind: 'savePreset' } | { kind: 'deletePreset' } | { kind: 'deleteKey'; id: string }
+type KeyAction = { kind: 'deleteKey'; id: string }
   | { kind: 'addKey'; name: FormDataEntryValue | null; apiKey: FormDataEntryValue | null };
 type Mutation = { kind: 'savePreset'; id: string; preset: SaveConnectionPreset }
-  | { kind: 'deletePreset'; id: string }
+  | { kind: 'managePreset'; action: PresetManagementAction }
   | { kind: 'addKey'; provider: Provider; presetId: string; name: string; apiKey: string }
   | { kind: 'deleteKey'; provider: Provider; id: string };
 type MutationRequest = { page: Page; mutation: Mutation; editorVersion: number };
@@ -27,15 +26,11 @@ export const connectionOpened = createEvent();
 export const connectionClosed = createEvent();
 export const connectionTabClosed = createEvent();
 export const connectionRetryRequested = createEvent();
-export const presetSelected = createEvent<string>();
-export const presetCopyRequested = createEvent();
 export const connectionDraftChanged = createEvent<Partial<ConnectionDraft>>();
 export const connectionProviderChanged = createEvent<Provider>();
-export const connectionActionRequested = createEvent<Action>();
+export const connectionActionRequested = createEvent<KeyAction>();
 export const connectionModelsRequested = createEvent();
 export const connectionEndpointsRequested = createEvent();
-export const presetDeleteOpened = createEvent();
-export const presetDeleteClosed = createEvent();
 export const keyManagerOpened = createEvent();
 export const keyManagerClosed = createEvent();
 export const keyDeleteOpened = createEvent<ProviderKey>();
@@ -68,8 +63,8 @@ export const mutateConnectionFx = createEffect(async ({ page, mutation }: Mutati
   switch (mutation.kind) {
     case 'savePreset':
       return { kind: mutation.kind, id: mutation.id, state: await connectionApi.savePreset(session, mutation.id, mutation.preset) };
-    case 'deletePreset':
-      return { kind: mutation.kind, id: mutation.id, state: await connectionApi.deletePreset(session, mutation.id) };
+    case 'managePreset':
+      return { kind: mutation.kind, action: mutation.action, state: await connectionApi.managePreset(session, mutation.action) };
     case 'addKey':
       return {
         kind: mutation.kind, presetId: mutation.presetId,
@@ -85,7 +80,7 @@ const $mutation = createStore<PendingMutation | null>(null)
   .on(mutateConnectionFx, (_, { page, mutation }) => ({ page, kind: mutation.kind }))
   .on(mutateConnectionFx.finally, (current, { params }) => current?.page === params.page ? null : current)
   .reset(sessionEnded);
-export const $presetPending = $mutation.map((mutation) => mutation?.kind === 'savePreset' || mutation?.kind === 'deletePreset');
+export const $presetPending = $mutation.map((mutation) => mutation?.kind === 'savePreset' || mutation?.kind === 'managePreset');
 export const $keyPending = $mutation.map((mutation) => mutation?.kind === 'addKey' || mutation?.kind === 'deleteKey');
 
 const connectionLoadDone = inActiveSession(loadConnectionFx.done, ({ session }) => session);
@@ -117,10 +112,7 @@ const mutationFailed = sample({
   clock: connectionMutationFailed,
   source: { page: $page, editorVersion: $editorVersion },
   filter: ({ page, editorVersion }, { params }) => page === params.page && editorVersion === params.editorVersion,
-  fn: (_, { params, error }) => ({
-    kind: params.mutation.kind, code: errorCode(error),
-    field: error instanceof ApiError && error.field === 'name' ? 'name' as const : undefined,
-  }),
+  fn: (_, { params, error }) => ({ kind: params.mutation.kind, code: errorCode(error) }),
 });
 
 export const $connectionLoad = createStore<LoadState>({ status: 'loading' })
@@ -162,33 +154,18 @@ sample({
   target: protectedRequestFailed,
 });
 
-const $selectedId = createStore<string | null>(null)
-  .on(presetSelected, (_, id) => id)
-  .on(editorMutationDone, (id, result) => result.kind === 'savePreset' || result.kind === 'deletePreset'
-    ? result.state.activePresetId ?? '' : id)
-  .reset(editorReset);
-
 const $data = $connectionLoad.map((load) => load.status === 'ready' ? load.data : null);
-const $presetId = combine($selectedId, $data, (selected, data) => selected ?? data?.activePresetId ?? '');
-const $selectedPreset = combine($data, $presetId, (data, id) => data?.presets.find((preset) => preset.id === id) ?? null);
+const $presetId = $data.map((data) => data?.activePresetId ?? '');
 const $activePreset = $data.map((data) => data?.presets.find((preset) => preset.id === data.activePresetId) ?? null);
-const $drafts = createStore<Record<string, ConnectionDraft>>({}).reset(editorReset);
-const $draft = combine($drafts, $selectedPreset, $presetId, (drafts, preset, id) => drafts[id] ?? createDraft(preset ?? undefined));
+const $editedDraft = createStore<ConnectionDraft | null>(null).reset(editorReset);
+const $draft = combine($editedDraft, $activePreset, (edited, preset) => edited ?? createDraft(preset ?? undefined));
 const $providerKeys = combine($data, $draft, (data, draft) => data?.keys.filter(({ provider }) => provider === draft.provider) ?? []);
 const $keyId = combine($draft, $providerKeys, (draft, keys) => keys.some(({ id }) => id === draft.keyId) ? draft.keyId : '');
 
 export const $connectionSelection = combine({
-  presetId: $presetId, selectedPreset: $selectedPreset, activePreset: $activePreset, draft: $draft,
+  presetId: $presetId, activePreset: $activePreset, draft: $draft,
   providerKeys: $providerKeys, keyId: $keyId,
 });
-
-const presetCopied = sample({
-  clock: presetCopyRequested,
-  source: $connectionSelection,
-  fn: ({ draft, keyId }) => ({ id: '', draft: { ...draft, name: '', keyId } }),
-});
-
-$selectedId.on(presetCopied, () => '');
 
 const providerChanged = sample({
   clock: connectionProviderChanged,
@@ -201,15 +178,15 @@ const providerChanged = sample({
 
 const draftChanged = sample({
   clock: [connectionDraftChanged, providerChanged],
-  source: $connectionSelection,
-  fn: ({ presetId, draft }, change) => {
+  source: $draft,
+  fn: (draft, change) => {
     const next = { ...draft, ...change };
     const providerChanged = draft.provider !== next.provider;
     const modelChanged = draft.model.trim() !== next.model.trim();
     const keyChanged = draft.keyId !== next.keyId;
     if (providerChanged || modelChanged) next.openrouterProvider = '';
     return {
-      id: presetId, draft: next,
+      draft: next,
       resetCatalog: keyChanged || providerChanged || draft.baseUrl.trim() !== next.baseUrl.trim(),
       resetEndpoints: keyChanged || providerChanged || modelChanged,
     };
@@ -220,32 +197,51 @@ const keyAppliedToDraft = sample({
   clock: editorMutationDone,
   source: $connectionSelection,
   filter: ({ presetId, draft }, result) => result.kind === 'addKey' && result.presetId === presetId && result.key.provider === draft.provider,
-  fn: ({ presetId, draft }, result) => ({
-    id: presetId, draft: { ...draft, keyId: result.kind === 'addKey' ? result.key.id : draft.keyId },
-  }),
+  fn: ({ draft }, result) => ({ draft: { ...draft, keyId: result.kind === 'addKey' ? result.key.id : draft.keyId } }),
 });
 
-$drafts
-  .on([presetCopied, draftChanged, keyAppliedToDraft], (drafts, { id, draft }) => ({ ...drafts, [id]: draft }))
-  .on(editorMutationDone, (drafts, result) => {
-    if (result.kind !== 'savePreset' && result.kind !== 'deletePreset') return drafts;
-    const next = { ...drafts };
-    delete next[result.id];
-    return next;
-  });
+const presetAppliedOrDeleted = editorMutationDone.filter({
+  fn: (result) => result.kind === 'managePreset'
+    && (result.action.kind === 'apply' || result.action.kind === 'delete'),
+});
 
-sample({ clock: [presetSelected, presetCopied, editorReset], target: [catalogInvalidated, endpointsInvalidated] });
+$editedDraft
+  .on([draftChanged, keyAppliedToDraft], (_, { draft }) => draft)
+  .reset(presetAppliedOrDeleted, editorMutationDone.filter({ fn: (result) => result.kind === 'savePreset' }));
+
+sample({ clock: [presetAppliedOrDeleted, editorReset], target: [catalogInvalidated, endpointsInvalidated] });
 sample({ clock: draftChanged, filter: ({ resetCatalog }) => resetCatalog, target: catalogInvalidated });
 sample({ clock: draftChanged, filter: ({ resetEndpoints }) => resetEndpoints, target: endpointsInvalidated });
 sample({
   clock: editorMutationDone,
-  filter: (result) => result.kind !== 'savePreset',
+  filter: (result) => result.kind === 'addKey' || result.kind === 'deleteKey',
   target: [catalogInvalidated, endpointsInvalidated],
 });
 
 const $actionContext = combine({
   selection: $connectionSelection, page: $page, pending: $mutation, load: $connectionLoad,
   catalog: $modelCatalog, endpoints: $openRouterEndpoints, editorVersion: $editorVersion,
+});
+
+export const connectionPresetChangeFx = attach({
+  source: $actionContext,
+  async effect({ selection, page, pending, load, catalog, endpoints, editorVersion }, action: PresetAction) {
+    if (!page || pending || load.status !== 'ready') return false;
+    let mutation: Mutation;
+    if (action.kind === 'create' || action.kind === 'update') {
+      if (catalog.status === 'loading' || endpoints.status === 'loading') return false;
+      const name = action.kind === 'create' ? readPresetName(action.name)
+        : selection.activePreset?.id === action.id ? selection.activePreset.name : undefined;
+      if (!name) throw new ApiError(400, action.kind === 'create' ? 'preset_name_invalid' : 'preset_not_found');
+      const result = validateDraft(selection.draft, selection.keyId, name);
+      if ('code' in result) throw new ApiError(400, result.code);
+      mutation = { kind: 'savePreset', id: action.kind === 'update' ? action.id : '', preset: result.preset };
+    } else {
+      mutation = { kind: 'managePreset', action };
+    }
+    await mutateConnectionFx({ page, mutation, editorVersion });
+    return !page.controller.signal.aborted;
+  },
 });
 
 sample({
@@ -265,22 +261,14 @@ sample({
   target: endpointsRequested,
 });
 
-type PreparedAction = { mutation: Mutation } | { kind: 'savePreset' | 'addKey'; code: ErrorCode; field?: 'name' };
-function prepareAction({ draft, presetId, keyId }: StoreValue<typeof $connectionSelection>, action: Action): PreparedAction {
+type PreparedAction = { mutation: Mutation } | { code: ErrorCode };
+function prepareAction({ draft, presetId }: StoreValue<typeof $connectionSelection>, action: KeyAction): PreparedAction {
   switch (action.kind) {
-    case 'savePreset': {
-      const result = validateDraft(draft, keyId);
-      return 'code' in result
-        ? { kind: action.kind, code: result.code, field: result.field }
-        : { mutation: { kind: action.kind, id: presetId, preset: result.preset } };
-    }
-    case 'deletePreset':
-      return { mutation: { kind: action.kind, id: presetId } };
     case 'addKey': {
       const name = readConnectionName(action.name);
       const apiKey = typeof action.apiKey === 'string' ? action.apiKey.trim() : '';
       if (!name || !isApiKey(apiKey) || name.includes(apiKey)) {
-        return { kind: action.kind, code: 'provider_key_invalid' };
+        return { code: 'provider_key_invalid' };
       }
       return { mutation: { kind: action.kind, provider: draft.provider, presetId, name, apiKey } };
     }
@@ -292,10 +280,8 @@ function prepareAction({ draft, presetId, keyId }: StoreValue<typeof $connection
 const actionPrepared = sample({
   clock: connectionActionRequested,
   source: $actionContext,
-  filter: ({ page, pending, load, selection, catalog, endpoints }, action) => {
+  filter: ({ page, pending, load, selection }, action) => {
     if (!page || pending || load.status !== 'ready') return false;
-    if (action.kind === 'savePreset') return catalog.status !== 'loading' && endpoints.status !== 'loading';
-    if (action.kind === 'deletePreset') return Boolean(selection.selectedPreset);
     if (action.kind === 'deleteKey') return selection.providerKeys.some(({ id }) => id === action.id);
     return true;
   },
@@ -306,25 +292,8 @@ const preparedMutation = actionPrepared.filterMap(({ page, editorVersion, result
   'mutation' in result ? { page, editorVersion, mutation: result.mutation } : undefined);
 sample({ clock: preparedMutation, target: mutateConnectionFx });
 
-export const $presetSubmission = createStore<PresetSubmission>({ status: 'idle' })
-  .on(invalidAction, (current, error) => error.kind === 'savePreset'
-    ? { status: 'error', code: error.code, field: error.field } : current)
-  .on(editorMutationDone, (current, result) => {
-    if (result.kind === 'savePreset') return { status: 'saved' };
-    if (result.kind === 'deletePreset') return { status: 'deleted' };
-    return result.kind === 'addKey' ? { status: 'idle' } : current;
-  })
-  .on(mutationFailed, (current, { kind, code, field }) => kind === 'savePreset' ? { status: 'error', code, field } : current)
-  .on(mutateConnectionFx, (current, { mutation }) => mutation.kind === 'savePreset' || mutation.kind === 'deletePreset'
-    ? { status: 'idle' } : current)
-  .reset(presetSelected, presetCopied, draftChanged, editorReset);
-export const $presetDeleteError = createStore<ErrorCode | null>(null)
-  .on(mutationFailed, (current, { kind, code }) => kind === 'deletePreset' ? code : current)
-  .on(mutateConnectionFx, (current, { mutation }) => mutation.kind === 'deletePreset' ? null : current)
-  .reset(presetDeleteOpened, editorReset);
-
 export const $keySubmission = createStore<KeySubmission>({ status: 'idle' })
-  .on(invalidAction, (current, error) => error.kind === 'addKey' ? { status: 'error', code: error.code } : current)
+  .on(invalidAction, (_, { code }) => ({ status: 'error', code }))
   .on(editorMutationDone, (current, result) => {
     if (result.kind === 'addKey') return { status: 'added' };
     if (result.kind === 'deleteKey') return { status: 'removed' };
@@ -336,11 +305,6 @@ export const $keySubmission = createStore<KeySubmission>({ status: 'idle' })
     ? { status: 'idle' } : current)
   .on(keyErrorCleared, (current) => current.status === 'error' ? { status: 'idle' } : current)
   .reset(keyManagerOpened, keyDeleteOpened, editorReset);
-
-export const $presetDeleteOpen = createStore(false)
-  .on(presetDeleteOpened, () => true)
-  .on(editorMutationDone, (open, result) => result.kind === 'deletePreset' ? false : open)
-  .reset(presetDeleteClosed, editorReset);
 
 export const $keyManagerOpen = createStore(false)
   .on(keyManagerOpened, () => true)

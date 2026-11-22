@@ -271,7 +271,7 @@ test('persists independently enabled tools for the signed-in account', async () 
   expect(await (await request(path, { cookie: other })).json()).toEqual({ enabled: [] });
 });
 
-test('saves private tool selections and applies or clears them as a whole', async () => {
+test('manages private tool presets and applies or clears enabled tools as a whole', async () => {
   await register('presets-owner');
   await register('presets-other');
   const cookie = sessionCookie(await login('presets-owner')).token;
@@ -294,17 +294,42 @@ test('saves private tool selections and applies or clears them as a whole', asyn
   expect((await create('Проверки', [], other)).status).toBe(201);
   const presetPath = `${path}/presets/${preset.id}`;
   const apply = (owner = cookie) => request(`${presetPath}/apply`, { method: 'PUT', cookie: owner });
+  const rename = (name: string, owner = cookie) => request(`${presetPath}/rename`, { method: 'PUT', cookie: owner, body: { name } });
+  const copy = (name: string, owner = cookie) => request(`${presetPath}/copy`, { method: 'POST', cookie: owner, body: { name } });
+  const update = (enabled: string[], owner = cookie) => request(presetPath, { method: 'PUT', cookie: owner, body: { enabled } });
   expect((await apply(other)).status).toBe(404);
+  expect((await rename('Подмена', other)).status).toBe(404);
+  expect((await copy('Копия', other)).status).toBe(404);
+  expect((await update([], other)).status).toBe(404);
   expect((await request(presetPath, { method: 'DELETE', cookie: other })).status).toBe(404);
   await request(`${path}/test_echo`, { method: 'PUT', cookie, body: { enabled: true } });
-  expect(await (await apply()).json()).toEqual({ enabled: ['resolveCheck', 'roll_dice'], presets: [preset] });
-  expect(await (await clear()).json()).toEqual(state);
-  expect(await (await clear()).json()).toEqual(state);
-  expect(await (await request(path, { cookie })).json()).toEqual(state);
+  const active = { ...state, activePresetId: preset.id };
+  expect(await (await apply()).json()).toEqual({ ...active, enabled: ['resolveCheck', 'roll_dice'] });
+  expect(await (await clear()).json()).toEqual(active);
+  expect(await (await clear()).json()).toEqual(active);
+  expect(await (await request(path, { cookie })).json()).toEqual(active);
 
-  await apply();
-  expect(await (await request(presetPath, { method: 'DELETE', cookie })).json()).toEqual({ enabled: ['resolveCheck', 'roll_dice'] });
+  const copied = await copy('Копия');
+  expect(copied.status).toBe(201);
+  const copiedState = await copied.json() as ToolsResponse;
+  const duplicate = copiedState.presets!.find(({ name }) => name === 'Копия')!;
+  expect(copiedState).toMatchObject({ activePresetId: preset.id, enabled: [] });
+  expect(duplicate.enabled).toEqual(preset.enabled);
+  expect((await rename('Копия')).status).toBe(409);
+  expect((await copy('Копия')).status).toBe(409);
+  expect(await (await rename('Новые проверки')).json()).toMatchObject({
+    activePresetId: preset.id, enabled: [], presets: expect.arrayContaining([{ ...preset, name: 'Новые проверки' }, duplicate]),
+  });
+  expect(await (await update(['test_echo'])).json()).toMatchObject({
+    activePresetId: preset.id, enabled: ['test_echo'],
+    presets: expect.arrayContaining([{ ...preset, name: 'Новые проверки', enabled: ['test_echo'] }, duplicate]),
+  });
+  expect(await (await request(presetPath, { method: 'DELETE', cookie })).json()).toEqual({ enabled: ['test_echo'], presets: [duplicate] });
   expect((await apply()).status).toBe(404);
+  const createdActive = await request(`${path}/presets`, { method: 'POST', cookie, body: { name: 'Активный', enabled: [], apply: true } });
+  expect(createdActive.status).toBe(201);
+  const { activePresetId, presets } = await createdActive.json() as ToolsResponse;
+  expect(presets?.find(({ id }) => id === activePresetId)).toMatchObject({ name: 'Активный', enabled: [] });
 });
 
 test('stores chats by account and rejects stale writes without losing the saved history', async () => {
@@ -484,7 +509,7 @@ test('validates chat settings and stores them for the signed-in account only', a
   expect(await (await request(path, { cookie: owner })).json()).toEqual({ settings: defaultChatSettings });
 });
 
-test('saves multiple named presets for one provider and unlinks a deleted key from all of them', async () => {
+test('manages and applies connection presets and unlinks a deleted key from all of them', async () => {
   const path = `${connectionPath}/presets`;
   await register('owner');
   await register('other');
@@ -512,6 +537,28 @@ test('saves multiple named presets for one provider and unlinks a deleted key fr
   expect(created.status).toBe(201);
   const { activePresetId: secondId } = await created.json() as { activePresetId: string };
   expect(secondId).not.toBe(firstId);
+  const applyFirst = (owner = cookie) => request(`${path}/${firstId}/apply`, { method: 'PUT', cookie: owner });
+  const renameFirst = (name: string, owner = cookie) =>
+    request(`${path}/${firstId}/rename`, { method: 'PUT', cookie: owner, body: { name } });
+  const copyFirst = (name: string, owner = cookie) =>
+    request(`${path}/${firstId}/copy`, { method: 'POST', cookie: owner, body: { name } });
+  expect((await applyFirst(otherCookie)).status).toBe(404);
+  expect((await renameFirst('Подмена', otherCookie)).status).toBe(404);
+  expect((await copyFirst('Копия', otherCookie)).status).toBe(404);
+  expect((await renameFirst(second.name)).status).toBe(409);
+  expect(await (await renameFirst('Переименованная сцена')).json()).toMatchObject({
+    activePresetId: secondId, presets: expect.arrayContaining([
+      expect.objectContaining({ id: firstId, name: 'Переименованная сцена', responseTokens: 2000 }),
+    ]),
+  });
+  const copied = await copyFirst('Копия');
+  expect(copied.status).toBe(201);
+  const copiedState = await copied.json() as ConnectionState;
+  expect(copiedState.activePresetId).toBe(secondId);
+  expect(copiedState.presets.find(({ name }) => name === 'Копия')).toMatchObject({ ...settings, provider: 'openai', keyId: key.id });
+  expect((await copyFirst('Копия')).status).toBe(409);
+  expect(await (await applyFirst()).json()).toMatchObject({ activePresetId: firstId });
+  expect(await (await request(connectionPath, { cookie })).json()).toMatchObject({ activePresetId: firstId });
   expect((await request(`${path}/${firstId}`, { method: 'PUT', cookie: otherCookie, body })).status).toBe(404);
   expect((await request(`${path}/${firstId}`, { method: 'DELETE', cookie: otherCookie })).status).toBe(404);
   const updated = await request(`${path}/${firstId}`, { method: 'PUT', cookie, body: { ...body, name: 'Обновлённая сцена' } });
@@ -526,7 +573,7 @@ test('saves multiple named presets for one provider and unlinks a deleted key fr
   ]) });
   expect(db.query('SELECT id FROM secrets').all()).toEqual([]);
   expect(await (await request(`${path}/${firstId}`, { method: 'DELETE', cookie })).json()).toMatchObject({
-    activePresetId: null, presets: [expect.objectContaining({ id: secondId })],
+    activePresetId: null, presets: expect.arrayContaining([expect.objectContaining({ id: secondId })]),
   });
 });
 

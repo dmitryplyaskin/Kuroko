@@ -1,0 +1,72 @@
+.preset-controls {
+  display: grid;
+  gap: 6px;
+  inline-size: 100%;
+  container-type: inline-size;
+}
+
+.preset-controls-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) repeat(3, auto);
+  align-items: center;
+  gap: 6px;
+}
+
+.preset-controls-select {
+  min-inline-size: 0;
+}
+
+.preset-controls-select input {
+  text-overflow: ellipsis;
+}
+
+.preset-controls-select input::placeholder {
+  color: var(--kr-muted);
+  opacity: 1;
+}
+
+.preset-controls-dropdown {
+  background: var(--kr-surface);
+  border-color: var(--kr-border);
+  overflow-wrap: anywhere;
+}
+
+.preset-controls-dropdown .mantine-ScrollArea-viewport {
+  overscroll-behavior: contain;
+}
+
+.preset-controls-option {
+  min-block-size: 32px;
+}
+
+.preset-controls-option[data-combobox-selected] {
+  color: var(--kr-accent-text);
+  background: var(--kr-accent);
+}
+
+.preset-controls-dialog {
+  display: grid;
+  gap: 16px;
+  overflow-wrap: anywhere;
+}
+
+.preset-controls-dialog-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: end;
+  gap: 8px;
+}
+
+.preset-controls-error, .preset-controls-feedback {
+  font-size: .875rem;
+  overflow-wrap: anywhere;
+}
+
+.preset-controls-error { color: var(--kr-danger); }
+.preset-controls-feedback { color: var(--kr-muted); }
+.preset-controls-feedback:empty { position: absolute; }
+
+@container (max-width: 20rem) {
+  .preset-controls-select { grid-column: 1 / -1; }
+  .preset-controls-select + button { grid-column: 2; }
+}

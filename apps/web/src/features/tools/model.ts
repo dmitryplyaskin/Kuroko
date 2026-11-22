@@ -1,21 +1,24 @@
 import { attach, createEffect, createEvent, createStore, sample } from 'effector';
 import type { ToolId, ToolPreset, ToolsResponse } from '@kuroko/contracts/tools';
+import type { PresetAction } from '@kuroko/contracts/presets';
 import { $activeSession, protectedRequestFailed, sessionEnded, sessionStarted, type ActiveSession } from '../../platform/session/model';
 import { inActiveSession, sessionRequest } from '../../platform/session/request';
 import { errorCode, type ErrorCode } from '../../shared/http/api';
+import { requestPresetAction } from '../../platform/presets';
 
 type Toggle = { id: ToolId; enabled: boolean };
-type Change = { kind: 'toggle'; tool: Toggle } | { kind: 'clear' }
-  | { kind: 'savePreset'; name: string } | { kind: 'applyPreset' | 'deletePreset'; id: string };
+type Change = { kind: 'toggle'; tool: Toggle } | { kind: 'clear' } | PresetAction;
 type Preferences = {
   status: 'idle' | 'loading' | 'ready' | 'loadError' | 'saving';
   enabled: ToolId[];
   presets: ToolPreset[];
+  activePresetId: string | null;
   error?: ErrorCode;
 };
 
 const path = '/settings/tools';
-const initial: Preferences = { status: 'idle', enabled: [], presets: [] };
+const presetsPath = `${path}/presets`;
+const initial: Preferences = { status: 'idle', enabled: [], presets: [], activePresetId: null };
 export const toolsInitialized = createEvent();
 export const toolSettingsRetried = createEvent();
 export const toolSettingChanged = createEvent<Toggle>();
@@ -29,12 +32,12 @@ const saveToolSettingFx = createEffect(({ session, change, enabled }: { session:
         { method: 'PUT', body: { enabled: change.tool.enabled } });
     case 'clear':
       return sessionRequest<ToolsResponse>(session, `${path}/enabled`, { method: 'DELETE' });
-    case 'savePreset':
-      return sessionRequest<ToolsResponse>(session, `${path}/presets`, { method: 'POST', body: { name: change.name, enabled } });
-    case 'applyPreset':
-      return sessionRequest<ToolsResponse>(session, `${path}/presets/${encodeURIComponent(change.id)}/apply`, { method: 'PUT' });
-    case 'deletePreset':
-      return sessionRequest<ToolsResponse>(session, `${path}/presets/${encodeURIComponent(change.id)}`, { method: 'DELETE' });
+    case 'create':
+      return sessionRequest<ToolsResponse>(session, presetsPath, { method: 'POST', body: { name: change.name, enabled, apply: true } });
+    case 'update':
+      return sessionRequest<ToolsResponse>(session, `${presetsPath}/${encodeURIComponent(change.id)}`, { method: 'PUT', body: { enabled } });
+    default:
+      return requestPresetAction<ToolsResponse>(session, presetsPath, change);
   }
 });
 
@@ -48,10 +51,12 @@ const saveFailed = inActiveSession(saveToolSettingFx.fail, ({ session }) => sess
 export const $toolSettings = createStore<Preferences>(initial)
   .on(loadToolSettingsFx, (current) => ({ ...current, status: 'loading', error: undefined }))
   .on(saveToolSettingFx, (current) => ({ ...current, status: 'saving', error: undefined }))
-  .on([loaded, saved], (_, { result }) => ({ status: 'ready', enabled: result.enabled, presets: result.presets ?? [] }))
+  .on([loaded, saved], (_, { result }) => ({
+    status: 'ready', enabled: result.enabled, presets: result.presets ?? [], activePresetId: result.activePresetId ?? null,
+  }))
   .on(loadFailed, (current, { error }) => ({ ...current, status: 'loadError', error: errorCode(error) }))
   .on(saveFailed, (current, { change, error }) => ({
-    ...current, status: 'ready', error: change.kind === 'savePreset' || change.kind === 'deletePreset' ? undefined : errorCode(error),
+    ...current, status: 'ready', error: change.kind === 'toggle' || change.kind === 'clear' ? errorCode(error) : undefined,
   }))
   .reset(sessionEnded);
 

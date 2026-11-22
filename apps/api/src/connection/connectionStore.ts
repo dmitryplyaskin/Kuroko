@@ -5,6 +5,7 @@ import {
   isProvider, readConnectionSettings, type ConnectionPreset, type ConnectionState, type SaveConnectionPreset,
 } from '@kuroko/contracts/connectionSettings';
 import type { ProviderKeyStore } from './providerKeyStore';
+import type { PresetWriteResult } from '../http/presetRouter';
 
 type Row = { id: string; name: string; provider: string; settings_json: string; key_id: string | null; active: number };
 
@@ -20,6 +21,7 @@ export function createConnectionStore(db: Database, keys: ProviderKeyStore) {
   `);
   const findByName = db.query<{ id: string }, [number, string]>('SELECT id FROM connection_presets WHERE user_id = ? AND name = ?');
   const deactivate = db.query('UPDATE connection_presets SET active = 0 WHERE user_id = ? AND active = 1');
+  const activate = db.query('UPDATE connection_presets SET active = 1 WHERE user_id = ? AND id = ?');
   const insert = db.query(`
     INSERT INTO connection_presets (id, user_id, name, provider, settings_json, key_id, active) VALUES (?, ?, ?, ?, ?, ?, 1)
   `);
@@ -27,6 +29,11 @@ export function createConnectionStore(db: Database, keys: ProviderKeyStore) {
     UPDATE connection_presets SET name = ?, provider = ?, settings_json = ?, key_id = ?, active = 1 WHERE user_id = ? AND id = ?
   `);
   const remove = db.query('DELETE FROM connection_presets WHERE user_id = ? AND id = ?');
+  const rename = db.query('UPDATE OR IGNORE connection_presets SET name = ? WHERE user_id = ? AND id = ?');
+  const insertCopy = db.query(`
+    INSERT INTO connection_presets (id, user_id, name, provider, settings_json, key_id, active)
+    VALUES (?, ?, ?, ?, ?, ?, 0) ON CONFLICT (user_id, name) DO NOTHING
+  `);
 
   function read(userId: number): ConnectionState {
     const rows = list.all(userId);
@@ -49,6 +56,22 @@ export function createConnectionStore(db: Database, keys: ProviderKeyStore) {
     else insert.run(randomUUID(), userId, name, provider, json, keyId);
     return 'saved';
   });
+  const applyPreset = db.transaction((userId: number, id: string) => {
+    if (!find.get(userId, id)) return false;
+    deactivate.run(userId);
+    activate.run(userId, id);
+    return true;
+  });
+  const renamePreset = db.transaction((userId: number, id: string, name: string): PresetWriteResult => {
+    if (!find.get(userId, id)) return 'missing-preset';
+    return rename.run(name, userId, id).changes ? 'saved' : 'duplicate';
+  });
+  const copyPreset = db.transaction((userId: number, id: string, name: string): PresetWriteResult => {
+    const source = find.get(userId, id);
+    if (!source) return 'missing-preset';
+    return insertCopy.run(randomUUID(), userId, name, source.provider, source.settings_json, source.key_id).changes
+      ? 'saved' : 'duplicate';
+  });
 
   return {
     read,
@@ -57,7 +80,10 @@ export function createConnectionStore(db: Database, keys: ProviderKeyStore) {
       return row ? readPreset(row) : null;
     },
     save: save.immediate,
-    remove: (userId: number, id: string) => remove.run(userId, id).changes !== 0,
+    applyPreset: applyPreset.immediate,
+    renamePreset: renamePreset.immediate,
+    copyPreset: copyPreset.immediate,
+    removePreset: (userId: number, id: string) => remove.run(userId, id).changes !== 0,
   };
 }
 

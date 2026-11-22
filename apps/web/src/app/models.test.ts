@@ -15,9 +15,9 @@ import {
   chatSettingsInitialized, chatSettingsSaveRequested, loadChatSettingsFx, saveChatSettingsFx,
 } from '../features/chat/settings/model';
 import {
-  $connectionLoad, $connectionSelection, $presetSubmission, connectionActionRequested, connectionClosed, connectionDraftChanged,
-  connectionModelsRequested, connectionOpened, connectionProviderChanged, connectionTabClosed, loadConnectionFx, mutateConnectionFx,
-  presetCopyRequested, presetSelected,
+  $connectionLoad, $connectionSelection, $presetPending, connectionActionRequested, connectionClosed, connectionDraftChanged,
+  connectionModelsRequested, connectionOpened, connectionPresetChangeFx, connectionProviderChanged, connectionTabClosed,
+  loadConnectionFx, mutateConnectionFx,
 } from '../features/connection/model';
 import { $modelCatalog, loadModelCatalogFx } from '../features/connection/modelCatalog';
 import { $enabledTools, toolsInitialized, toolSettingChanged } from '../features/tools/model';
@@ -147,19 +147,33 @@ test('legacy chat preferences are a draft and are applied only after a successfu
   assert.deepEqual(scope.getState($appliedChatSettings), legacy);
 });
 
-test('copying a connection preset uses its latest draft and keeps the original draft', async () => {
-  const scope = fork({ handlers: [[loadConnectionFx, () => connection]] });
+test('copying a saved connection keeps the current draft and applying it loads its saved settings', async () => {
+  const copy = { ...connection.presets[0]!, id: 'copy', name: 'Копия' };
+  const copied = { ...connection, presets: [...connection.presets, copy] };
+  const scope = fork({
+    handlers: [
+      [loadConnectionFx, () => connection],
+      [mutateConnectionFx, ({ mutation }: Parameters<typeof mutateConnectionFx>[0]) => {
+        assert.equal(mutation.kind, 'managePreset');
+        const { action } = mutation;
+        if (action.kind === 'apply' && action.id === 'missing') throw new ApiError(404, 'preset_not_found');
+        return { kind: 'managePreset', action, state: action.kind === 'copy' ? copied : { ...copied, activePresetId: copy.id } };
+      }],
+    ],
+  });
   await allSettled(sessionUserReceived, { scope, params: user });
   await allSettled(connectionOpened, { scope });
   await allSettled(connectionDraftChanged, { scope, params: { model: 'custom-model' } });
-  await allSettled(presetCopyRequested, { scope });
+  await allSettled(connectionPresetChangeFx, { scope, params: { kind: 'copy', id: 'one', name: 'Копия' } });
+  assert.equal(scope.getState($connectionSelection).presetId, 'one');
+  assert.equal(scope.getState($connectionSelection).draft.model, 'custom-model');
 
-  const copy = scope.getState($connectionSelection);
-  assert.equal(copy.presetId, '');
-  assert.partialDeepStrictEqual(copy.draft, { name: '', model: 'custom-model', keyId: 'key' });
-
-  await allSettled(presetSelected, { scope, params: 'one' });
-  assert.partialDeepStrictEqual(scope.getState($connectionSelection).draft, { name: 'Первый пресет', model: 'custom-model' });
+  const failed = await allSettled(connectionPresetChangeFx, { scope, params: { kind: 'apply', id: 'missing' } });
+  assert.equal(failed.status, 'fail');
+  assert.equal(scope.getState($connectionSelection).draft.model, 'custom-model');
+  await allSettled(connectionPresetChangeFx, { scope, params: { kind: 'apply', id: copy.id } });
+  assert.equal(scope.getState($connectionSelection).presetId, copy.id);
+  assert.equal(scope.getState($connectionSelection).draft.model, 'demo-model');
 });
 
 test('changing provider cancels the old catalog and ignores its late result', async () => {
@@ -207,9 +221,8 @@ test('re-entering settings waits for a connection write before loading its new s
   });
   await allSettled(sessionUserReceived, { scope, params: user });
   await allSettled(connectionOpened, { scope });
-  const act = scopeBind(connectionActionRequested, { scope });
-  act({ kind: 'savePreset' });
-  act({ kind: 'deleteKey', id: 'key' });
+  void scopeBind(connectionPresetChangeFx, { scope })({ kind: 'update', id: 'one' });
+  scopeBind(connectionActionRequested, { scope })({ kind: 'deleteKey', id: 'key' });
   scopeBind(connectionClosed, { scope })();
   scopeBind(connectionOpened, { scope })();
 
@@ -236,14 +249,14 @@ test('a write finished after switching tabs updates connection data without rest
   await allSettled(sessionUserReceived, { scope, params: user });
   await allSettled(connectionOpened, { scope });
   scopeBind(connectionDraftChanged, { scope })({ model: 'draft-model' });
-  scopeBind(connectionActionRequested, { scope })({ kind: 'savePreset' });
+  void scopeBind(connectionPresetChangeFx, { scope })({ kind: 'update', id: 'one' });
   scopeBind(connectionTabClosed, { scope })();
   assert.equal(scope.getState($connectionSelection).draft.model, 'demo-model');
 
   pending.resolve(saved);
   await allSettled(scope);
   assert.equal(scope.getState($connectionSelection).draft.model, 'saved-model');
-  assert.equal(scope.getState($presetSubmission).status, 'idle');
+  assert.equal(scope.getState($presetPending), false);
 });
 
 const sseHeaders = { 'Content-Type': 'text/event-stream' };

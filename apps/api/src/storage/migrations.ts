@@ -3,7 +3,7 @@ import type { Database } from 'bun:sqlite';
 import { createHash } from 'node:crypto';
 import { realmFilterKey, realmTagKeys } from '../realms/realmFilterKeys';
 
-const latestVersion = 10;
+const latestVersion = 11;
 
 const initialSchema = `
   CREATE TABLE vault_settings (
@@ -197,6 +197,10 @@ export function migrateDatabase(db: Database, vaultKey: Buffer) {
     if (version < 8) db.exec(realmsSchema);
     if (version < 9) migrateRealmFilters(db);
     if (version < 10) db.exec(toolPresetsSchema);
+    if (version < 11) db.exec(`
+      ALTER TABLE tool_presets ADD COLUMN active INTEGER NOT NULL DEFAULT 0 CHECK (active IN (0, 1));
+      CREATE UNIQUE INDEX active_tool_preset ON tool_presets (user_id) WHERE active = 1;
+    `);
 
     if (version < latestVersion) db.exec(`PRAGMA user_version = ${latestVersion}`);
   }).immediate();

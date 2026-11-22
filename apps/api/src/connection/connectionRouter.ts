@@ -1,4 +1,5 @@
 import { errorBody } from '@kuroko/contracts/errors';
+import { readPresetName } from '@kuroko/contracts/presets';
 import { Router, type RequestHandler } from 'express';
 import {
   isApiKey, isModelId, isProvider, readConnectionName, readConnectionSettings, readCustomBaseUrl,
@@ -7,6 +8,7 @@ import type { createConnectionStore } from './connectionStore';
 import type { ProviderConnections } from './providerConnections';
 import { listOpenRouterEndpoints, listProviderModels } from './providerModels';
 import type { ProviderKeyStore } from './providerKeyStore';
+import { createPresetRouter, respondToPresetWrite } from '../http/presetRouter';
 
 const missingKey = errorBody('provider_key_not_found');
 
@@ -16,7 +18,7 @@ export function createConnectionRouter(
   const router = Router();
   const save: RequestHandler<{ id?: string }> = (request, response) => {
     const provider: unknown = request.body?.provider;
-    const name = readConnectionName(request.body?.name);
+    const name = readPresetName(request.body?.name);
     if (!name) {
       response.status(400).json(errorBody('preset_name_invalid', 'name'));
       return;
@@ -35,24 +37,14 @@ export function createConnectionRouter(
     const userId: number = response.locals.user.id;
     const id = request.params.id ?? null;
     const result = store.save(userId, id, { name, provider, settings, keyId });
-    if (result === 'missing-preset') response.status(404).json(errorBody('preset_not_found'));
-    else if (result === 'missing-key') response.status(404).json(missingKey);
-    else if (result === 'duplicate') response.status(409).json(errorBody('preset_name_taken'));
-    else response.status(id ? 200 : 201).json(store.read(userId));
+    if (result === 'missing-key') response.status(404).json(missingKey);
+    else respondToPresetWrite(response, result, () => store.read(userId), id ? 200 : 201);
   };
 
   router.get('/', (_request, response) => { response.json(store.read(response.locals.user.id)); });
   router.post('/presets', save);
   router.put('/presets/:id', save);
-
-  router.delete('/presets/:id', (request, response) => {
-    const userId: number = response.locals.user.id;
-    if (!store.remove(userId, request.params.id)) {
-      response.status(404).json(errorBody('preset_not_found'));
-      return;
-    }
-    response.json(store.read(userId));
-  });
+  router.use('/presets', createPresetRouter(store));
 
   router.post('/keys/:provider', (request, response) => {
     const { provider } = request.params;

@@ -1,6 +1,8 @@
 import { Router } from 'express';
 import { errorBody } from '@kuroko/contracts/errors';
-import { isToolId, isToolSelection, readToolPresetName } from '@kuroko/contracts/tools';
+import { isToolId, isToolSelection } from '@kuroko/contracts/tools';
+import { readPresetName } from '@kuroko/contracts/presets';
+import { createPresetRouter, respondToPresetWrite } from '../http/presetRouter';
 import type { createToolsStore } from './toolsStore';
 
 export function createToolsRouter(store: ReturnType<typeof createToolsStore>) {
@@ -12,7 +14,7 @@ export function createToolsRouter(store: ReturnType<typeof createToolsStore>) {
     response.json(store.read(userId));
   });
   router.post('/presets', (request, response) => {
-    const name = readToolPresetName(request.body?.name);
+    const name = readPresetName(request.body?.name);
     const enabled: unknown = request.body?.enabled;
     if (!name) {
       response.status(400).json(errorBody('preset_name_invalid', 'name'));
@@ -23,28 +25,19 @@ export function createToolsRouter(store: ReturnType<typeof createToolsStore>) {
       return;
     }
     const userId: number = response.locals.user.id;
-    if (!store.savePreset(userId, name, enabled)) {
-      response.status(409).json(errorBody('preset_name_taken', 'name'));
+    const result = store.createPreset(userId, name, enabled, request.body?.apply === true);
+    respondToPresetWrite(response, result, () => store.read(userId), 201);
+  });
+  router.put('/presets/:id', (request, response) => {
+    const enabled: unknown = request.body?.enabled;
+    if (!isToolSelection(enabled)) {
+      response.status(400).json(errorBody('invalid_request'));
       return;
     }
-    response.status(201).json(store.read(userId));
-  });
-  router.put('/presets/:id/apply', (request, response) => {
     const userId: number = response.locals.user.id;
-    if (!store.applyPreset(userId, request.params.id)) {
-      response.status(404).json(errorBody('preset_not_found'));
-      return;
-    }
-    response.json(store.read(userId));
+    respondToPresetWrite(response, store.savePreset(userId, request.params.id, enabled), () => store.read(userId));
   });
-  router.delete('/presets/:id', (request, response) => {
-    const userId: number = response.locals.user.id;
-    if (!store.removePreset(userId, request.params.id)) {
-      response.status(404).json(errorBody('preset_not_found'));
-      return;
-    }
-    response.json(store.read(userId));
-  });
+  router.use('/presets', createPresetRouter(store));
   router.put('/:id', (request, response) => {
     const { id } = request.params;
     const enabled: unknown = request.body?.enabled;

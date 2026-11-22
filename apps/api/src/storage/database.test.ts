@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { openDatabase } from './database';
 import { createProviderKeyStore } from '../connection/providerKeyStore';
 
-test.each([1, 2, 4, 5, 6, 7, 8, 9])('upgrades a version %i SQLite database without losing user data', (version) => {
+test.each([1, 2, 4, 5, 6, 7, 8, 9, 10])('upgrades a version %i SQLite database without losing user data', (version) => {
   const directory = mkdtempSync(join(tmpdir(), 'kuroko-sqlite-test-'));
   const path = join(directory, 'test.sqlite');
   const vaultKey = randomBytes(32);
@@ -15,7 +15,11 @@ test.each([1, 2, 4, 5, 6, 7, 8, 9])('upgrades a version %i SQLite database witho
     const old = openDatabase(path, vaultKey);
     try {
       old.run('INSERT INTO users (username, username_key, password_hash) VALUES (?, ?, ?)', ['Лина', 'лина', 'test-hash']);
-      old.exec('DROP TABLE tool_presets');
+      if (version < 10) old.exec('DROP TABLE tool_presets');
+      else {
+        old.exec('DROP INDEX active_tool_preset; ALTER TABLE tool_presets DROP COLUMN active');
+        old.run(`INSERT INTO tool_presets (id, user_id, name, tools_json) VALUES ('old-tools', 1, 'Кубики', '["roll_dice"]')`);
+      }
       if (version < 8) old.exec('DROP TABLE realms');
       else {
         if (version < 9) old.exec('ALTER TABLE realms DROP COLUMN favorite; ALTER TABLE realms DROP COLUMN author_key; ALTER TABLE realms DROP COLUMN tag_keys_json');
@@ -23,7 +27,7 @@ test.each([1, 2, 4, 5, 6, 7, 8, 9])('upgrades a version %i SQLite database witho
           VALUES ('old-realm', 1, 'island', 'Остров', 'остров', '', '', 10, 20, 1, ?)`, [JSON.stringify({
           specVersion: '0.1.0', id: 'island', title: 'Остров', base: 'Море', author: ' Лина ', tags: ['Туман', 'туман', 'Море'],
         })]);
-        if (version === 9) old.run('UPDATE realms SET author_key = ?, tag_keys_json = ? WHERE id = ?', ['лина', '["туман","море"]', 'old-realm']);
+        if (version >= 9) old.run('UPDATE realms SET author_key = ?, tag_keys_json = ? WHERE id = ?', ['лина', '["туман","море"]', 'old-realm']);
       }
       if (version < 7) old.exec('DROP TABLE chat_private_turns; ALTER TABLE chats DROP COLUMN gm_mode');
       if (version < 6) old.exec('DROP TABLE enabled_tools');
@@ -43,14 +47,16 @@ test.each([1, 2, 4, 5, 6, 7, 8, 9])('upgrades a version %i SQLite database witho
 
     const migrated = openDatabase(path, vaultKey);
     try {
-      expect(migrated.query('PRAGMA user_version').get()).toEqual({ user_version: 10 });
+      expect(migrated.query('PRAGMA user_version').get()).toEqual({ user_version: 11 });
       expect(migrated.query('SELECT username FROM users').all()).toEqual([{ username: 'Лина' }]);
       expect(migrated.query('SELECT settings_json FROM chat_settings').all()).toEqual(version === 1 ? [] : [{ settings_json: '{"fontSize":20}' }]);
       expect(migrated.query('SELECT * FROM connection_presets').all()).toEqual([]);
       expect(migrated.query('SELECT id, gm_mode FROM chats').all()).toEqual(version >= 5 ? [{ id: 'old-chat', gm_mode: 0 }] : []);
       expect(migrated.query('SELECT * FROM chat_private_turns').all()).toEqual([]);
       expect(migrated.query('SELECT * FROM enabled_tools').all()).toEqual(version < 6 ? [] : [{ user_id: 1, tool_id: 'roll_dice' }]);
-      expect(migrated.query('SELECT * FROM tool_presets').all()).toEqual([]);
+      expect(migrated.query('SELECT * FROM tool_presets').all()).toEqual(version < 10 ? [] : [
+        { id: 'old-tools', user_id: 1, name: 'Кубики', tools_json: '["roll_dice"]', active: 0 },
+      ]);
       expect(migrated.query('SELECT id, author_key, tag_keys_json, favorite, updated_at, revision FROM realms').all()).toEqual(version < 8 ? [] : [
         { id: 'old-realm', author_key: 'лина', tag_keys_json: '["туман","море"]', favorite: 0, updated_at: 20, revision: 1 },
       ]);

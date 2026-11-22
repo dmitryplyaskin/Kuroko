@@ -6,7 +6,7 @@ import { useRef, useState } from 'react';
 import { useI18n } from '../../shared/i18n/i18n';
 import { tools } from './catalog';
 import { $toolSettings, toolSettingChanged, toolSettingsChangeFx, toolSettingsRetried } from './model';
-import { ToolPresetControls } from './ToolPresetControls';
+import { PresetControls } from '../../shared/presets/PresetControls';
 import './toolManager.css';
 
 export default function ToolManager() {
@@ -32,13 +32,12 @@ export default function ToolManager() {
 
   return (
     <section className="tool-manager" aria-labelledby="tools-title">
-      <header className="page-heading tool-manager-heading">
-        <div>
-          <h1 id="tools-title" tabIndex={-1}>{t('tools.label')}</h1>
-          <p>{t('tools.description')}</p>
-        </div>
-        <ToolPresetControls presets={settings.presets} disabled={disabled} saving={settings.status === 'saving'} />
+      <header className="page-heading">
+        <h1 id="tools-title" tabIndex={-1}>{t('tools.label')}</h1>
+        <p>{t('tools.description')}</p>
       </header>
+      <PresetControls presets={settings.presets} selectedId={settings.activePresetId} disabled={disabled}
+        onAction={async (action) => Boolean(await change(action))} />
       {settings.status === 'loading' && <output className="tool-manager-status">{t('tools.loading')}</output>}
       {settings.error && (
         <div className="tool-manager-status">

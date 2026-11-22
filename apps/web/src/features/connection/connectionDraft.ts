@@ -1,19 +1,18 @@
 import type { ErrorCode } from '../../shared/http/api';
 import {
-  defaultConnectionSettings, readConnectionName, readConnectionSettings, readCustomBaseUrl,
+  defaultConnectionSettings, readConnectionSettings, readCustomBaseUrl,
   type ConnectionPreset, type Provider, type SaveConnectionPreset,
 } from '@kuroko/contracts/connectionSettings';
 
 export type NumericField = 'contextTokens' | 'responseTokens' | 'temperature' | 'topP' | 'topK';
 type NumericValue = number | string;
 export type ConnectionDraft = Record<NumericField, NumericValue> & {
-  name: string; provider: Provider; model: string; keyId: string; baseUrl: string; openrouterProvider: string;
+  provider: Provider; model: string; keyId: string; baseUrl: string; openrouterProvider: string;
 };
 
 export function createDraft(preset?: ConnectionPreset): ConnectionDraft {
   const settings = preset ?? defaultConnectionSettings;
   return {
-    name: preset?.name ?? '',
     provider: preset?.provider ?? 'openai',
     model: settings.model,
     keyId: preset?.keyId ?? '',
@@ -31,10 +30,8 @@ export function numericValue(value: NumericValue) {
   return value === '' ? null : Number(value);
 }
 
-export function validateDraft(draft: ConnectionDraft, keyId: string):
-  { preset: SaveConnectionPreset } | { code: ErrorCode; field?: 'name' } {
-  const name = readConnectionName(draft.name);
-  if (!name) return { code: 'preset_name_invalid', field: 'name' };
+export function validateDraft(draft: ConnectionDraft, keyId: string, name: string):
+  { preset: SaveConnectionPreset } | { code: ErrorCode } {
   if (draft.provider === 'custom' && !readCustomBaseUrl(draft.baseUrl)) return { code: 'custom_api_url_invalid' };
 
   const settings = readConnectionSettings(draft.provider, {

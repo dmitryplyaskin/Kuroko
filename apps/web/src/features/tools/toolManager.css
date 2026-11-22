@@ -1,21 +1,12 @@
 .tool-manager { container-type: inline-size; }
-.tool-manager-heading, .tool-manager-presets, .tool-manager-toolbar, .tool-manager-actions {
+.tool-manager-toolbar, .tool-manager-actions {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 8px 12px;
 }
 
-.tool-manager-heading { justify-content: space-between; align-items: end; gap: 16px; }
-.tool-manager-preset-picker {
-  display: grid;
-  grid-template-columns: minmax(0, 11rem) auto auto;
-  align-items: center;
-  gap: 6px;
-  min-inline-size: 0;
-}
-
-.tool-manager-preset-select { min-inline-size: 0; }
+.tool-manager > .preset-controls { margin-block-end: 16px; }
 .tool-manager-panel {
   border: 1px solid var(--kr-border);
   border-radius: var(--kr-radius-panel);
@@ -102,9 +93,7 @@
 
 .tool-manager-empty { display: grid; justify-items: center; gap: 4px; padding: 24px 12px; color: var(--kr-muted); }
 .tool-manager-status { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-block-end: 12px; }
-.tool-manager-status [role='alert'], .tool-manager-error { color: var(--kr-danger); }
-.tool-manager-preset-form { display: grid; gap: 16px; overflow-wrap: anywhere; }
-.tool-manager-modal-actions { display: flex; justify-content: end; flex-wrap: wrap; gap: 8px; }
+.tool-manager-status [role='alert'] { color: var(--kr-danger); }
 
 @media (hover: hover) {
   .tool-manager-summary:hover { background: var(--kr-hover); }
@@ -124,9 +113,6 @@
 }
 
 @container (max-width: 20rem) {
-  .tool-manager-presets { inline-size: 100%; }
-  .tool-manager-preset-picker { flex-basis: 100%; grid-template-columns: minmax(0, 1fr) auto; }
-  .tool-manager-preset-select { grid-column: 1 / -1; }
   .tool-manager-actions { gap: 8px; }
   .tool-manager-actions .mantine-Button-section { display: none; }
 }

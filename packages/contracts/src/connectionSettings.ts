@@ -1,3 +1,5 @@
+import type { Preset } from './presets';
+
 export const providers = {
   openai: { label: 'OpenAI', temperatureMax: 2, topK: false },
   openrouter: { label: 'OpenRouter', temperatureMax: 2, topK: true },
@@ -19,7 +21,7 @@ export type ConnectionSettings = {
 };
 
 export type SaveConnectionPreset = { name: string; provider: Provider; settings: ConnectionSettings; keyId: string | null };
-export type ConnectionPreset = ConnectionSettings & { id: string; name: string; provider: Provider; keyId: string | null };
+export type ConnectionPreset = ConnectionSettings & Preset & { provider: Provider; keyId: string | null };
 export type ProviderKey = { id: string; name: string; provider: Provider };
 export type ConnectionState = {
   activePresetId: string | null;

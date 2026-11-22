@@ -23,13 +23,6 @@
 
 .connection-preset { margin-block-end: 28px; }
 
-.connection-preset-fields {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr));
-  gap: 14px;
-  align-items: end;
-}
-
 .connection-key-control {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -78,13 +71,4 @@
 
 .connection-hint { color: var(--kr-muted); }
 .connection-error, .connection-feedback p { color: var(--kr-danger); }
-.connection-hint:empty, .connection-action-status:empty { display: none; }
-
-.connection-actions {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 10px 20px;
-  margin-block-start: 22px;
-}
+.connection-hint:empty { display: none; }
