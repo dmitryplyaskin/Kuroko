@@ -371,6 +371,37 @@ test('stores chats by account and rejects stale writes without losing the saved 
   expect(db.query('SELECT id FROM chats').all()).toEqual([]);
 });
 
+test('renames an owned chat independently of history and deletes its activity with the chat', async () => {
+  await register('activity-owner');
+  await register('activity-other');
+  const cookie = sessionCookie(await login('activity-owner')).token;
+  const other = sessionCookie(await login('activity-other')).token;
+  const { id } = await (await request('/chats', { method: 'POST', cookie })).json() as SavedChat;
+  const path = `/chats/${id}`;
+  const rename = (cookie: string, title: string) => request(`${path}/title`, { method: 'PUT', cookie, body: { title } });
+  const remove = (cookie: string) => request(path, { method: 'DELETE', cookie });
+  const snapshot: ChatSnapshot = {
+    revision: 0, messages: [{ id: 1, role: 'user', text: 'Первое сообщение', time: 1 }],
+    activity: { promptId: 1, entries: [{ id: '1', kind: 'model', time: 2, status: 'failed', details: { error: 'timeout' } }] },
+  };
+  const save = (body = snapshot) => request(path, { method: 'PUT', cookie, body });
+
+  expect((await rename(other, 'Чужой чат')).status).toBe(404);
+  expect((await remove(other)).status).toBe(404);
+  expect((await rename(cookie, ' '.repeat(10))).status).toBe(400);
+  expect(await (await rename(cookie, '  Хроника  ')).json()).toMatchObject({ id, title: 'Хроника' });
+  expect((await save({ ...snapshot, activity: { ...snapshot.activity!, promptId: 99 } })).status).toBe(400);
+  const committed = await (await save()).json() as SavedChat;
+  expect(committed).toMatchObject({ title: 'Хроника', revision: 1 });
+  expect(await (await save()).json()).toEqual(committed);
+  expect(await (await request(path, { cookie })).json()).toEqual({ ...committed, activity: [snapshot.activity] });
+  expect(await (await request('/chats', { cookie })).json()).toMatchObject([{ id, title: 'Хроника' }]);
+
+  expect((await remove(cookie)).status).toBe(204);
+  expect((await request(path, { cookie })).status).toBe(404);
+  expect(db.query('SELECT * FROM chat_activity').all()).toEqual([]);
+});
+
 test('registers, issues a revocable session and persists it only with auto-login', async () => {
   const registration = await register('Алиса');
   expect(registration.status).toBe(201);

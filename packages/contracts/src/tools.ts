@@ -1,6 +1,7 @@
 import type { Preset } from './presets';
 import type { ConnectionPreset } from './connectionSettings';
-import type { ChatToolCall } from './chat';
+import type { ChatActivityEntry, ChatToolCall } from './chat';
+import type { LlmErrorBody } from './llm';
 
 export const toolIds = ['roll_dice', 'resolveCheck', 'getRollDetails', 'test_echo', 'delegate_task'] as const;
 
@@ -28,6 +29,10 @@ export type DelegateTaskRequest = DelegateTaskInput & { history?: SubagentTurn[]
 export type DelegateTaskResult = (
   { result: { answer: string; name?: string; rollIds?: string[] }; isError?: never } | { result: string; isError: true }
 ) & { toolCalls?: ChatToolCall[] };
+export type DelegateTaskEvent =
+  | { type: 'activity'; entry: ChatActivityEntry }
+  | { type: 'done'; result: DelegateTaskResult }
+  | ({ type: 'error' } & LlmErrorBody);
 
 export function readDelegatedTask(value: unknown) {
   if (typeof value !== 'string' || value.length > delegatedTaskLimit * 2 || !value.isWellFormed() ||

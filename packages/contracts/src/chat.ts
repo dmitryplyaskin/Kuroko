@@ -21,5 +21,23 @@ export type ChatMessage = {
 };
 
 export type ChatSummary = { id: string; title: string; updatedAt: number };
-export type ChatSnapshot = { revision: number; messages: ChatMessage[]; gmMode?: boolean };
-export type SavedChat = ChatSummary & ChatSnapshot & { gmMode: boolean };
+export const chatTitleLimit = 64;
+
+export const chatActivityKinds = ['reply', 'model', 'tool', 'agent'] as const;
+export const chatActivityStatuses = ['running', 'completed', 'failed', 'stopped'] as const;
+export type ChatActivityEntry = {
+  id: string;
+  kind: (typeof chatActivityKinds)[number];
+  status: (typeof chatActivityStatuses)[number];
+  time: number;
+  duration?: number;
+  name?: string;
+  agentId?: string;
+  details: JsonObject;
+};
+export type ChatActivityTurn = { promptId: number; entries: ChatActivityEntry[] };
+export type ChatSnapshot = { revision: number; messages: ChatMessage[]; gmMode?: boolean; activity?: ChatActivityTurn };
+export type SavedChat = ChatSummary & Omit<ChatSnapshot, 'gmMode' | 'activity'> & {
+  gmMode: boolean;
+  activity?: ChatActivityTurn[];
+};

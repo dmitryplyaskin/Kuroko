@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { openDatabase } from './database';
 import { createProviderKeyStore } from '../connection/providerKeyStore';
 
-test.each([1, 2, 4, 5, 6, 7, 8, 9, 10, 11])('upgrades a version %i SQLite database without losing user data', (version) => {
+test.each([1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12])('upgrades a version %i SQLite database without losing user data', (version) => {
   const directory = mkdtempSync(join(tmpdir(), 'kuroko-sqlite-test-'));
   const path = join(directory, 'test.sqlite');
   const vaultKey = randomBytes(32);
@@ -15,7 +15,8 @@ test.each([1, 2, 4, 5, 6, 7, 8, 9, 10, 11])('upgrades a version %i SQLite databa
     const old = openDatabase(path, vaultKey);
     try {
       old.run('INSERT INTO users (username, username_key, password_hash) VALUES (?, ?, ?)', ['Лина', 'лина', 'test-hash']);
-      old.exec('DROP TABLE subagent_settings');
+      old.exec('DROP TABLE chat_activity; ALTER TABLE chats DROP COLUMN custom_title');
+      if (version < 12) old.exec('DROP TABLE subagent_settings');
       if (version < 10) old.exec('DROP TABLE tool_presets');
       if (version === 10) old.exec('DROP INDEX active_tool_preset; ALTER TABLE tool_presets DROP COLUMN active');
       if (version >= 10) old.run(`INSERT INTO tool_presets (id, user_id, name, tools_json) VALUES ('old-tools', 1, 'Кубики', '["roll_dice"]')`);
@@ -46,13 +47,14 @@ test.each([1, 2, 4, 5, 6, 7, 8, 9, 10, 11])('upgrades a version %i SQLite databa
 
     const migrated = openDatabase(path, vaultKey);
     try {
-      expect(migrated.query('PRAGMA user_version').get()).toEqual({ user_version: 12 });
+      expect(migrated.query('PRAGMA user_version').get()).toEqual({ user_version: 13 });
       expect(migrated.query('SELECT * FROM subagent_settings').all()).toEqual([]);
       expect(migrated.query('SELECT username FROM users').all()).toEqual([{ username: 'Лина' }]);
       expect(migrated.query('SELECT settings_json FROM chat_settings').all()).toEqual(version === 1 ? [] : [{ settings_json: '{"fontSize":20}' }]);
       expect(migrated.query('SELECT * FROM connection_presets').all()).toEqual([]);
       expect(migrated.query('SELECT id, gm_mode FROM chats').all()).toEqual(version >= 5 ? [{ id: 'old-chat', gm_mode: 0 }] : []);
       expect(migrated.query('SELECT * FROM chat_private_turns').all()).toEqual([]);
+      expect(migrated.query('SELECT * FROM chat_activity').all()).toEqual([]);
       expect(migrated.query('SELECT * FROM enabled_tools').all()).toEqual(version < 6 ? [] : [{ user_id: 1, tool_id: 'roll_dice' }]);
       expect(migrated.query('SELECT * FROM tool_presets').all()).toEqual(version < 10 ? [] : [
         { id: 'old-tools', user_id: 1, name: 'Кубики', tools_json: '["roll_dice"]', active: 0 },
@@ -82,6 +84,7 @@ test('imports a previously shared encrypted key into separate provider managers 
       if (!shared) throw new Error('Missing legacy key');
       store.create(1, 'openai', 'Unlinked key', 'test-unlinked-value');
       old.exec(`
+        DROP TABLE chat_activity;
         DROP TABLE subagent_settings;
         DROP TABLE tool_presets;
         DROP TABLE realms;

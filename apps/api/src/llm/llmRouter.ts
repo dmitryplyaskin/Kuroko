@@ -4,7 +4,7 @@ import { errorBody } from '@kuroko/contracts/errors';
 import type { LlmEvent } from '@kuroko/contracts/llm';
 import {
   delegatedAnswerLimit, readDelegatedTask, readSubagentName, subagentHistoryLimit, subagentHistoryTextLimit,
-  type DelegateTaskRequest, type SubagentTurn,
+  type DelegateTaskEvent, type DelegateTaskRequest, type SubagentTurn,
 } from '@kuroko/contracts/tools';
 import type { createDelegateTask } from '../tools/delegateTask';
 import { record } from './json';
@@ -12,7 +12,7 @@ import { LlmError } from './llmErrors';
 import type { createLlmService } from './llmService';
 import { readLlmRequest } from './readLlmRequest';
 
-function sse(event: LlmEvent) {
+function sse<T extends { type: string }>(event: T) {
   return `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`;
 }
 
@@ -52,12 +52,38 @@ export function createLlmRouter(llm: ReturnType<typeof createLlmService>, delega
     const controller = new AbortController();
     const disconnect = () => controller.abort();
     response.once('close', disconnect);
+    const streaming = request.get('Accept') === 'text/event-stream';
+    let heartbeat: ReturnType<typeof setInterval> | undefined;
+    function emit(event: DelegateTaskEvent) {
+      if (!controller.signal.aborted) response.write(sse(event));
+    }
     try {
-      const result = await delegateTask(response.locals.user.id, input, controller.signal);
-      if (!controller.signal.aborted) response.json(result);
+      if (streaming) {
+        response.set({
+          'Content-Type': 'text/event-stream; charset=utf-8',
+          'Cache-Control': 'no-store, no-transform',
+          'X-Accel-Buffering': 'no',
+        });
+        response.flushHeaders();
+        heartbeat = setInterval(() => {
+          if (!response.destroyed && !response.writableNeedDrain) response.write(': keep-alive\n\n');
+        }, 15_000);
+      }
+      const result = await delegateTask(response.locals.user.id, input, controller.signal,
+        streaming ? (entry) => emit({ type: 'activity', entry }) : undefined);
+      if (controller.signal.aborted) return;
+      if (streaming) {
+        emit({ type: 'done', result });
+        response.end();
+      } else response.json(result);
     } catch (error) {
-      if (!controller.signal.aborted) throw error;
+      if (controller.signal.aborted || response.destroyed) return;
+      if (!streaming || !response.headersSent) throw error;
+      const failure = error instanceof LlmError ? error : new LlmError('internal_error');
+      emit({ type: 'error', ...failure.body });
+      response.end();
     } finally {
+      clearInterval(heartbeat);
       response.off('close', disconnect);
     }
   });

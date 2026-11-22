@@ -3,7 +3,7 @@ import type { Database } from 'bun:sqlite';
 import { createHash } from 'node:crypto';
 import { realmFilterKey, realmTagKeys } from '../realms/realmFilterKeys';
 
-const latestVersion = 12;
+const latestVersion = 13;
 
 const initialSchema = `
   CREATE TABLE vault_settings (
@@ -207,6 +207,15 @@ export function migrateDatabase(db: Database, vaultKey: Buffer) {
         preset_id TEXT NOT NULL REFERENCES connection_presets(id) ON DELETE CASCADE
       ) STRICT;
       CREATE INDEX subagent_settings_preset ON subagent_settings (preset_id);
+    `);
+    if (version < 13) db.exec(`
+      ALTER TABLE chats ADD COLUMN custom_title TEXT;
+      CREATE TABLE chat_activity (
+        chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+        prompt_id INTEGER NOT NULL,
+        entries_json TEXT NOT NULL CHECK (json_valid(entries_json)),
+        PRIMARY KEY (chat_id, prompt_id)
+      ) STRICT;
     `);
 
     if (version < latestVersion) db.exec(`PRAGMA user_version = ${latestVersion}`);

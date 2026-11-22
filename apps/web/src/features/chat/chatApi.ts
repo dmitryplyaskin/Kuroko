@@ -1,8 +1,9 @@
 import { isLlmErrorCode } from '@kuroko/contracts/errors';
-import type { ChatSnapshot, ChatSummary, ChatToolCall, SavedChat } from '@kuroko/contracts/chat';
+import type { ChatActivityEntry, ChatSnapshot, ChatSummary, ChatToolCall, SavedChat } from '@kuroko/contracts/chat';
 import type { LlmAssistantPart, LlmCompletion, LlmEvent, LlmMessage, LlmRequest, LlmToolCall } from '@kuroko/contracts/llm';
-import type { DelegateTaskRequest, DelegateTaskResult, ToolId } from '@kuroko/contracts/tools';
+import type { DelegateTaskEvent, DelegateTaskRequest, DelegateTaskResult, ToolId } from '@kuroko/contracts/tools';
 import { createSubagentBatch, runToolCall, toolDeclarations } from '@kuroko/tool-runtime';
+import { createChatActivity, recordModelRequest } from '@kuroko/tool-runtime/chatActivity';
 import { toLlmMessages } from '@kuroko/tool-runtime/chatHistory';
 import type { ActiveSession } from '../../platform/session/model';
 import { sessionRequest, sessionResponse } from '../../platform/session/request';
@@ -13,6 +14,10 @@ export const chatApi = {
   list: (session: ActiveSession) => sessionRequest<ChatSummary[]>(session, '/chats'),
   create: (session: ActiveSession) => sessionRequest<SavedChat>(session, '/chats', { method: 'POST' }),
   open: (session: ActiveSession, id: string) => sessionRequest<SavedChat>(session, `/chats/${encodeURIComponent(id)}`),
+  rename: (session: ActiveSession, id: string, title: string) =>
+    sessionRequest<ChatSummary>(session, `/chats/${encodeURIComponent(id)}/title`, { method: 'PUT', body: { title } }),
+  remove: (session: ActiveSession, id: string) =>
+    sessionRequest<void>(session, `/chats/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   save: (session: ActiveSession, id: string, body: ChatSnapshot) =>
     sessionRequest<SavedChat>(session, `/chats/${encodeURIComponent(id)}`, { method: 'PUT', body }),
   gmReply: (session: ActiveSession, { id, revision }: SavedChat, signal: AbortSignal) =>
@@ -23,11 +28,11 @@ export const chatApi = {
 
 const maxToolRounds = 16;
 
-function readEvent(frame: string): LlmEvent | undefined {
+function readEvent(frame: string): LlmEvent | DelegateTaskEvent | undefined {
   const lines = frame.split(/\r?\n/).filter((line) => line.startsWith('data:'));
   if (!lines.length) return;
   try {
-    const event = JSON.parse(lines.map((line) => line.slice(5).replace(/^ /, '')).join('\n')) as LlmEvent | null;
+    const event = JSON.parse(lines.map((line) => line.slice(5).replace(/^ /, '')).join('\n')) as LlmEvent | DelegateTaskEvent | null;
     if (event && typeof event.type === 'string') return event;
   } catch {
     // An invalid frame must fail the request without discarding text already displayed.
@@ -38,7 +43,8 @@ function readEvent(frame: string): LlmEvent | undefined {
 export async function streamChatReply(
   session: ActiveSession, messages: ChatSnapshot['messages'], enabledTools: readonly ToolId[], signal: AbortSignal,
   onText: (delta: string) => void, onContent: (text: string, calls: ChatToolCall[]) => void,
-  onSubagentActivity: (active: readonly ActiveSubagent[]) => void,
+  onSubagentActivity: (active: readonly ActiveSubagent[]) => void, start: ReturnType<typeof createChatActivity>,
+  onActivity: (entry: ChatActivityEntry) => void,
 ): Promise<string> {
   const tools = enabledTools.length ? toolDeclarations(enabledTools) : undefined;
   const history: LlmMessage[] = toLlmMessages(messages);
@@ -54,15 +60,16 @@ export async function streamChatReply(
     signal.throwIfAborted();
     const separator = text.trim() ? '\n\n' : '';
     let startsParagraph = Boolean(separator);
-    const completion = await streamCompletion(session, {
+    const request: LlmRequest = {
       presetId, messages: history, stream: true, tools, toolChoice: presetId && tools ? 'auto' : undefined,
-    }, signal, (delta) => {
+    };
+    const completion = await recordModelRequest(start, request, () => streamCompletion(session, request, signal, (delta) => {
       if (!delta) return;
       onText(startsParagraph ? separator + delta : delta);
       startsParagraph = false;
-    });
+    }), signal, errorCode);
     const { text: roundText, calls } = readToolTurn(completion.message.parts);
-    const start = text.length + (roundText ? separator.length : 0);
+    const textStart = text.length + (roundText ? separator.length : 0);
     if (roundText) text += separator + roundText;
 
     if (completion.finishReason === 'length') {
@@ -83,10 +90,30 @@ export async function streamChatReply(
     presetId ??= completion.presetId;
     const recordedCalls = [...savedCalls, ...toolCalls];
     const delegateTask = createSubagentBatch(recordedCalls, async (request, signal, id) => {
+      const agent = start('agent', { task: request.task }, request.name);
+      const nestedEntries = new Map<string, ChatActivityEntry>();
       activeSubagents = [...activeSubagents, { id, name: request.name }];
       onSubagentActivity(activeSubagents);
       try {
-        return await requestSubagent(session, request, signal);
+        const result = await requestSubagent(session, request, signal, (entry) => {
+          const nested = { ...entry, id: `${agent.id}/${entry.id}`, agentId: agent.id };
+          nestedEntries.set(nested.id, nested);
+          onActivity(nested);
+        });
+        // Non-streaming delegation also returns its completed tool calls.
+        if (!nestedEntries.size) {
+          for (const [index, call] of (result.toolCalls ?? []).entries()) {
+            onActivity({
+              id: `${agent.id}/${index + 1}`, agentId: agent.id, kind: 'tool', time: Date.now(), name: call.name,
+              status: call.isError ? 'failed' : 'completed', details: { arguments: call.arguments, result: call.result },
+            });
+          }
+        }
+        for (const entry of nestedEntries.values()) {
+          if (entry.status === 'running') onActivity({ ...entry, status: result.isError ? 'failed' : 'completed' });
+        }
+        agent.finish(result.isError ? 'failed' : 'completed', { result: result.result });
+        return result;
       } finally {
         activeSubagents = activeSubagents.filter((agent) => agent.id !== id);
         onSubagentActivity(activeSubagents);
@@ -96,8 +123,12 @@ export async function streamChatReply(
       let recordId = call.id;
       while (recordedIds.has(recordId)) recordId = `call_${nextRecordNumber++}`;
       recordedIds.add(recordId);
+      const tool = start('tool', { arguments: call.arguments }, call.name);
       const { entry, message } = await runToolCall(call, enabledTools, { signal, id: recordId, history: recordedCalls, delegateTask });
-      return { entry: { ...entry, textOffset: start + textOffset }, message };
+      tool.finish(entry.isError ? 'failed' : 'completed', {
+        result: entry.result, ...(message.content !== entry.result && { modelResult: message.content }),
+      });
+      return { entry: { ...entry, textOffset: textStart + textOffset }, message };
     }));
     signal.throwIfAborted();
     toolCalls.push(...results.map(({ entry }) => entry));
@@ -106,9 +137,18 @@ export async function streamChatReply(
   }
 }
 
-async function requestSubagent(session: ActiveSession, body: DelegateTaskRequest, signal: AbortSignal): Promise<DelegateTaskResult> {
+async function requestSubagent(
+  session: ActiveSession, body: DelegateTaskRequest, signal: AbortSignal, onActivity: (entry: ChatActivityEntry) => void,
+): Promise<DelegateTaskResult> {
   try {
-    return await sessionRequest<DelegateTaskResult>(session, '/llm/delegate', { method: 'POST', body, signal, timeoutMs: 130_000 });
+    const response = await sessionResponse(session, '/llm/delegate', {
+      method: 'POST', body, signal, accept: 'text/event-stream', timeoutMs: 130_000,
+    });
+    if (mediaType(response) === 'application/json') return await response.json() as DelegateTaskResult;
+    return await readStream(response, (event) => {
+      if (event.type === 'activity') onActivity(event.entry);
+      if (event.type === 'done' && 'result' in event) return event.result;
+    });
   } catch (error) {
     signal.throwIfAborted();
     session.signal.throwIfAborted();
@@ -132,8 +172,18 @@ async function streamCompletion(
   const response = await sessionResponse(session, '/llm/generate', {
     method: 'POST', body, signal, accept: 'text/event-stream', timeoutMs: 130_000,
   });
-  const mediaType = response.headers.get('Content-Type')?.split(';', 1)[0]?.trim().toLowerCase();
-  if (!response.body || mediaType !== 'text/event-stream') {
+  return readStream(response, (event) => {
+    if (event.type === 'text_delta' && typeof event.text === 'string') onText(event.text);
+    if (event.type === 'done' && 'completion' in event && Array.isArray(event.completion?.message?.parts)) return event.completion;
+  });
+}
+
+function mediaType(response: Response) {
+  return response.headers.get('Content-Type')?.split(';', 1)[0]?.trim().toLowerCase();
+}
+
+async function readStream<T>(response: Response, consume: (event: LlmEvent | DelegateTaskEvent) => T | undefined): Promise<T> {
+  if (!response.body || mediaType(response) !== 'text/event-stream') {
     void response.body?.cancel().catch(() => undefined);
     throw new ApiError(502, 'invalid_response');
   }
@@ -150,14 +200,13 @@ async function streamCompletion(
         if (!boundary) break;
         const event = readEvent(pending.slice(0, boundary.index));
         pending = pending.slice(boundary.index + boundary[0].length);
-        if (event?.type === 'text_delta' && typeof event.text === 'string') onText(event.text);
-        if (event?.type === 'error') {
+        if (!event) continue;
+        if (event.type === 'error') {
           throw new ApiError(502, isLlmErrorCode(event.code) ? event.code : 'invalid_response');
         }
-        if (event?.type === 'done') {
-          if (!Array.isArray(event.completion?.message?.parts)) throw new ApiError(502, 'invalid_response');
-          return event.completion;
-        }
+        const result = consume(event);
+        if (result !== undefined) return result;
+        if (event.type === 'done') throw new ApiError(502, 'invalid_response');
       }
     }
   } finally {

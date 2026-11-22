@@ -1,7 +1,8 @@
-import type { ChatToolCall } from '@kuroko/contracts/chat';
+import type { ChatActivityEntry, ChatToolCall } from '@kuroko/contracts/chat';
 import type { LlmMessage } from '@kuroko/contracts/llm';
 import { delegatedAnswerLimit, type DelegateTaskRequest, type DelegateTaskResult } from '@kuroko/contracts/tools';
 import { runToolCall, toolDeclarations } from '@kuroko/tool-runtime';
+import { createChatActivity, recordModelRequest } from '@kuroko/tool-runtime/chatActivity';
 import { randomUUID } from 'node:crypto';
 import { LlmError } from '../llm/llmErrors';
 import type { createLlmService } from '../llm/llmService';
@@ -13,7 +14,8 @@ export function createDelegateTask(
   llm: Pick<ReturnType<typeof createLlmService>, 'generate'>,
   tools: Pick<ReturnType<typeof createToolsStore>, 'list' | 'subagentPresetId'>,
 ) {
-  return async (userId: number, { task, name, history = [] }: DelegateTaskRequest, signal: AbortSignal): Promise<DelegateTaskResult> => {
+  return async (userId: number, { task, name, history = [] }: DelegateTaskRequest, signal: AbortSignal,
+    onActivity?: (entry: ChatActivityEntry) => void): Promise<DelegateTaskResult> => {
     signal.throwIfAborted();
     const enabled = tools.list(userId);
     if (!enabled.includes('delegate_task')) return { result: 'Tool is not enabled.', isError: true };
@@ -39,11 +41,15 @@ export function createDelegateTask(
     const timeout = AbortSignal.timeout(120_000);
     const runSignal = AbortSignal.any([signal, timeout]);
     const fail = (result: string): DelegateTaskResult => ({ result, isError: true, toolCalls: trace.length ? trace : undefined });
+    const start = onActivity && createChatActivity(onActivity);
 
     try {
       for (let round = 0; round <= maxToolRounds; round++) {
         runSignal.throwIfAborted();
-        const completion = await llm.generate(userId, { presetId, messages, tools: declarations }, runSignal);
+        const request = { presetId, messages, tools: declarations };
+        const generate = () => llm.generate(userId, request, runSignal);
+        const completion = await (start ? recordModelRequest(start, request, generate, signal,
+          (error) => timeout.aborted ? 'timeout' : error instanceof LlmError ? error.code : 'internal_error') : generate());
         runSignal.throwIfAborted();
         if (completion.finishReason === 'content_filter') return fail('The subagent response was blocked by the provider.');
         if (completion.finishReason === 'length') return fail('The subagent reached its response length limit. Ask for a shorter answer.');
@@ -63,9 +69,15 @@ export function createDelegateTask(
         }
         if (round === maxToolRounds) break;
 
-        const results = await Promise.all(calls.map((call) => runToolCall(call, allowedTools, {
-          signal: runSignal, id: `sub_${randomUUID()}`, history: trace,
-        })));
+        const results = await Promise.all(calls.map(async (call) => {
+          const activity = start?.('tool', { arguments: call.arguments }, call.name);
+          const result = await runToolCall(call, allowedTools, { signal: runSignal, id: `sub_${randomUUID()}`, history: trace });
+          activity?.finish(result.entry.isError ? 'failed' : 'completed', {
+            result: result.entry.result,
+            ...(result.message.content !== result.entry.result && { modelResult: result.message.content }),
+          });
+          return result;
+        }));
         trace.push(...results.map(({ entry }) => entry));
         messages.push(assistant, ...results.map(({ message }) => message));
       }

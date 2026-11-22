@@ -1,10 +1,12 @@
 import { useI18n } from '../../shared/i18n/i18n';
-import { Button, Group, Modal, NativeSelect, Switch, useComputedColorScheme } from '@mantine/core';
+import { Button, Group, Modal, Tabs, useComputedColorScheme } from '@mantine/core';
 import { createWatch } from 'effector';
 import { useProvidedScope, useUnit } from 'effector-react';
-import { ArrowDownToLine, ArrowUpToLine, Plus } from 'lucide-react';
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { Bot, List, MessageSquare } from 'lucide-react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { chatActivityView, ChatAgents, ChatLog } from './ChatActivity';
 import { ChatComposer } from './ChatComposer';
+import { ChatMenu } from './ChatMenu';
 import { ChatHistory, type ChatHistoryHandle } from './ChatHistory';
 import { ChatMessage, ChatPicture } from './ChatMessage';
 import { $activeSession } from '../../platform/session/model';
@@ -12,8 +14,8 @@ import { chatDisplayStyle } from './chatDisplayStyle';
 import type { ChatImage, Message } from './message';
 import {
   $activeSubagents, $chatAnnouncement, $chatRows, $expandedReasoning, $messageEditor, $replyId, $replyPhase,
-  $chatGmMode, $chatId, $chatLoadError, $chatLoading, $chatLocked, $chatSaveError, $chats,
-  chatCreateRequested, chatGmModeChanged, chatLoadRetryRequested, chatOpenRequested, chatSaveRetryRequested,
+  $chatActivity, $chatGmMode, $chatId, $chatLoadError, $chatLoading, $chatLocked, $chatMessages, $chatSaveError,
+  chatLoadRetryRequested, chatSaveRetryRequested,
   chatHidden, chatShown, keepHistoryAtEndRequested, messageDeleteRequested, messageEditCancelled,
   messageEditChanged, messageEditRequested, messageEditSubmitted, messageSent, reasoningToggled,
 } from './model';
@@ -24,29 +26,37 @@ type Preview = { kind: 'preview'; image: ChatImage };
 type Delete = { kind: 'delete'; message: Message };
 
 export default function Chat() {
-  const { t, number, plural } = useI18n();
+  const { t } = useI18n();
   const scheme = useComputedColorScheme('light');
   const [dialog, setDialog] = useState<Preview | Delete>();
+  const [tab, setTab] = useState<string | null>('chat');
   const scope = useProvidedScope();
   const {
     session, settings, rows, replyId, replyPhase, activeSubagents, announcement, editor, expandedReasoning, show, hide, openEditor,
     changeDraft, closeEditor, saveEdit, remove, toggleReasoning,
-    chatId, chats, gmMode, loading, locked, loadError, saveError, createChat, changeGmMode, openChat, retryLoad, retrySave,
+    activity, messages, chatId, gmMode, loading, locked, loadError, saveError, retryLoad, retrySave,
   } = useUnit({
     session: $activeSession, settings: $appliedChatSettings,
     rows: $chatRows, replyId: $replyId, replyPhase: $replyPhase, activeSubagents: $activeSubagents, announcement: $chatAnnouncement,
     editor: $messageEditor, expandedReasoning: $expandedReasoning, show: chatShown, hide: chatHidden,
     openEditor: messageEditRequested, changeDraft: messageEditChanged, closeEditor: messageEditCancelled,
     saveEdit: messageEditSubmitted, remove: messageDeleteRequested, toggleReasoning: reasoningToggled,
-    chatId: $chatId, chats: $chats, gmMode: $chatGmMode, loading: $chatLoading, locked: $chatLocked, loadError: $chatLoadError, saveError: $chatSaveError,
-    changeGmMode: chatGmModeChanged,
-    createChat: chatCreateRequested, openChat: chatOpenRequested, retryLoad: chatLoadRetryRequested, retrySave: chatSaveRetryRequested,
+    activity: $chatActivity, messages: $chatMessages, chatId: $chatId, gmMode: $chatGmMode,
+    loading: $chatLoading, locked: $chatLocked, loadError: $chatLoadError, saveError: $chatSaveError,
+    retryLoad: chatLoadRetryRequested, retrySave: chatSaveRetryRequested,
   });
   const username = session?.user.username ?? '';
   const title = useRef<HTMLHeadingElement>(null);
+  const chatTab = useRef<HTMLButtonElement>(null);
   const history = useRef<ChatHistoryHandle>(null);
   const jumpOnSend = useRef(false);
   const focusAfterDelete = useRef(false);
+  const { entries, agents } = useMemo(() => chatActivityView(activity, messages), [activity, messages]);
+  const activeTab = tab === 'agents' && !agents.length ? 'chat' : tab;
+
+  useEffect(() => {
+    if (tab !== activeTab && document.activeElement === document.body) chatTab.current?.focus({ preventScroll: true });
+  }, [tab, activeTab]);
 
   const openDelete = useCallback((message: Message) => setDialog({ kind: 'delete', message }), []);
   const openPreview = useCallback((image: ChatImage) => setDialog({ kind: 'preview', image }), []);
@@ -80,9 +90,6 @@ export default function Chat() {
     history.current?.scrollToEnd();
   }, [replyId]);
 
-  const countCategory = plural.select(rows.length);
-  const countKey = countCategory === 'one' ? 'chat.countOne' : countCategory === 'few' ? 'chat.countFew' : 'chat.countOther';
-
   function removeMessage(message: Message) {
     focusAfterDelete.current = true;
     remove(message.id);
@@ -90,52 +97,45 @@ export default function Chat() {
   }
 
   return (
-    <section className="chat-panel" aria-labelledby="chat-title" data-user-side={settings.userSide}
-      style={chatDisplayStyle(settings, scheme)}>
-      <header className="chat-header">
-        <div className="chat-header-inner chat-column">
-          <div>
-            <h1 id="chat-title" ref={title} tabIndex={-1}>{t('chat.title')}</h1>
-            <p>{t(countKey, { count: number.format(rows.length) })}</p>
-          </div>
-          <div className="chat-navigation">
-            <button type="button" className="icon-button" aria-label={t('chat.historyStart')} title={t('chat.historyStart')}
-              disabled={!rows.length} onClick={() => history.current?.scrollToStart()}>
-              <ArrowUpToLine size={18} aria-hidden="true" />
-            </button>
-            <button type="button" className="icon-button" aria-label={t('chat.historyEnd')} title={t('chat.historyEnd')}
-              disabled={!rows.length} onClick={() => history.current?.scrollToEnd()}>
-              <ArrowDownToLine size={18} aria-hidden="true" />
-            </button>
-          </div>
-        </div>
-        <div className="chat-switcher chat-column">
-          <NativeSelect aria-label={t('chat.savedChats')} value={chatId} disabled={locked || !chats.length}
-            data={chats.map(({ id, title }) => ({ value: id, label: title || t('chat.untitled') }))}
-            onChange={(event) => openChat(event.currentTarget.value)} />
-          <Button type="button" variant="default" disabled={locked} leftSection={<Plus size={16} aria-hidden="true" />} onClick={createChat}>
-            {t('chat.new')}
+    <Tabs className="chat-panel" data-user-side={settings.userSide} value={activeTab} onChange={setTab}
+      keepMountedMode="display-none" variant="unstyled" style={chatDisplayStyle(settings, scheme)}>
+      <h1 className="chat-sr-only" id="chat-title" ref={title} tabIndex={-1}>{t('chat.title')}</h1>
+      <Tabs.List className="chat-tabs" aria-labelledby="chat-title">
+        <Tabs.Tab ref={chatTab} className="chat-tab" value="chat" leftSection={<MessageSquare size={15} aria-hidden="true" />}>
+          {t('chat.title')}
+        </Tabs.Tab>
+        <Tabs.Tab className="chat-tab" value="log" leftSection={<List size={16} aria-hidden="true" />}>
+          {t('chat.log')}
+        </Tabs.Tab>
+        {agents.length > 0 && (
+          <Tabs.Tab className="chat-tab" value="agents" leftSection={<Bot size={16} aria-hidden="true" />}>
+            {t('chat.agents')}
+          </Tabs.Tab>
+        )}
+      </Tabs.List>
+      {(loadError || saveError) && (
+        <div className="chat-status">
+          <p role="alert">{t(`error.${loadError ?? saveError!}`)}</p>
+          <Button type="button" size="compact-sm" variant="default" disabled={loading} onClick={loadError ? retryLoad : retrySave}>
+            {t(loadError || saveError === 'chat_conflict' ? 'common.retryLoad' : 'chat.retrySave')}
           </Button>
         </div>
-        {chatId && (
-          <div className="chat-mode chat-column">
-            <Switch label={t('chat.gmMode')} description={t('chat.gmModeDescription')} checked={gmMode} disabled={locked}
-              onChange={(event) => changeGmMode(event.currentTarget.checked)} />
-          </div>
-        )}
-        {(loadError || saveError) && (
-          <div className="chat-status chat-column">
-            <p role="alert">{t(`error.${loadError ?? saveError!}`)}</p>
-            <Button type="button" size="compact-sm" variant="default" disabled={loading} onClick={loadError ? retryLoad : retrySave}>
-              {t(loadError || saveError === 'chat_conflict' ? 'common.retryLoad' : 'chat.retrySave')}
-            </Button>
-          </div>
-        )}
-      </header>
-      {rows.length ? (
-        <ChatHistory key={chatId} ref={history} messages={rows} renderMessage={renderMessage} />
-      ) : <p className="chat-empty">{loading ? t('chat.loading') : chatId && t('chat.empty')}</p>}
-      <ChatComposer />
+      )}
+      <Tabs.Panel className="chat-conversation" value="chat">
+        {rows.length ? (
+          <ChatHistory key={chatId} ref={history} messages={rows} renderMessage={renderMessage} />
+        ) : <p className="chat-empty">{loading ? t('chat.loading') : chatId && t('chat.empty')}</p>}
+        <ChatComposer menu={<ChatMenu hasMessages={Boolean(rows.length)} scrollToStart={() => history.current?.scrollToStart()}
+          scrollToEnd={() => history.current?.scrollToEnd()} />} />
+      </Tabs.Panel>
+      <Tabs.Panel className="chat-activity-pane" value="log" tabIndex={0}>
+        <ChatLog key={chatId} entries={entries} gmMode={gmMode} />
+      </Tabs.Panel>
+      {agents.length > 0 && (
+        <Tabs.Panel className="chat-activity-pane" value="agents" tabIndex={0}>
+          <ChatAgents key={chatId} agents={agents} />
+        </Tabs.Panel>
+      )}
       <output className="chat-sr-only">{announcement && t(announcement)}</output>
 
       <Modal opened={Boolean(dialog)} onClose={() => setDialog(undefined)} onExitTransitionEnd={() => {
@@ -157,6 +157,6 @@ export default function Chat() {
           </>
         )}
       </Modal>
-    </section>
+    </Tabs>
   );
 }

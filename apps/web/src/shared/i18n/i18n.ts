@@ -28,6 +28,7 @@ function forLocale(locale: Locale) {
   const number = new Intl.NumberFormat(locale);
   const plural = new Intl.PluralRules(locale);
   const clock = new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit' });
+  const clockWithSeconds = new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit', second: '2-digit' });
   const date = new Intl.DateTimeFormat(locale, { dateStyle: 'long', timeStyle: 'short' });
   const decimalSeparator = number.formatToParts(1.1).find(({ type }) => type === 'decimal')?.value ?? '.';
 
@@ -36,7 +37,7 @@ function forLocale(locale: Locale) {
     return values ? template.replace(/\{(\w+)\}/g, (match, name: string) => String(values[name] ?? match)) : template;
   }
 
-  return { locale, t, number, plural, clock, date, decimalSeparator };
+  return { locale, t, number, plural, clock, clockWithSeconds, date, decimalSeparator };
 }
 
 const i18n = { ru: forLocale('ru'), en: forLocale('en') } satisfies Record<Locale, ReturnType<typeof forLocale>>;

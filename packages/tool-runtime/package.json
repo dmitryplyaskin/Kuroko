@@ -5,6 +5,7 @@
   "type": "module",
   "exports": {
     ".": "./src/runtime.ts",
+    "./chatActivity": "./src/chatActivity.ts",
     "./chatHistory": "./src/chatHistory.ts"
   },
   "dependencies": {

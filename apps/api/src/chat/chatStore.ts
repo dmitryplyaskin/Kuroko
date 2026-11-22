@@ -1,9 +1,9 @@
-import type { ChatMessage, ChatSnapshot, ChatSummary, ChatToolCall, SavedChat } from '@kuroko/contracts/chat';
+import { chatTitleLimit, type ChatActivityEntry, type ChatMessage, type ChatSnapshot, type ChatSummary, type ChatToolCall, type SavedChat } from '@kuroko/contracts/chat';
 import type { LlmAssistantMessage } from '@kuroko/contracts/llm';
 import type { Database } from 'bun:sqlite';
 import { randomUUID } from 'node:crypto';
 
-type Row = ChatSummary & { revision: number; messagesJson: string; gmMode: 0 | 1 };
+type Row = ChatSummary & { revision: number; messagesJson: string; gmMode: 0 | 1; customTitle: string | null };
 export type PrivateTurn = {
   notes?: string;
   rounds: { assistant: LlmAssistantMessage; calls: ChatToolCall[] }[];
@@ -11,10 +11,10 @@ export type PrivateTurn = {
 
 export function createChatStore(db: Database) {
   const list = db.query<ChatSummary, [number]>(`
-    SELECT id, title, updated_at AS updatedAt FROM chats WHERE user_id = ? ORDER BY updated_at DESC, id
+    SELECT id, coalesce(custom_title, title) AS title, updated_at AS updatedAt FROM chats WHERE user_id = ? ORDER BY updated_at DESC, id
   `);
   const find = db.query<Row, [number, string]>(`
-    SELECT id, title, updated_at AS updatedAt, revision, messages_json AS messagesJson, gm_mode AS gmMode
+    SELECT id, title, updated_at AS updatedAt, revision, messages_json AS messagesJson, gm_mode AS gmMode, custom_title AS customTitle
     FROM chats WHERE user_id = ? AND id = ?
   `);
   const insert = db.query(`
@@ -35,26 +35,46 @@ export function createChatStore(db: Database) {
   const deletePrivate = db.query(`
     DELETE FROM chat_private_turns WHERE chat_id = ? AND (reply_id = ? OR prompt_id = ?)
   `);
+  const rename = db.query<ChatSummary, [string, number, string]>(`
+    UPDATE chats SET custom_title = ? WHERE user_id = ? AND id = ?
+    RETURNING id, custom_title AS title, updated_at AS updatedAt
+  `);
+  const remove = db.query('DELETE FROM chats WHERE user_id = ? AND id = ?');
+  const listActivity = db.query<{ promptId: number; entriesJson: string }, [string]>(`
+    SELECT prompt_id AS promptId, entries_json AS entriesJson FROM chat_activity WHERE chat_id = ? ORDER BY prompt_id
+  `);
+  const insertActivity = db.query(`
+    INSERT INTO chat_activity (chat_id, prompt_id, entries_json) VALUES (?, ?, ?)
+    ON CONFLICT (chat_id, prompt_id) DO UPDATE SET entries_json = excluded.entries_json
+  `);
+  const findActivity = db.query<{ entriesJson: string }, [string, number]>(`
+    SELECT entries_json AS entriesJson FROM chat_activity WHERE chat_id = ? AND prompt_id = ?
+  `);
+  const deleteActivity = db.query('DELETE FROM chat_activity WHERE chat_id = ? AND prompt_id = ?');
 
-  const save = db.transaction((userId: number, id: string, { revision, messages, gmMode }: ChatSnapshot) => {
+  const save = db.transaction((userId: number, id: string, { revision, messages, gmMode, activity }: ChatSnapshot) => {
     const row = find.get(userId, id);
     if (!row) return 'missing';
     const messagesJson = JSON.stringify(messages);
     const mode = gmMode ?? Boolean(row.gmMode);
-    if (row.revision === revision + 1 && row.messagesJson === messagesJson && mode === Boolean(row.gmMode)) return readChat(row);
+    const entriesJson = activity && JSON.stringify(activity.entries);
+    if (row.revision === revision + 1 && row.messagesJson === messagesJson && mode === Boolean(row.gmMode) &&
+        (!activity || findActivity.get(id, activity.promptId)?.entriesJson === entriesJson)) return readChat(row);
     if (row.revision !== revision) return 'conflict';
     const firstPrompt = messages.find(({ role }) => role === 'user')?.text ?? '';
-    const title = Array.from(firstPrompt.replace(/\s+/g, ' ').trim()).slice(0, 64).join('');
+    const title = Array.from(firstPrompt.replace(/\s+/g, ' ').trim()).slice(0, chatTitleLimit).join('');
     const updatedAt = Date.now();
     if (row.messagesJson !== messagesJson) {
       const current = new Map(messages.map((message) => [message.id, message]));
       for (const previous of readChat(row).messages) {
         const message = current.get(previous.id);
         if (message?.role !== previous.role || message.text !== previous.text) deletePrivate.run(id, previous.id, previous.id);
+        if (message?.role !== previous.role) deleteActivity.run(id, previous.role === 'user' ? previous.id : previous.id - 1);
       }
     }
     update.run(title, updatedAt, messagesJson, Number(mode), userId, id);
-    return { id, title, updatedAt, revision: revision + 1, messages, gmMode: mode };
+    if (activity && entriesJson) insertActivity.run(id, activity.promptId, entriesJson);
+    return { id, title: row.customTitle ?? title, updatedAt, revision: revision + 1, messages, gmMode: mode };
   });
 
   const publish = db.transaction((userId: number, id: string, revision: number, text: string, turn: PrivateTurn) => {
@@ -66,7 +86,7 @@ export function createChatStore(db: Database) {
     if (prompt?.role !== 'user' || prompt.id >= Number.MAX_SAFE_INTEGER - 2) return 'conflict';
     const reply: ChatMessage = { id: prompt.id + 1, role: 'assistant', text, time: Date.now() };
     chat.messages.push(reply);
-    update.run(chat.title, reply.time, JSON.stringify(chat.messages), row.gmMode, userId, id);
+    update.run(row.title, reply.time, JSON.stringify(chat.messages), row.gmMode, userId, id);
     insertPrivate.run(id, reply.id, prompt.id, JSON.stringify(turn));
     return { ...chat, revision: revision + 1, updatedAt: reply.time };
   });
@@ -77,6 +97,16 @@ export function createChatStore(db: Database) {
       const row = find.get(userId, id);
       return row && readChat(row);
     },
+    open: db.transaction((userId: number, id: string) => {
+      const row = find.get(userId, id);
+      if (!row) return;
+      const activity = listActivity.all(id).map(({ promptId, entriesJson }) => ({
+        promptId, entries: JSON.parse(entriesJson) as ChatActivityEntry[],
+      }));
+      return { ...readChat(row), ...(activity.length && { activity }) };
+    }),
+    rename: (userId: number, id: string, title: string) => rename.get(title, userId, id),
+    remove: (userId: number, id: string) => remove.run(userId, id).changes > 0,
     create(userId: number): SavedChat {
       const id = randomUUID();
       const updatedAt = Date.now();
@@ -90,6 +120,6 @@ export function createChatStore(db: Database) {
   };
 }
 
-function readChat({ messagesJson, gmMode, ...row }: Row): SavedChat {
-  return { ...row, gmMode: Boolean(gmMode), messages: JSON.parse(messagesJson) as ChatMessage[] };
+function readChat({ messagesJson, gmMode, customTitle, ...row }: Row): SavedChat {
+  return { ...row, title: customTitle ?? row.title, gmMode: Boolean(gmMode), messages: JSON.parse(messagesJson) as ChatMessage[] };
 }

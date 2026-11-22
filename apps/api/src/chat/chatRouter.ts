@@ -1,4 +1,7 @@
-import type { ChatMessage, ChatSnapshot, ChatToolCall } from '@kuroko/contracts/chat';
+import {
+  chatActivityKinds, chatActivityStatuses, chatTitleLimit,
+  type ChatActivityEntry, type ChatActivityTurn, type ChatMessage, type ChatSnapshot, type ChatToolCall,
+} from '@kuroko/contracts/chat';
 import { errorBody } from '@kuroko/contracts/errors';
 import { Router } from 'express';
 import { jsonObject, jsonValue, record } from '../llm/json';
@@ -13,8 +16,23 @@ export function createChatRouter(store: ReturnType<typeof createChatStore>, gmRe
   router.get('/', (_request, response) => { response.json(store.list(response.locals.user.id)); });
   router.post('/', (_request, response) => { response.status(201).json(store.create(response.locals.user.id)); });
   router.get('/:id', (request, response) => {
-    const chat = store.find(response.locals.user.id, request.params.id);
+    const chat = store.open(response.locals.user.id, request.params.id);
     if (chat) response.json(chat);
+    else response.status(404).json(errorBody('chat_not_found'));
+  });
+  router.put('/:id/title', (request, response) => {
+    const value = record(request.body)?.title;
+    const title = typeof value === 'string' ? value.trim() : '';
+    if (!title || !title.isWellFormed() || /\p{Cc}/u.test(title) || Array.from(title).length > chatTitleLimit) {
+      response.status(400).json(errorBody('invalid_request'));
+      return;
+    }
+    const chat = store.rename(response.locals.user.id, request.params.id, title);
+    if (chat) response.json(chat);
+    else response.status(404).json(errorBody('chat_not_found'));
+  });
+  router.delete('/:id', (request, response) => {
+    if (store.remove(response.locals.user.id, request.params.id)) response.status(204).end();
     else response.status(404).json(errorBody('chat_not_found'));
   });
   router.put('/:id', (request, response) => {
@@ -93,7 +111,33 @@ function readSnapshot(value: unknown): ChatSnapshot | undefined {
     messages.push({ id, role, text, time, edited, toolCalls });
     previousId = id;
   }
-  return { revision: snapshot.revision, messages, gmMode: snapshot.gmMode };
+  const activity = readActivity(snapshot.activity, messages);
+  if (snapshot.activity !== undefined && !activity) return;
+  return { revision: snapshot.revision, messages, gmMode: snapshot.gmMode, activity };
+}
+
+function readActivity(value: unknown, messages: ChatMessage[]): ChatActivityTurn | undefined {
+  const turn = record(value);
+  if (!turn || !nonNegativeInteger(turn.promptId) || !Array.isArray(turn.entries) || !turn.entries.length ||
+      !messages.some(({ id, role }) => id === turn.promptId && role === 'user')) return;
+  const entries: ChatActivityEntry[] = [];
+  const agents = new Set<string>();
+  const ids = new Set<string>();
+  for (const raw of turn.entries as unknown[]) {
+    const entry = record(raw);
+    if (!entry) return;
+    const { id, kind, status, time, duration, name, agentId, details } = entry;
+    if (typeof id !== 'string' || !/^\d+(\/\d+)?$/.test(id) || id.length > 40 || ids.has(id) ||
+        typeof kind !== 'string' || !chatActivityKinds.some((value) => value === kind) ||
+        typeof status !== 'string' || status === 'running' || !chatActivityStatuses.some((value) => value === status) ||
+        !nonNegativeInteger(time) || time > 8.64e15 || (duration !== undefined && !nonNegativeInteger(duration)) ||
+        (name !== undefined && (typeof name !== 'string' || !name.isWellFormed() || name.length > 512)) ||
+        (agentId !== undefined && (typeof agentId !== 'string' || !agents.has(agentId))) || !jsonObject(details)) return;
+    ids.add(id);
+    if (kind === 'agent') agents.add(id);
+    entries.push({ id, kind: kind as ChatActivityEntry['kind'], status: status as ChatActivityEntry['status'], time, duration, name, agentId, details });
+  }
+  return { promptId: turn.promptId, entries };
 }
 
 function readToolCalls(value: unknown, text: string): ChatToolCall[] | undefined {
