@@ -1,4 +1,4 @@
-import type { SavedRealm } from '@kuroko/contracts/realms';
+import { defaultRealmFilters, type SavedRealm } from '@kuroko/contracts/realms';
 import { Button } from '@mantine/core';
 import { useUnit } from 'effector-react';
 import { ArrowLeft } from 'lucide-react';
@@ -16,7 +16,7 @@ type View = { kind: 'library' } | { kind: 'editor'; id?: string };
 export default function Realms() {
   const session = useUnit($activeSession);
   const [view, setView] = useState<View>({ kind: 'library' });
-  const [criteria, setCriteria] = useState<LibraryCriteria>({ q: '', sort: 'updated', offset: 0 });
+  const [criteria, setCriteria] = useState<LibraryCriteria>({ q: '', sort: 'updated', offset: 0, filters: defaultRealmFilters });
   const container = useRef<HTMLDivElement>(null);
 
   useEffect(() => {

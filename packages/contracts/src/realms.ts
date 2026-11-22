@@ -31,9 +31,9 @@ export type Realm = {
   starts?: RealmStart[];
 };
 
-export type SavedRealm = { id: string; revision: number; createdAt: number; updatedAt: number; realm: Realm };
+export type SavedRealm = { id: string; revision: number; createdAt: number; updatedAt: number; favorite?: true; realm: Realm };
 export type UpdateRealm = Pick<SavedRealm, 'revision' | 'realm'>;
-export type RealmSummary = Pick<SavedRealm, 'id' | 'createdAt' | 'updatedAt'> & {
+export type RealmSummary = Pick<SavedRealm, 'id' | 'createdAt' | 'updatedAt' | 'favorite'> & {
   title: string;
   excerpt: string;
   characters: number;
@@ -42,10 +42,18 @@ export type RealmSummary = Pick<SavedRealm, 'id' | 'createdAt' | 'updatedAt'> & 
 };
 export const realmSorts = ['updated', 'created', 'title-asc', 'title-desc'] as const;
 export type RealmSort = typeof realmSorts[number];
-export type RealmListQuery = { q: string; sort: RealmSort; limit: number; offset: number };
+export const realmStartsFilters = ['any', 'with', 'without'] as const;
+export type RealmStartsFilter = typeof realmStartsFilters[number];
+export type RealmFilters = { author: string; tags: readonly string[]; starts: RealmStartsFilter; favorites: boolean };
+export const defaultRealmFilters: RealmFilters = { author: '', tags: [], starts: 'any', favorites: false };
+export type RealmFilterOption = { value: string; label: string };
+export type RealmFilterOptions = { authors: RealmFilterOption[]; tags: RealmFilterOption[] };
+export type RealmFavorite = { id: string; favorite: boolean };
+export type RealmListQuery = { q: string; sort: RealmSort; limit: number; offset: number; filters: RealmFilters };
 export type RealmList = { items: RealmSummary[]; total: number };
 export const realmSearchMaxLength = 200;
 export const realmPageSize = 24;
+export const realmRequestByteLimit = 8 * 1024 * 1024;
 export const realmAvatarMaxLength = 65_536;
 export const realmMaxOrder = 999_999;
 

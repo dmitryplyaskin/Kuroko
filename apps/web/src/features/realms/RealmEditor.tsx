@@ -1,15 +1,17 @@
 import { Button, Modal, TagsInput, Textarea, TextInput } from '@mantine/core';
 import { readRealm, realmSpecVersion, type Realm, type RealmStart, type SavedRealm } from '@kuroko/contracts/realms';
 import { useUnit } from 'effector-react';
-import { ArrowLeft, Trash2 } from 'lucide-react';
+import { ArrowLeft, Download, Trash2 } from 'lucide-react';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import type { ActiveSession } from '../../platform/session/model';
 import { ApiError, errorCode, type ErrorCode } from '../../shared/http/api';
 import { useI18n, type MessageKey } from '../../shared/i18n/i18n';
-import { deleteRealmFx, saveRealmFx } from './model';
+import { deleteRealmFx, newRealmId, saveRealmFx } from './model';
 import { AvatarEditor, RealmAvatar } from './RealmAvatar';
 import { getRealmSection, RealmContents, realmParts, sectionPart, type RealmPart } from './RealmContents';
-import { EntriesEditor, newRealmId, RecordEditor, StartFields } from './RealmFields';
+import { RealmFavoriteButton } from './RealmFavoriteButton';
+import { EntriesEditor, RecordEditor, StartFields } from './RealmFields';
+import { downloadRealmFile } from './realmFile';
 
 type SaveIssue = { code: ErrorCode; field?: string };
 
@@ -32,6 +34,8 @@ export function RealmEditor({ session, initialSaved, onClose }: {
   const [dialog, setDialog] = useState<'discard' | 'leave' | 'delete' | null>(null);
   const [deleteError, setDeleteError] = useState<ErrorCode | null>(null);
   const [saveNotice, setSaveNotice] = useState(false);
+  const [favorite, setFavorite] = useState<boolean | null>(null);
+  const [favoriteError, setFavoriteError] = useState<ErrorCode | null>(null);
   const focusSection = useRef<string>(null);
   const dirty = draft !== initial;
   const section = getRealmSection(draft, part);
@@ -73,6 +77,27 @@ export function RealmEditor({ session, initialSaved, onClose }: {
     onPart('base');
   }
 
+  function validateDraft() {
+    const validated = readRealm({
+      ...draft, title: draft.title.trim(), sections: draft.sections?.map((entry) => ({ ...entry, title: entry.title.trim() })),
+    });
+    if ('realm' in validated) {
+      setIssue(null);
+      return validated.realm;
+    }
+    showIssue(validated);
+  }
+
+  function exportCard() {
+    const realm = validateDraft();
+    if (!realm) return;
+    try {
+      downloadRealmFile(realm);
+    } catch (error) {
+      showIssue({ code: error instanceof ApiError ? error.code : 'realm_file_download_failed' });
+    }
+  }
+
   async function submit(event: FormEvent) {
     event.preventDefault();
     if (busy) return;
@@ -80,17 +105,11 @@ export function RealmEditor({ session, initialSaved, onClose }: {
       setSaveNotice(true);
       return;
     }
-    const validated = readRealm({
-      ...draft, title: draft.title.trim(), sections: draft.sections?.map((entry) => ({ ...entry, title: entry.title.trim() })),
-    });
-    if ('code' in validated) {
-      showIssue(validated);
-      return;
-    }
-    setIssue(null);
+    const realm = validateDraft();
+    if (!realm) return;
     setSaving(true);
     try {
-      const updated = await save({ session, saved, realm: validated.realm });
+      const updated = await save({ session, saved, realm });
       if (session.signal.aborted) return;
       setSaved(updated);
       setDraft(updated.realm);
@@ -137,9 +156,18 @@ export function RealmEditor({ session, initialSaved, onClose }: {
     ? Number(invalidEntry) : undefined;
   return (
     <form className="realms-editor" onSubmit={(event) => void submit(event)} noValidate>
-      <button type="button" className="realms-back" disabled={busy} onClick={() => dirty ? setDialog('leave') : onClose()}>
-        <ArrowLeft size={16} aria-hidden="true" />{t('realms.back')}
-      </button>
+      <div className="realms-editor-nav">
+        <button type="button" className="realms-back" disabled={busy} onClick={() => dirty ? setDialog('leave') : onClose()}>
+          <ArrowLeft size={16} aria-hidden="true" />{t('realms.back')}
+        </button>
+        <div className="realms-actions">
+          {saved && <RealmFavoriteButton session={session} id={saved.id} title={saved.realm.title}
+            favorite={favorite ?? Boolean(saved.favorite)} disabled={busy} onChanged={setFavorite} onError={setFavoriteError} />}
+          <Button type="button" variant="default" disabled={busy} onClick={exportCard} leftSection={<Download size={16} aria-hidden="true" />}>
+            {t('realms.export')}
+          </Button>
+        </div>
+      </div>
       <header className="page-heading realms-heading">
         <div className="realms-title">
           {saved && <RealmAvatar src={draft.avatar} kind="realm" />}
@@ -155,6 +183,7 @@ export function RealmEditor({ session, initialSaved, onClose }: {
           <Button type="submit" loading={saving} disabled={deleting || avatarPending}>{t('common.save')}</Button>
         </div>
       </header>
+      {favoriteError && <p className="realms-error realms-save-error" role="alert">{t(`error.${favoriteError}`)}</p>}
       {issue && <p className="realms-error realms-save-error" role="alert">{t(issueMessage(issue))}</p>}
       <fieldset className="realms-edit-fields" disabled={busy}>
         <RealmContents realm={draft} part={part} onPart={onPart} onCreateSection={createSection}>

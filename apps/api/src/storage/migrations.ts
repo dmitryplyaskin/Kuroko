@@ -1,8 +1,9 @@
 import { CodedError } from '@kuroko/contracts/errors';
 import type { Database } from 'bun:sqlite';
 import { createHash } from 'node:crypto';
+import { realmFilterKey, realmTagKeys } from '../realms/realmFilterKeys';
 
-const latestVersion = 8;
+const latestVersion = 9;
 
 const initialSchema = `
   CREATE TABLE vault_settings (
@@ -138,6 +139,21 @@ const realmsSchema = `
   CREATE INDEX realms_owner_title ON realms (user_id, title_key, id);
 `;
 
+function migrateRealmFilters(db: Database) {
+  db.exec(`
+    ALTER TABLE realms ADD COLUMN favorite INTEGER NOT NULL DEFAULT 0 CHECK (favorite IN (0, 1));
+    ALTER TABLE realms ADD COLUMN author_key TEXT NOT NULL DEFAULT '';
+    ALTER TABLE realms ADD COLUMN tag_keys_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(tag_keys_json));
+  `);
+  const rows = db.query<{ id: string; author: string | null; tagsJson: string | null }, []>(`
+    SELECT id, json_extract(document_json, '$.author') AS author, json_extract(document_json, '$.tags') AS tagsJson FROM realms
+  `).all();
+  const update = db.query('UPDATE realms SET author_key = ?, tag_keys_json = ? WHERE id = ?');
+  for (const { id, author, tagsJson } of rows) {
+    update.run(realmFilterKey(author ?? ''), realmTagKeys(tagsJson ? JSON.parse(tagsJson) as string[] : []), id);
+  }
+}
+
 export function migrateDatabase(db: Database, vaultKey: Buffer) {
   const fingerprint = createHash('sha256').update(vaultKey).digest('hex');
 
@@ -169,6 +185,7 @@ export function migrateDatabase(db: Database, vaultKey: Buffer) {
     if (version < 6) db.exec(toolsSchema);
     if (version < 7) db.exec(gmSchema);
     if (version < 8) db.exec(realmsSchema);
+    if (version < 9) migrateRealmFilters(db);
 
     if (version < latestVersion) db.exec(`PRAGMA user_version = ${latestVersion}`);
   }).immediate();

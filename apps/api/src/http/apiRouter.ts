@@ -1,3 +1,4 @@
+import { realmRequestByteLimit } from '@kuroko/contracts/realms';
 import type { Database } from 'bun:sqlite';
 import { json, Router } from 'express';
 import { createAccountStore } from '../auth/accountStore';
@@ -30,7 +31,7 @@ export function createApiRouter(db: Database, vaultKey: Buffer, secureCookie: bo
 
   router.use('/llm', requireUser, json({ limit: '4mb' }), createLlmRouter(llm));
   router.use('/chats', requireUser, json({ limit: '8mb' }), createChatRouter(chats, createGmReply(chats, llm, tools.list)));
-  router.use('/realms', requireUser, json({ limit: '8mb' }), createRealmRouter(createRealmStore(db)));
+  router.use('/realms', requireUser, json({ limit: realmRequestByteLimit }), createRealmRouter(createRealmStore(db)));
   router.use(json({ limit: '128kb' }));
   router.get('/health', (_request, response) => {
     response.json({ status: 'ok' });

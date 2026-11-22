@@ -162,6 +162,57 @@ test('stores realm metadata and avatars and serves the library image only to its
   expect((await request(`${path}/avatar`, { cookie })).status).toBe(404);
 });
 
+test('combines realm filters and keeps favorites separate from the card revision', async () => {
+  await register('filters-owner');
+  await register('filters-other');
+  const cookie = sessionCookie(await login('filters-owner')).token;
+  const other = sessionCookie(await login('filters-other')).token;
+  const create = async (card: Partial<Realm> & Pick<Realm, 'id' | 'title'>, owner = cookie) => {
+    const response = await request('/realms', { method: 'POST', cookie: owner, body: { specVersion: '0.1.0', base: 'Море', ...card } });
+    expect(response.status).toBe(201);
+    return await response.json() as SavedRealm;
+  };
+  const island = await create({ id: 'island', title: 'Маяк', author: ' Лина ', tags: ['Море', 'Туман'], starts: [
+    { id: 'storm', title: 'Шторм', greeting: 'Волны бьют о берег' },
+  ] });
+  await create({ id: 'crossing', title: 'Архипелаг', author: 'лина', tags: ['море'] });
+  await create({ id: 'port', title: 'Порт', author: 'Даня', tags: ['МОРЕ', 'туман'] });
+  await create({ id: 'private', title: 'Чужой мир', author: 'Другой', tags: ['Чужой тег'] }, other);
+
+  const list = async (query: string) => await (await request(`/realms?${query}`, { cookie })).json() as RealmList;
+  const titles = async (query: string) => (await list(query)).items.map(({ title }) => title);
+  const query = (pairs: [string, string][]) => new URLSearchParams(pairs).toString();
+  expect(await titles(query([['sort', 'title-asc'], ['tag', 'мОре']]))).toEqual(['Архипелаг', 'Маяк', 'Порт']);
+  expect(await titles(query([['tag', 'МОРЕ'], ['tag', 'ТУМАН'], ['starts', 'without']]))).toEqual(['Порт']);
+  expect(await titles(query([['author', 'ЛИНА'], ['tag', ' море '], ['starts', 'with'], ['q', 'шторм']]))).toEqual(['Маяк']);
+  expect((await list(query([['tag', 'Туман'], ['limit', '1'], ['offset', '1']]))).total).toBe(2);
+  expect((await request('/realms?starts=invalid', { cookie })).status).toBe(400);
+  const filters = await (await request('/realms/filters', { cookie })).json() as { tags: { value: string }[]; authors: { value: string }[] };
+  expect(filters.tags.map(({ value }) => value)).toEqual(['море', 'туман']);
+  expect(filters.authors.map(({ value }) => value)).toEqual(['даня', 'лина']);
+
+  const favorite = (value: unknown, owner = cookie) => request(`/realms/${island.id}/favorite`, {
+    method: 'PUT', cookie: owner, body: { favorite: value },
+  });
+  expect((await favorite(true, other)).status).toBe(404);
+  expect((await favorite('true')).status).toBe(400);
+  expect(await titles('favorites=1')).toEqual([]);
+  expect(await (await favorite(true)).json()).toEqual({ id: island.id, favorite: true });
+  expect(await titles('favorites=1&starts=with')).toEqual(['Маяк']);
+  expect((await list('favorites=1')).items[0]?.favorite).toBe(true);
+  const saved = await (await request(`/realms/${island.id}`, { cookie })).json();
+  expect(saved).toEqual({ ...island, favorite: true });
+  const edited = await request(`/realms/${island.id}`, { method: 'PUT', cookie, body: {
+    revision: island.revision, realm: { ...island.realm, tags: ['Ветер'] },
+  } });
+  expect(edited.status).toBe(200);
+  expect(await edited.json()).toMatchObject({ favorite: true, revision: 1 });
+  expect(await titles(query([['favorites', '1'], ['tag', 'ветер']]))).toEqual(['Маяк']);
+  expect(await titles(query([['favorites', '1'], ['tag', 'море']]))).toEqual([]);
+  expect(await (await favorite(false)).json()).toEqual({ id: island.id, favorite: false });
+  expect(await titles('favorites=1')).toEqual([]);
+});
+
 test('resolves only the selected context entries in global order across realm sections', async () => {
   await register('context-owner');
   const cookie = sessionCookie(await login('context-owner')).token;

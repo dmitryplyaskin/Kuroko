@@ -5,7 +5,8 @@ export type ErrorCode = ApiErrorCode
   | 'response_length' | 'tool_round_limit'
   | 'session_check_failed' | 'password_confirmation_mismatch' | 'model_catalog_key_required'
   | 'model_id_invalid' | 'number_integer_min' | 'number_range' | 'message_action_failed' | 'image_load_failed'
-  | 'clipboard_write_failed' | 'module_load_failed';
+  | 'clipboard_write_failed' | 'module_load_failed'
+  | 'realm_file_unreadable' | 'realm_file_format' | 'realm_file_invalid_json' | 'realm_file_download_failed';
 
 export class ApiError extends CodedError<ErrorCode> {
   constructor(public readonly status: number, code: ErrorCode, public readonly field?: string) {

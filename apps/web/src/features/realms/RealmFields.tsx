@@ -7,14 +7,11 @@ import {
 import { ArrowDown, ArrowUp, Plus, Trash2 } from 'lucide-react';
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { useI18n } from '../../shared/i18n/i18n';
+import { newRealmId } from './model';
 import { AvatarEditor } from './RealmAvatar';
 import { RecordLabel, RecordSearch, recordMatches, type RealmRecord } from './RealmRecords';
 
 type ChangeRecords<T> = (items: T[], removed?: boolean) => void;
-
-export function newRealmId() {
-  return Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) => byte.toString(16).padStart(2, '0')).join('');
-}
 
 export function RecordEditor<T extends RealmRecord>({ items, addLabel, emptyLabel, invalidIndex, portrait = false, makeItem, onChange, fields }: {
   items: T[];
