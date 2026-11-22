@@ -2,7 +2,7 @@ import type { MessageKey } from '../shared/i18n/i18n';
 import type { ComponentType } from 'react';
 import type { EventCallable } from 'effector';
 
-export type ModuleIconName = 'panels' | 'message' | 'settings' | 'palette' | 'plug' | 'tools';
+export type ModuleIconName = 'panels' | 'globe' | 'message' | 'settings' | 'palette' | 'plug' | 'tools';
 
 type ViewContribution = {
   id: string;

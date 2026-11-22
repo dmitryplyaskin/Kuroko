@@ -6,6 +6,7 @@ import type { ChatSnapshot, SavedChat } from '@kuroko/contracts/chat';
 import { defaultChatSettings } from '@kuroko/contracts/chatSettings';
 import { defaultConnectionSettings, type ConnectionState, type ProviderKey } from '@kuroko/contracts/connectionSettings';
 import type { LlmRequest } from '@kuroko/contracts/llm';
+import type { Realm, RealmList, SavedRealm } from '@kuroko/contracts/realms';
 import { createApp } from './app';
 import { openDatabase } from './storage/database';
 
@@ -56,6 +57,145 @@ function sessionCookie(response: Response) {
   if (!cookie) throw new Error('Expected session cookie');
   return { header: cookie, token: cookie.split(';', 1)[0]! };
 }
+
+test('validates, searches, sorts and edits private realms without overwriting newer revisions', async () => {
+  await register('realm-owner');
+  await register('realm-other');
+  const cookie = sessionCookie(await login('realm-owner')).token;
+  const other = sessionCookie(await login('realm-other')).token;
+  const path = '/realms';
+  const realm: Realm = {
+    specVersion: '0.1.0', id: 'последний поезд / night', title: 'Последний поезд', base: 'Ночная станция',
+    characters: [{ id: 'lina', title: 'Лина', content: 'Пассажирка' }],
+    lorebook: [{ id: 'delay', title: 'Задержка', content: 'Сигнал пропал на 100%' }],
+    sections: [{ id: 'locations', title: 'Локации', entries: [{ id: 'pier', title: 'Причал', content: 'Старая пристань' }] }],
+    starts: [{ id: 'platform', title: 'На платформе', greeting: 'Вы ждёте поезд?', characterIds: ['lina'],
+      loreEntryIds: ['delay'], sectionEntries: [{ sectionId: 'locations', entryId: 'pier' }] }],
+  };
+  const create = (body: object, owner = cookie) => request(path, { method: 'POST', cookie: owner, body });
+  const list = async (query: Record<string, string> = {}, owner = cookie) => {
+    const result = await request(`${path}?${new URLSearchParams(query)}`, { cookie: owner });
+    expect(result.status).toBe(200);
+    return await result.json() as RealmList;
+  };
+
+  expect((await request(path)).status).toBe(401);
+  expect(await (await create({ ...realm, sections: [] })).json()).toEqual({ code: 'realm_reference_missing', field: '/starts/0/sectionEntries/0' });
+  expect(await (await create({ ...realm, characters: [...realm.characters!, ...realm.characters!] })).json()).toEqual({
+    code: 'realm_duplicate_id', field: '/characters/1/id',
+  });
+  expect(await (await create({ ...realm, starts: [{ id: 'empty', title: 'Пустой старт' }] })).json()).toEqual({ code: 'realm_invalid', field: '/starts/0' });
+  const created = await create(realm);
+  expect(created.status).toBe(201);
+  const saved = await created.json() as SavedRealm;
+  const itemPath = `${path}/${saved.id}`;
+  expect(created.headers.get('location')).toBe(`/api${itemPath}`);
+  expect(saved.realm).toEqual(realm);
+  expect(await (await create(realm)).json()).toEqual(saved);
+  expect((await create({ ...realm, title: 'Повтор' })).status).toBe(409);
+  expect((await create({ specVersion: '0.1.0', id: 'archive', title: 'архив', base: 'Подземелье' })).status).toBe(201);
+
+  const page = await list({ sort: 'title-asc', limit: '1', offset: '1' });
+  expect(page.total).toBe(2);
+  expect(page.items).toEqual([{ id: saved.id, title: realm.title, excerpt: realm.base, starts: 1, characters: 1,
+    createdAt: saved.createdAt, updatedAt: saved.updatedAt }]);
+  expect((await list({ sort: 'title-desc' })).items.map(({ title }) => title)).toEqual([realm.title, 'архив']);
+  expect((await list({ q: 'СТАРАЯ ПРИСТАНЬ' })).items.map(({ id }) => id)).toEqual([saved.id]);
+  expect((await list({ q: '100%' })).total).toBe(1);
+  expect((await list({ q: '101%' })).total).toBe(0);
+  expect((await request(`${path}?sort=unknown`, { cookie })).status).toBe(400);
+  expect((await request(`${path}?limit=0`, { cookie })).status).toBe(400);
+  expect(await list({}, other)).toEqual({ items: [], total: 0 });
+  expect((await request(itemPath, { cookie: other })).status).toBe(404);
+  expect((await request(itemPath, { method: 'DELETE', cookie: other })).status).toBe(404);
+
+  const put = (body: { revision: number; realm: Realm }, owner = cookie) => request(itemPath, { method: 'PUT', cookie: owner, body });
+  const update = { revision: saved.revision, realm: { ...realm, title: 'Ночная станция', lorebook: [], starts: [] } };
+  expect((await put(update, other)).status).toBe(404);
+  expect((await put({ ...update, realm: { ...update.realm, id: 'new-id' } })).status).toBe(400);
+  const updated = await (await put(update)).json() as SavedRealm;
+  expect(updated.revision).toBe(saved.revision + 1);
+  expect(await (await put(update)).json()).toEqual(updated);
+  expect((await put({ ...update, realm })).status).toBe(409);
+  expect(await (await request(itemPath, { cookie })).json()).toEqual(updated);
+  expect((await list({ q: '100%' })).total).toBe(0);
+  expect((await request(`${itemPath}?revision=${saved.revision}`, { method: 'DELETE', cookie })).status).toBe(409);
+  expect((await request(`${itemPath}?revision=${updated.revision}`, { method: 'DELETE', cookie })).status).toBe(204);
+  expect((await request(itemPath, { cookie })).status).toBe(404);
+  expect((await list()).total).toBe(1);
+});
+
+test('stores realm metadata and avatars and serves the library image only to its owner', async () => {
+  await register('avatar-owner');
+  await register('avatar-other');
+  const cookie = sessionCookie(await login('avatar-owner')).token;
+  const other = sessionCookie(await login('avatar-other')).token;
+  const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+nmXsAAAAASUVORK5CYII=';
+  const avatar = `data:image/png;base64,${png}`;
+  const realm: Realm = {
+    specVersion: '0.1.0', id: 'islands', title: 'Острова', base: 'Штормы и маяки',
+    description: 'История островов', author: 'Мира', version: '2.0', authorNotes: 'Черновик путеводителя', tags: ['Навигация'], avatar,
+    characters: [{ id: 'keeper', title: 'Аркадий', content: 'Работает по ночам', summary: 'Смотритель сигнальной башни', avatar }],
+  };
+  const create = (body: Realm) => request('/realms', { method: 'POST', cookie, body });
+  const invalid = await create({ ...realm, avatar: `data:image/jpeg;base64,${png}` });
+  expect(invalid.status).toBe(400);
+  expect(await invalid.json()).toEqual({ code: 'realm_invalid', field: '/avatar' });
+  const created = await create(realm);
+  expect(created.status).toBe(201);
+  const saved = await created.json() as SavedRealm;
+  const path = `/realms/${saved.id}`;
+  expect(await (await request(path, { cookie })).json()).toEqual(saved);
+  for (const q of ['НАВИГАЦИЯ', 'Сигнальной башни', 'Мира']) {
+    const list = await request(`/realms?${new URLSearchParams({ q })}`, { cookie });
+    expect(await list.json()).toEqual({ items: [{
+      id: saved.id, title: realm.title, excerpt: realm.description, createdAt: saved.createdAt, updatedAt: saved.updatedAt,
+      characters: 1, starts: 0, hasAvatar: true,
+    }], total: 1 });
+  }
+  const image = await request(`${path}/avatar`, { cookie });
+  expect(image.headers.get('content-type')).toBe('image/png');
+  expect(Buffer.from(await image.arrayBuffer())).toEqual(Buffer.from(png, 'base64'));
+  expect((await request(`${path}/avatar`, { cookie: other })).status).toBe(404);
+  const removed = await request(path, { method: 'PUT', cookie, body: { revision: saved.revision, realm: { ...realm, avatar: undefined } } });
+  expect(removed.status).toBe(200);
+  expect((await request(`${path}/avatar`, { cookie })).status).toBe(404);
+});
+
+test('resolves only the selected context entries in global order across realm sections', async () => {
+  await register('context-owner');
+  const cookie = sessionCookie(await login('context-owner')).token;
+  const realm: Realm = {
+    specVersion: '0.1.0', id: 'context-card', title: 'Маяк', base: 'Остров',
+    characters: [{ id: 'keeper', title: 'Смотритель', content: 'Смотрит на море' },
+      { id: 'guest', title: 'Гость', content: 'Только что прибыл', order: 3 }],
+    lorebook: [{ id: 'secret', title: 'Секрет', content: 'Закрытая комната', order: 1 },
+      { id: 'bells', title: 'Звонки', content: 'Дважды в полночь', order: 3 }],
+    sections: [{ id: 'locations', title: 'Локации', entries: [{ id: 'shore', title: 'Берег', content: 'Песок', order: 2 }] }],
+    starts: [{ id: 'arrive', title: 'Приезд', scenario: 'Ночь', characterIds: ['guest', 'keeper'], loreEntryIds: ['bells'],
+      sectionEntries: [{ sectionId: 'locations', entryId: 'shore' }] }],
+  };
+  const created = await request('/realms', { method: 'POST', cookie, body: realm });
+  expect(created.status).toBe(201);
+  const saved = await created.json() as SavedRealm;
+  const path = `/realms/${saved.id}`;
+  expect(await (await request(`${path}/context`, { cookie })).json()).toEqual({ base: realm.base, entries: [] });
+  expect((await request(`${path}/context?start=missing`, { cookie })).status).toBe(404);
+
+  const context = async () => (await (await request(`${path}/context?start=arrive`, { cookie })).json()) as {
+    scenario: string; entries: { id: string; order: number }[];
+  };
+  const before = await context();
+  expect(before.scenario).toBe('Ночь');
+  expect(before.entries.map(({ id, order }) => [id, order])).toEqual([['keeper', 1], ['shore', 2], ['guest', 3], ['bells', 3]]);
+
+  const updateLoreOrder = (order: number) => request(path, { method: 'PUT', cookie, body: {
+    revision: saved.revision, realm: { ...realm, lorebook: realm.lorebook?.map((entry) => entry.id === 'bells' ? { ...entry, order } : entry) },
+  } });
+  expect((await updateLoreOrder(0)).status).toBe(400);
+  expect((await updateLoreOrder(1)).status).toBe(200);
+  expect((await context()).entries.map(({ id }) => id)).toEqual(['keeper', 'bells', 'shore', 'guest']);
+});
 
 test('persists independently enabled tools for the signed-in account', async () => {
   await register('tools-owner');

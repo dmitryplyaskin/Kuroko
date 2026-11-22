@@ -2,7 +2,7 @@ import { CodedError } from '@kuroko/contracts/errors';
 import type { Database } from 'bun:sqlite';
 import { createHash } from 'node:crypto';
 
-const latestVersion = 7;
+const latestVersion = 8;
 
 const initialSchema = `
   CREATE TABLE vault_settings (
@@ -117,6 +117,27 @@ const gmSchema = `
   ) STRICT;
 `;
 
+const realmsSchema = `
+  CREATE TABLE realms (
+    id TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    document_id TEXT NOT NULL,
+    title TEXT NOT NULL,
+    title_key TEXT NOT NULL,
+    excerpt TEXT NOT NULL,
+    search_text TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    revision INTEGER NOT NULL,
+    document_json TEXT NOT NULL CHECK (json_valid(document_json)),
+    UNIQUE (user_id, document_id)
+  ) STRICT;
+
+  CREATE INDEX realms_owner_updated ON realms (user_id, updated_at DESC, id);
+  CREATE INDEX realms_owner_created ON realms (user_id, created_at DESC, id);
+  CREATE INDEX realms_owner_title ON realms (user_id, title_key, id);
+`;
+
 export function migrateDatabase(db: Database, vaultKey: Buffer) {
   const fingerprint = createHash('sha256').update(vaultKey).digest('hex');
 
@@ -147,6 +168,7 @@ export function migrateDatabase(db: Database, vaultKey: Buffer) {
     if (version < 5) db.exec(chatsSchema);
     if (version < 6) db.exec(toolsSchema);
     if (version < 7) db.exec(gmSchema);
+    if (version < 8) db.exec(realmsSchema);
 
     if (version < latestVersion) db.exec(`PRAGMA user_version = ${latestVersion}`);
   }).immediate();

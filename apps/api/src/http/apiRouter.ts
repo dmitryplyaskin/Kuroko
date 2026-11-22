@@ -13,6 +13,8 @@ import { createProviderConnections } from '../connection/providerConnections';
 import { createProviderKeyStore } from '../connection/providerKeyStore';
 import { createLlmRouter } from '../llm/llmRouter';
 import { createLlmService } from '../llm/llmService';
+import { createRealmRouter } from '../realms/realmRouter';
+import { createRealmStore } from '../realms/realmStore';
 import { createToolsRouter } from '../tools/toolsRouter';
 import { createToolsStore } from '../tools/toolsStore';
 
@@ -28,6 +30,7 @@ export function createApiRouter(db: Database, vaultKey: Buffer, secureCookie: bo
 
   router.use('/llm', requireUser, json({ limit: '4mb' }), createLlmRouter(llm));
   router.use('/chats', requireUser, json({ limit: '8mb' }), createChatRouter(chats, createGmReply(chats, llm, tools.list)));
+  router.use('/realms', requireUser, json({ limit: '8mb' }), createRealmRouter(createRealmStore(db)));
   router.use(json({ limit: '128kb' }));
   router.get('/health', (_request, response) => {
     response.json({ status: 'ok' });

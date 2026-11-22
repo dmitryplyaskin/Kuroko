@@ -10,6 +10,8 @@
     "./connectionSettings": "./src/connectionSettings.ts",
     "./errors": "./src/errors.ts",
     "./llm": "./src/llm.ts",
+    "./realmContext": "./src/realmContext.ts",
+    "./realms": "./src/realms.ts",
     "./tools": "./src/tools.ts"
   }
 }
