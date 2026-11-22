@@ -24,6 +24,7 @@ export type SettingsTab = ViewContribution & {
   kind: 'settings.tab';
   key: string;
   description?: MessageKey;
+  settingsLifecycle?: { opened: EventCallable<void>; closed: EventCallable<void> };
 };
 
 export type ViewLoader = () => Promise<{ default: ComponentType }>;

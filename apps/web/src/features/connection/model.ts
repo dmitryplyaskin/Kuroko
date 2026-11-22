@@ -21,9 +21,11 @@ type Mutation = { kind: 'savePreset'; id: string; preset: SaveConnectionPreset }
   | { kind: 'deletePreset'; id: string }
   | { kind: 'addKey'; provider: Provider; presetId: string; name: string; apiKey: string }
   | { kind: 'deleteKey'; provider: Provider; id: string };
+type MutationRequest = { page: Page; mutation: Mutation; editorVersion: number };
 
 export const connectionOpened = createEvent();
 export const connectionClosed = createEvent();
+export const connectionTabClosed = createEvent();
 export const connectionRetryRequested = createEvent();
 export const presetSelected = createEvent<string>();
 export const presetCopyRequested = createEvent();
@@ -55,11 +57,13 @@ const pageDeactivated = sample({
 });
 $page.reset(pageDeactivated);
 sample({ clock: pageDeactivated, fn: (page) => page.controller, target: abortFx });
+const editorReset = sample({ clock: [connectionTabClosed, pageDeactivated], fn: () => undefined });
+const $editorVersion = createStore(0).on(editorReset, (version) => version + 1);
 
 export const loadConnectionFx = createEffect(({ session, controller }: Page) =>
   connectionApi.load(session, controller.signal));
 
-export const mutateConnectionFx = createEffect(async ({ page, mutation }: { page: Page; mutation: Mutation }) => {
+export const mutateConnectionFx = createEffect(async ({ page, mutation }: MutationRequest) => {
   const { session } = page;
   switch (mutation.kind) {
     case 'savePreset':
@@ -101,16 +105,18 @@ const loadFailed = sample({
   filter: (page, { params }) => page === params,
   fn: (_, { params, error }) => ({ session: params.session, error }),
 });
-const mutationDone = sample({
+const mutationApplied = sample({
   clock: connectionMutationDone,
-  source: $page,
-  filter: (page, { params }) => page === params.page,
-  fn: (_, { result }) => result,
+  source: { page: $page, editorVersion: $editorVersion },
+  filter: ({ page }, { params }) => page === params.page,
+  fn: ({ editorVersion }, { params, result }) => ({ result, editorCurrent: editorVersion === params.editorVersion }),
 });
+const mutationDone = mutationApplied.map(({ result }) => result);
+const editorMutationDone = mutationApplied.filterMap(({ result, editorCurrent }) => editorCurrent ? result : undefined);
 const mutationFailed = sample({
   clock: connectionMutationFailed,
-  source: $page,
-  filter: (page, { params }) => page === params.page,
+  source: { page: $page, editorVersion: $editorVersion },
+  filter: ({ page, editorVersion }, { params }) => page === params.page && editorVersion === params.editorVersion,
   fn: (_, { params, error }) => ({
     kind: params.mutation.kind, code: errorCode(error),
     field: error instanceof ApiError && error.field === 'name' ? 'name' as const : undefined,
@@ -141,7 +147,7 @@ sample({
   target: loadConnectionFx,
 });
 
-// A write can finish after leaving the tab. On re-entry, load only after it settles.
+// A write can finish after leaving settings. On re-entry, load only after it settles.
 sample({
   clock: mutateConnectionFx.finally,
   source: $page,
@@ -158,15 +164,15 @@ sample({
 
 const $selectedId = createStore<string | null>(null)
   .on(presetSelected, (_, id) => id)
-  .on(mutationDone, (id, result) => result.kind === 'savePreset' || result.kind === 'deletePreset'
+  .on(editorMutationDone, (id, result) => result.kind === 'savePreset' || result.kind === 'deletePreset'
     ? result.state.activePresetId ?? '' : id)
-  .reset(pageDeactivated);
+  .reset(editorReset);
 
 const $data = $connectionLoad.map((load) => load.status === 'ready' ? load.data : null);
 const $presetId = combine($selectedId, $data, (selected, data) => selected ?? data?.activePresetId ?? '');
 const $selectedPreset = combine($data, $presetId, (data, id) => data?.presets.find((preset) => preset.id === id) ?? null);
 const $activePreset = $data.map((data) => data?.presets.find((preset) => preset.id === data.activePresetId) ?? null);
-const $drafts = createStore<Record<string, ConnectionDraft>>({}).reset(pageDeactivated);
+const $drafts = createStore<Record<string, ConnectionDraft>>({}).reset(editorReset);
 const $draft = combine($drafts, $selectedPreset, $presetId, (drafts, preset, id) => drafts[id] ?? createDraft(preset ?? undefined));
 const $providerKeys = combine($data, $draft, (data, draft) => data?.keys.filter(({ provider }) => provider === draft.provider) ?? []);
 const $keyId = combine($draft, $providerKeys, (draft, keys) => keys.some(({ id }) => id === draft.keyId) ? draft.keyId : '');
@@ -211,7 +217,7 @@ const draftChanged = sample({
 });
 
 const keyAppliedToDraft = sample({
-  clock: mutationDone,
+  clock: editorMutationDone,
   source: $connectionSelection,
   filter: ({ presetId, draft }, result) => result.kind === 'addKey' && result.presetId === presetId && result.key.provider === draft.provider,
   fn: ({ presetId, draft }, result) => ({
@@ -221,25 +227,25 @@ const keyAppliedToDraft = sample({
 
 $drafts
   .on([presetCopied, draftChanged, keyAppliedToDraft], (drafts, { id, draft }) => ({ ...drafts, [id]: draft }))
-  .on(mutationDone, (drafts, result) => {
+  .on(editorMutationDone, (drafts, result) => {
     if (result.kind !== 'savePreset' && result.kind !== 'deletePreset') return drafts;
     const next = { ...drafts };
     delete next[result.id];
     return next;
   });
 
-sample({ clock: [presetSelected, presetCopied, pageDeactivated], target: [catalogInvalidated, endpointsInvalidated] });
+sample({ clock: [presetSelected, presetCopied, editorReset], target: [catalogInvalidated, endpointsInvalidated] });
 sample({ clock: draftChanged, filter: ({ resetCatalog }) => resetCatalog, target: catalogInvalidated });
 sample({ clock: draftChanged, filter: ({ resetEndpoints }) => resetEndpoints, target: endpointsInvalidated });
 sample({
-  clock: mutationDone,
+  clock: editorMutationDone,
   filter: (result) => result.kind !== 'savePreset',
   target: [catalogInvalidated, endpointsInvalidated],
 });
 
 const $actionContext = combine({
   selection: $connectionSelection, page: $page, pending: $mutation, load: $connectionLoad,
-  catalog: $modelCatalog, endpoints: $openRouterEndpoints,
+  catalog: $modelCatalog, endpoints: $openRouterEndpoints, editorVersion: $editorVersion,
 });
 
 sample({
@@ -293,16 +299,17 @@ const actionPrepared = sample({
     if (action.kind === 'deleteKey') return selection.providerKeys.some(({ id }) => id === action.id);
     return true;
   },
-  fn: ({ page, selection }, action) => ({ page: page!, result: prepareAction(selection, action) }),
+  fn: ({ page, selection, editorVersion }, action) => ({ page: page!, editorVersion, result: prepareAction(selection, action) }),
 });
 const invalidAction = actionPrepared.filterMap(({ result }) => 'mutation' in result ? undefined : result);
-const preparedMutation = actionPrepared.filterMap(({ page, result }) => 'mutation' in result ? { page, mutation: result.mutation } : undefined);
+const preparedMutation = actionPrepared.filterMap(({ page, editorVersion, result }): MutationRequest | undefined =>
+  'mutation' in result ? { page, editorVersion, mutation: result.mutation } : undefined);
 sample({ clock: preparedMutation, target: mutateConnectionFx });
 
 export const $presetSubmission = createStore<PresetSubmission>({ status: 'idle' })
   .on(invalidAction, (current, error) => error.kind === 'savePreset'
     ? { status: 'error', code: error.code, field: error.field } : current)
-  .on(mutationDone, (current, result) => {
+  .on(editorMutationDone, (current, result) => {
     if (result.kind === 'savePreset') return { status: 'saved' };
     if (result.kind === 'deletePreset') return { status: 'deleted' };
     return result.kind === 'addKey' ? { status: 'idle' } : current;
@@ -310,15 +317,15 @@ export const $presetSubmission = createStore<PresetSubmission>({ status: 'idle' 
   .on(mutationFailed, (current, { kind, code, field }) => kind === 'savePreset' ? { status: 'error', code, field } : current)
   .on(mutateConnectionFx, (current, { mutation }) => mutation.kind === 'savePreset' || mutation.kind === 'deletePreset'
     ? { status: 'idle' } : current)
-  .reset(presetSelected, presetCopied, draftChanged, pageDeactivated);
+  .reset(presetSelected, presetCopied, draftChanged, editorReset);
 export const $presetDeleteError = createStore<ErrorCode | null>(null)
   .on(mutationFailed, (current, { kind, code }) => kind === 'deletePreset' ? code : current)
   .on(mutateConnectionFx, (current, { mutation }) => mutation.kind === 'deletePreset' ? null : current)
-  .reset(presetDeleteOpened, pageDeactivated);
+  .reset(presetDeleteOpened, editorReset);
 
 export const $keySubmission = createStore<KeySubmission>({ status: 'idle' })
   .on(invalidAction, (current, error) => error.kind === 'addKey' ? { status: 'error', code: error.code } : current)
-  .on(mutationDone, (current, result) => {
+  .on(editorMutationDone, (current, result) => {
     if (result.kind === 'addKey') return { status: 'added' };
     if (result.kind === 'deleteKey') return { status: 'removed' };
     return current;
@@ -328,19 +335,19 @@ export const $keySubmission = createStore<KeySubmission>({ status: 'idle' })
   .on(mutateConnectionFx, (current, { mutation }) => mutation.kind === 'addKey' || mutation.kind === 'deleteKey'
     ? { status: 'idle' } : current)
   .on(keyErrorCleared, (current) => current.status === 'error' ? { status: 'idle' } : current)
-  .reset(keyManagerOpened, keyDeleteOpened, pageDeactivated);
+  .reset(keyManagerOpened, keyDeleteOpened, editorReset);
 
 export const $presetDeleteOpen = createStore(false)
   .on(presetDeleteOpened, () => true)
-  .on(mutationDone, (open, result) => result.kind === 'deletePreset' ? false : open)
-  .reset(presetDeleteClosed, pageDeactivated);
+  .on(editorMutationDone, (open, result) => result.kind === 'deletePreset' ? false : open)
+  .reset(presetDeleteClosed, editorReset);
 
 export const $keyManagerOpen = createStore(false)
   .on(keyManagerOpened, () => true)
-  .on(mutationDone, (open, result) => result.kind === 'addKey' ? false : open)
-  .reset(keyManagerClosed, pageDeactivated);
+  .on(editorMutationDone, (open, result) => result.kind === 'addKey' ? false : open)
+  .reset(keyManagerClosed, editorReset);
 
 export const $keyBeingDeleted = createStore<ProviderKey | null>(null)
   .on(keyDeleteOpened, (_, key) => key)
   .on(mutationDone, (key, result) => result.kind === 'deleteKey' ? null : key)
-  .reset(keyManagerOpened, keyManagerClosed, keyDeleteClosed, pageDeactivated);
+  .reset(keyManagerOpened, keyManagerClosed, keyDeleteClosed, editorReset);

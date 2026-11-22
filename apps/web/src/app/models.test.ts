@@ -15,8 +15,8 @@ import {
   chatSettingsInitialized, chatSettingsSaveRequested, loadChatSettingsFx, saveChatSettingsFx,
 } from '../features/chat/settings/model';
 import {
-  $connectionLoad, $connectionSelection, connectionActionRequested, connectionClosed, connectionDraftChanged,
-  connectionModelsRequested, connectionOpened, connectionProviderChanged, loadConnectionFx, mutateConnectionFx,
+  $connectionLoad, $connectionSelection, $presetSubmission, connectionActionRequested, connectionClosed, connectionDraftChanged,
+  connectionModelsRequested, connectionOpened, connectionProviderChanged, connectionTabClosed, loadConnectionFx, mutateConnectionFx,
   presetCopyRequested, presetSelected,
 } from '../features/connection/model';
 import { $modelCatalog, loadModelCatalogFx } from '../features/connection/modelCatalog';
@@ -191,7 +191,7 @@ test('changing provider cancels the old catalog and ignores its late result', as
   assert.deepEqual(scope.getState($modelCatalog), { status: 'ready', models: [{ id: 'current-model' }] });
 });
 
-test('re-entering the connection tab waits for a write before loading its new snapshot', async () => {
+test('re-entering settings waits for a connection write before loading its new snapshot', async () => {
   const saved = { ...connection, presets: connection.presets.map((preset) => ({ ...preset, model: 'saved-model' })) };
   const pending = Promise.withResolvers<ConnectionState>();
   let reads = 0;
@@ -222,6 +222,28 @@ test('re-entering the connection tab waits for a write before loading its new sn
   assert.equal(reads, 2);
   assert.deepEqual(scope.getState($connectionLoad), { status: 'ready', data: saved });
   assert.equal(scope.getState($connectionSelection).draft.model, 'saved-model');
+});
+
+test('a write finished after switching tabs updates connection data without restoring the old form state', async () => {
+  const saved = { ...connection, presets: connection.presets.map((preset) => ({ ...preset, model: 'saved-model' })) };
+  const pending = Promise.withResolvers<ConnectionState>();
+  const scope = fork({
+    handlers: [
+      [loadConnectionFx, () => connection],
+      [mutateConnectionFx, async () => ({ kind: 'savePreset', id: 'one', state: await pending.promise })],
+    ],
+  });
+  await allSettled(sessionUserReceived, { scope, params: user });
+  await allSettled(connectionOpened, { scope });
+  scopeBind(connectionDraftChanged, { scope })({ model: 'draft-model' });
+  scopeBind(connectionActionRequested, { scope })({ kind: 'savePreset' });
+  scopeBind(connectionTabClosed, { scope })();
+  assert.equal(scope.getState($connectionSelection).draft.model, 'demo-model');
+
+  pending.resolve(saved);
+  await allSettled(scope);
+  assert.equal(scope.getState($connectionSelection).draft.model, 'saved-model');
+  assert.equal(scope.getState($presetSubmission).status, 'idle');
 });
 
 const sseHeaders = { 'Content-Type': 'text/event-stream' };

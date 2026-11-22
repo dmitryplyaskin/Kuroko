@@ -1,15 +1,15 @@
 import { CodedError } from '@kuroko/contracts/errors';
-import { lazy, type ComponentType, type LazyExoticComponent } from 'react';
+import { createElement, lazy, use, type ComponentType } from 'react';
 import { scopeBind, type Scope } from 'effector';
-import type { ExtensionContribution, ExtensionKind, ModuleBundle, SettingsTab, WebModule, WorkspaceScreen } from './contracts';
+import type { ExtensionContribution, ExtensionKind, ModuleBundle, SettingsTab, ViewLoader, WebModule, WorkspaceScreen } from './contracts';
 
 type RegisteredView<T> = Readonly<T & {
   moduleId: string;
-  View: LazyExoticComponent<ComponentType>;
+  View: ComponentType;
 }>;
 
 export type RegisteredScreen = RegisteredView<WorkspaceScreen>;
-export type RegisteredTab = RegisteredView<SettingsTab>;
+export type RegisteredTab = RegisteredView<SettingsTab> & { preload: ViewLoader };
 
 type WorkspaceRoute = Readonly<{ screen: RegisteredScreen; settingsTab?: string }>;
 
@@ -50,14 +50,19 @@ export function createModuleRegistry(bundle: ModuleBundle, additionalModules: re
 
       const load = module.views && Object.hasOwn(module.views, id) ? module.views[id] : undefined;
       if (!load) throw new CodedError('module_view_loader_missing', { id, moduleId: module.id });
-      const view = { moduleId: module.id, View: lazy(load) };
-
       if (contribution.kind === 'workspace.screen') {
-        const screen = { ...contribution, ...view };
+        const screen = { ...contribution, moduleId: module.id, View: lazy(load) };
         screens.set(id, screen);
         addUnique(routes, screen.route, { screen }, 'workspace_route');
       } else {
-        addUnique(tabs, contribution.key, { ...contribution, ...view }, 'settings_tab_key');
+        let loading: ReturnType<ViewLoader> | undefined;
+        let loaded: Awaited<ReturnType<ViewLoader>> | undefined;
+        const preload = () => loading ??= Promise.resolve().then(load).then((view) => loaded = view);
+        function View() {
+          const { default: Tab } = loaded ?? use(preload());
+          return createElement(Tab);
+        }
+        addUnique(tabs, contribution.key, { ...contribution, moduleId: module.id, View, preload }, 'settings_tab_key');
       }
     }
   }

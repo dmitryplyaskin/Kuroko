@@ -11,7 +11,7 @@ import { ProviderKeysDialog } from './ProviderKeysDialog';
 import {
   $connectionLoad, $connectionSelection, $keyManagerOpen, $keySubmission, $presetDeleteError, $presetDeleteOpen,
   $presetPending, $presetSubmission,
-  connectionActionRequested, connectionClosed, connectionDraftChanged, connectionEndpointsRequested, connectionModelsRequested, connectionOpened,
+  connectionActionRequested, connectionDraftChanged, connectionEndpointsRequested, connectionModelsRequested, connectionTabClosed,
   connectionProviderChanged, connectionRetryRequested, keyManagerClosed, keyManagerOpened, presetCopyRequested,
   presetDeleteClosed, presetDeleteOpened, presetSelected,
 } from './model';
@@ -24,7 +24,7 @@ export default function ConnectionSettings() {
   const { t, number, decimalSeparator } = useI18n();
   const {
     load, retry, selection, submission, deleteError, saving, catalog, selectPreset, copyPreset, updateDraft, changeProvider,
-    perform, loadModels, endpoints, loadEndpoints, keySubmission, open, close, keyManagerOpen, deleteOpen, openKeyManager,
+    perform, loadModels, endpoints, loadEndpoints, keySubmission, closeTab, keyManagerOpen, deleteOpen, openKeyManager,
     dismissKeyManager, openDelete, dismissDelete,
   } = useUnit({
     load: $connectionLoad, retry: connectionRetryRequested, selection: $connectionSelection, submission: $presetSubmission,
@@ -32,7 +32,7 @@ export default function ConnectionSettings() {
     copyPreset: presetCopyRequested, updateDraft: connectionDraftChanged, changeProvider: connectionProviderChanged,
     perform: connectionActionRequested, loadModels: connectionModelsRequested, keySubmission: $keySubmission,
     endpoints: $openRouterEndpoints, loadEndpoints: connectionEndpointsRequested,
-    open: connectionOpened, close: connectionClosed, keyManagerOpen: $keyManagerOpen, deleteOpen: $presetDeleteOpen,
+    closeTab: connectionTabClosed, keyManagerOpen: $keyManagerOpen, deleteOpen: $presetDeleteOpen,
     openKeyManager: keyManagerOpened, dismissKeyManager: keyManagerClosed, openDelete: presetDeleteOpened, dismissDelete: presetDeleteClosed,
   });
   const { presetId, selectedPreset, activePreset, draft, keyId, providerKeys } = selection;
@@ -46,10 +46,7 @@ export default function ConnectionSettings() {
     requestAnimationFrame(() => keyManagerTrigger.current?.focus());
   }, [dismissKeyManager]);
 
-  useEffect(() => {
-    open();
-    return () => { close(); };
-  }, [open, close]);
+  useEffect(() => closeTab, [closeTab]);
 
   useEffect(() => {
     if (keySubmission.status === 'added') {

@@ -1,6 +1,6 @@
-import { createEvent, createStore, sample } from 'effector';
+import { combine, createEffect, createEvent, createStore, sample } from 'effector';
 import type { ModuleRegistry, RegisteredScreen } from '../modules/registry';
-import { sessionEnded, sessionStarted } from '../platform/session/model';
+import { $activeSession, sessionEnded, sessionStarted } from '../platform/session/model';
 import { createBrowserPreference } from '../shared/browser/preferences';
 
 function visitScreen(visited: ReadonlySet<string>, screen: RegisteredScreen): ReadonlySet<string> {
@@ -14,6 +14,18 @@ export function createWorkspaceModel(registry: ModuleRegistry) {
   const $route = createStore(registry.resolveRoute('')).on(routeChanged, (_, route) => route);
   const $screen = $route.map(({ screen }) => screen);
   const workspaceOpened = sample({ clock: sessionStarted, source: $route });
+
+  const $settingsOpen = combine($activeSession, $screen, (session, screen) => session !== null && screen.route === '#settings');
+  const settingsOpened = $settingsOpen.updates.filter({ fn: (open) => open }).map(() => undefined);
+  const settingsClosed = $settingsOpen.updates.filter({ fn: (open) => !open }).map(() => undefined);
+  const preloadTabsFx = createEffect(() => Promise.allSettled(registry.settingsTabs.map(({ preload }) => preload())));
+  sample({ clock: settingsOpened, target: preloadTabsFx });
+  for (const { settingsLifecycle } of registry.settingsTabs) {
+    if (settingsLifecycle) {
+      sample({ clock: settingsOpened, target: settingsLifecycle.opened });
+      sample({ clock: settingsClosed, target: settingsLifecycle.closed });
+    }
+  }
 
   const $retainedScreens = createStore<ReadonlySet<string>>(new Set())
     .on(workspaceOpened, (_, { screen }) => visitScreen(new Set(), screen))

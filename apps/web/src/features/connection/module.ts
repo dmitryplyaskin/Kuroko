@@ -1,4 +1,5 @@
 import type { WebModule } from '../../modules/contracts';
+import { connectionClosed, connectionOpened } from './model';
 
 export const connectionModule = {
   id: 'kuroko.connection',
@@ -11,6 +12,7 @@ export const connectionModule = {
     description: 'connection.description',
     order: 30,
     loadingLabel: 'connection.loading',
+    settingsLifecycle: { opened: connectionOpened, closed: connectionClosed },
   }],
   views: {
     'kuroko.connection.preferences': () => import('./ConnectionSettings'),

@@ -1,8 +1,12 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { allSettled, fork } from 'effector';
+import { allSettled, fork, scopeBind } from 'effector';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import type { ConnectionState } from '@kuroko/contracts/connectionSettings';
 import { corePlugin } from '../core';
 import { loadChatSettingsFx } from '../features/chat/settings/model';
+import { $connectionLoad, loadConnectionFx } from '../features/connection/model';
 import type { WebModule } from '../modules/contracts';
 import { createModuleRegistry } from '../modules/registry';
 import { $activeSession, sessionEndRequested, sessionUserReceived } from '../platform/session/model';
@@ -56,7 +60,10 @@ test('a module outside the core bundle adds a lazy screen and a selectable setti
 test('unknown addresses fall back and legacy aliases retain their existing settings behavior', async () => {
   const workspace = createWorkspaceModel(createModuleRegistry(corePlugin));
   const scope = fork({
-    handlers: [[loadChatSettingsFx, () => ({ settings: null, legacy: undefined })]],
+    handlers: [
+      [loadChatSettingsFx, () => ({ settings: null, legacy: undefined })],
+      [loadConnectionFx, () => ({ activePresetId: null, presets: [], keys: [] })],
+    ],
   });
 
   await allSettled(workspace.workspaceHashChanged, { scope, params: '#secrets' });
@@ -78,6 +85,47 @@ test('unknown addresses fall back and legacy aliases retain their existing setti
   await allSettled(sessionEndRequested, { scope, params: { session: scope.getState($activeSession)! } });
   assert.equal(scope.getState(workspace.$retainedScreens).size, 0);
   assert.equal(scope.getState(workspace.$settingsTab), 'appearance');
+});
+
+test('opening settings preloads tabs and starts one connection read for the whole visit', async () => {
+  let viewLoads = 0;
+  let reads = 0;
+  const connection = { activePresetId: null, presets: [], keys: [] } satisfies ConnectionState;
+  const pending = Promise.withResolvers<ConnectionState>();
+  const registry = createModuleRegistry(corePlugin, [notesModule(() => { viewLoads++; })]);
+  const workspace = createWorkspaceModel(registry);
+  const scope = fork({
+    handlers: [[loadConnectionFx, () => ++reads === 1 ? pending.promise : connection]],
+  });
+  const navigate = scopeBind(workspace.workspaceHashChanged, { scope });
+  const selectTab = scopeBind(workspace.settingsTabChanged, { scope });
+
+  await allSettled(sessionUserReceived, { scope, params: { id: 1, username: 'Лина' } });
+  assert.equal(reads, 0);
+  assert.equal(viewLoads, 0);
+
+  navigate('#settings');
+  assert.equal(scope.getState(workspace.$settingsTab), 'appearance');
+  assert.equal(reads, 1);
+  selectTab('connection');
+  selectTab('appearance');
+  assert.equal(reads, 1);
+
+  pending.resolve(connection);
+  await allSettled(scope);
+  assert.equal(viewLoads, 1);
+  const notes = registry.settingsTabs.find(({ key }) => key === 'notes');
+  assert.ok(notes);
+  assert.equal(renderToStaticMarkup(createElement(notes.View)), '');
+  await allSettled(workspace.settingsTabChanged, { scope, params: 'connection' });
+  assert.deepEqual(scope.getState($connectionLoad), { status: 'ready', data: connection });
+  assert.equal(reads, 1);
+
+  await allSettled(workspace.workspaceHashChanged, { scope, params: '#scenes' });
+  assert.equal(scope.getState($connectionLoad).status, 'loading');
+  await allSettled(workspace.workspaceHashChanged, { scope, params: '#secrets' });
+  assert.equal(reads, 2);
+  assert.equal(viewLoads, 1);
 });
 
 test('registration rejects conflicting contributions and incomplete view bindings', () => {
