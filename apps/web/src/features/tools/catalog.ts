@@ -52,11 +52,15 @@ export const tools: Record<ToolId, ToolDefinition> = {
     parameters: [{ name: 'text', description: 'tools.echoText' }],
     example: { text: 'ping' },
   },
-  delegate_task: {
+  subagent: {
     icon: Workflow,
     label: 'tools.delegate',
     description: 'tools.delegateDescription',
-    parameters: [{ name: 'task', description: 'tools.delegateTask' }, { name: 'name', description: 'tools.delegateName' }],
+    parameters: [
+      { name: 'task', description: 'tools.delegateTask' },
+      { name: 'agentId', description: 'tools.delegateAgentId' },
+      { name: 'name', description: 'tools.delegateName' },
+    ],
     example: { name: 'Chronologist', task: 'Check whether the timeline and character decisions are consistent. Context: …' },
   },
 };

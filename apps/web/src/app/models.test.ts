@@ -723,7 +723,7 @@ test('chat runs named subagents in parallel and restores their separate historie
   ];
   const followUp = { name: 'хронолог', task: 'Уточни порядок событий.' };
   const followUpAnswer = 'Сначала утро, затем вечер.';
-  const calls = agents.map(({ id, name, task }) => ({ type: 'toolCall', id, name: 'delegate_task', arguments: { name, task } }));
+  const calls = agents.map(({ id, name, task }) => ({ type: 'toolCall', id, name: 'subagent', arguments: { name, task } }));
   const results = agents.map(({ id, name, answer }) => ({ role: 'tool', callId: id, content: { answer, name } }));
   const first = agents[0]!;
   const workers = new Map(agents.map(({ name }) => [name, Promise.withResolvers<Response>()]));
@@ -750,7 +750,7 @@ test('chat runs named subagents in parallel and restores their separate historie
     assert.equal(input, '/api/llm/generate');
     switch (++rounds) {
       case 1:
-        assert.deepEqual(body.tools.map(({ name }: { name: string }) => name), ['delegate_task']);
+        assert.deepEqual(body.tools.map(({ name }: { name: string }) => name), ['subagent']);
         return toolReply(...calls, { ...calls[0], id: 'duplicate', arguments: { ...followUp } });
       case 2:
         assert.equal(body.presetId, presetId);
@@ -768,7 +768,7 @@ test('chat runs named subagents in parallel and restores their separate historie
   });
   try {
     const scope = await openChat();
-    await allSettled(toolSettingChanged, { scope, params: { id: 'delegate_task', enabled: true } });
+    await allSettled(toolSettingChanged, { scope, params: { id: 'subagent', enabled: true } });
     await allSettled(chatDraftChanged, { scope, params: 'Проверь порядок сцен.' });
     const sending = allSettled(chatSendRequested, { scope });
     await Promise.race([waiting.promise, sending]);

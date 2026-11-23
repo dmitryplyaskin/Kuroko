@@ -1,12 +1,13 @@
 import { once } from 'node:events';
 import { Router } from 'express';
+import { isAgentId } from '@kuroko/contracts/agents';
 import { errorBody } from '@kuroko/contracts/errors';
 import type { LlmEvent } from '@kuroko/contracts/llm';
 import {
   delegatedAnswerLimit, readDelegatedTask, readSubagentName, subagentHistoryLimit, subagentHistoryTextLimit,
   type DelegateTaskEvent, type DelegateTaskRequest, type SubagentTurn,
 } from '@kuroko/contracts/tools';
-import type { createDelegateTask } from '../tools/delegateTask';
+import type { createDelegateTask, createSubagentToolDescriptions } from '../tools/delegateTask';
 import { record } from './json';
 import { LlmError } from './llmErrors';
 import type { createLlmService } from './llmService';
@@ -21,9 +22,10 @@ function readDelegation(value: unknown): DelegateTaskRequest | undefined {
   const task = readDelegatedTask(input?.task);
   if (!input || !task) return;
   const name = readSubagentName(input.name);
-  if (input.name !== undefined && !name) return;
-  if (input.history === undefined) return { task, name };
-  if (!name || !Array.isArray(input.history) || input.history.length > subagentHistoryLimit) return;
+  const agentId = input.agentId;
+  if ((input.name !== undefined && !name) || (agentId !== undefined && !isAgentId(agentId))) return;
+  if (input.history === undefined) return { task, name, agentId };
+  if ((!name && !agentId) || !Array.isArray(input.history) || input.history.length > subagentHistoryLimit) return;
 
   const history: SubagentTurn[] = [];
   let size = 0;
@@ -36,10 +38,13 @@ function readDelegation(value: unknown): DelegateTaskRequest | undefined {
     if (size > subagentHistoryTextLimit) return;
     history.push({ task: previousTask, answer });
   }
-  return { task, name, history };
+  return { task, name, agentId, history };
 }
 
-export function createLlmRouter(llm: ReturnType<typeof createLlmService>, delegateTask: ReturnType<typeof createDelegateTask>) {
+export function createLlmRouter(
+  llm: ReturnType<typeof createLlmService>, delegateTask: ReturnType<typeof createDelegateTask>,
+  describeTools: ReturnType<typeof createSubagentToolDescriptions>,
+) {
   const router = Router();
 
   router.post('/delegate', async (request, response) => {
@@ -115,7 +120,9 @@ export function createLlmRouter(llm: ReturnType<typeof createLlmService>, delega
 
     try {
       const input = readLlmRequest(request.body);
-      const completion = await llm.generate(response.locals.user.id, input, controller.signal, input.stream ? { start, emit } : undefined);
+      const userId: number = response.locals.user.id;
+      if (input.tools) input.tools = describeTools(userId, input.tools);
+      const completion = await llm.generate(userId, input, controller.signal, input.stream ? { start, emit } : undefined);
       if (input.stream) {
         if (!controller.signal.aborted) response.end(sse({ type: 'done', completion }));
       } else {

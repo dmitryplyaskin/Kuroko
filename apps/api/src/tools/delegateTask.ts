@@ -1,24 +1,49 @@
 import type { ChatActivityEntry, ChatToolCall } from '@kuroko/contracts/chat';
-import type { LlmMessage } from '@kuroko/contracts/llm';
+import type { LlmMessage, LlmTool } from '@kuroko/contracts/llm';
 import { delegatedAnswerLimit, type DelegateTaskRequest, type DelegateTaskResult } from '@kuroko/contracts/tools';
 import { runToolCall, toolDeclarations } from '@kuroko/tool-runtime';
 import { createChatActivity, recordModelRequest } from '@kuroko/tool-runtime/chatActivity';
 import { randomUUID } from 'node:crypto';
+import type { createAgentsStore } from '../agents/agentsStore';
 import { LlmError } from '../llm/llmErrors';
 import type { createLlmService } from '../llm/llmService';
 import type { createToolsStore } from './toolsStore';
 
 const maxToolRounds = 16;
 
+export function createSubagentToolDescriptions(
+  agents: Pick<ReturnType<typeof createAgentsStore>, 'catalog'>,
+  tools: Pick<ReturnType<typeof createToolsStore>, 'temporaryAgentTools'>,
+) {
+  return (userId: number, declarations: LlmTool[]) => {
+    if (!declarations.some(({ name }) => name === 'subagent')) return declarations;
+    const catalog = agents.catalog(userId);
+    const temporaryTools = tools.temporaryAgentTools(userId);
+    return declarations.map((tool) => tool.name === 'subagent' ? {
+      ...tool,
+      description: [
+        tool.description,
+        temporaryTools.length ? `Tools for temporary agents: ${temporaryTools.join(', ')}.` : 'Temporary agents have no tools.',
+        catalog.length && `Choose a saved agent by its description and pass its id as agentId: ${JSON.stringify(catalog)}`,
+      ].filter(Boolean).join('\n'),
+    } : tool);
+  };
+}
+
 export function createDelegateTask(
   llm: Pick<ReturnType<typeof createLlmService>, 'generate'>,
-  tools: Pick<ReturnType<typeof createToolsStore>, 'list' | 'subagentPresetId'>,
+  tools: Pick<ReturnType<typeof createToolsStore>, 'list' | 'subagentPresetId' | 'temporaryAgentTools'>,
+  agents: Pick<ReturnType<typeof createAgentsStore>, 'find'>,
 ) {
-  return async (userId: number, { task, name, history = [] }: DelegateTaskRequest, signal: AbortSignal,
+  return async (userId: number, { task, name: instanceName, agentId, history = [] }: DelegateTaskRequest, signal: AbortSignal,
     onActivity?: (entry: ChatActivityEntry) => void): Promise<DelegateTaskResult> => {
     signal.throwIfAborted();
     const enabled = tools.list(userId);
-    if (!enabled.includes('delegate_task')) return { result: 'Tool is not enabled.', isError: true };
+    if (!enabled.includes('subagent')) return { result: 'Tool is not enabled.', isError: true };
+
+    const agent = agentId ? agents.find(userId, agentId) : undefined;
+    if (agentId && !agent) return { result: 'Saved agent not found. Use an agentId from the available agents.', isError: true };
+    const name = instanceName ?? agent?.name;
 
     const presetId = tools.subagentPresetId(userId);
     if (!presetId) return { result: 'Select a subagent connection preset in the Tools settings.', isError: true };
@@ -27,15 +52,17 @@ export function createDelegateTask(
       { role: 'user', content: task },
       { role: 'assistant', parts: [{ type: 'text', text: answer }] },
     ]);
+    const allowedTools = agent?.tools ?? tools.temporaryAgentTools(userId, enabled);
     const instructions = [
       'Complete the latest delegated task. Use your earlier tasks and answers when relevant.',
-      'Use the available tools as needed. Report actual dice results from those tools.',
-      'Use getRollDetails for rolls already made in this delegated task.',
+      'Use the available tools as needed.',
+      (allowedTools.includes('roll_dice') || allowedTools.includes('resolveCheck')) && 'Report actual dice results from the tools.',
+      allowedTools.includes('getRollDetails') && 'Use getRollDetails for rolls already made in this delegated task.',
       'Return a concise result for the calling model and mention any missing information.',
       ...(name ? [`Your subagent name is the label ${JSON.stringify(name)}.`] : []),
-    ].join('\n');
+      ...(agent ? [`Saved agent instructions:\n${agent.instructions}`] : []),
+    ].filter(Boolean).join('\n');
     const messages: LlmMessage[] = [{ role: 'system', content: instructions }, ...prior, { role: 'user', content: task }];
-    const allowedTools = enabled.filter((id) => id !== 'delegate_task');
     const declarations = toolDeclarations(allowedTools);
     const trace: ChatToolCall[] = [];
     const timeout = AbortSignal.timeout(120_000);

@@ -1,4 +1,4 @@
-import { isToolId, type ToolId, type ToolPreset, type ToolsResponse } from '@kuroko/contracts/tools';
+import { isAgentToolId, isToolId, type AgentToolId, type ToolId, type ToolPreset, type ToolsResponse } from '@kuroko/contracts/tools';
 import type { Database } from 'bun:sqlite';
 import { randomUUID } from 'node:crypto';
 import type { PresetWriteResult } from '../http/presetRouter';
@@ -31,14 +31,26 @@ export function createToolsStore(db: Database) {
       ON CONFLICT (user_id) DO UPDATE SET preset_id = excluded.preset_id
   `);
   const clearSubagent = db.query('DELETE FROM subagent_settings WHERE user_id = ?');
+  const findTemporaryTools = db.query<{ tools_json: string }, [number]>('SELECT tools_json FROM temporary_agent_tools WHERE user_id = ?');
+  const setTemporaryTools = db.query(`
+    INSERT INTO temporary_agent_tools (user_id, tools_json) VALUES (?, ?)
+    ON CONFLICT (user_id) DO UPDATE SET tools_json = excluded.tools_json
+  `);
+  const clearTemporaryTools = db.query('DELETE FROM temporary_agent_tools WHERE user_id = ?');
 
   const enabledTools = (userId: number) => list.all(userId).map(({ tool_id }) => tool_id).filter(isToolId);
+  function readTemporaryTools(userId: number) {
+    const row = findTemporaryTools.get(userId);
+    return row ? (JSON.parse(row.tools_json) as unknown[]).filter(isAgentToolId) : undefined;
+  }
   const read = db.transaction((userId: number): ToolsResponse => {
     const enabled = enabledTools(userId);
     const rows = listPresets.all(userId);
     const activePresetId = rows.find((row) => row.active)?.id;
+    const temporaryAgentTools = readTemporaryTools(userId);
     return {
       enabled, ...(rows.length ? { presets: rows.map(readPreset) } : {}), ...(activePresetId ? { activePresetId } : {}),
+      ...(temporaryAgentTools && { temporaryAgentTools }),
     };
   });
   function applyTools(userId: number, id: string, enabled: ToolId[]) {
@@ -77,6 +89,11 @@ export function createToolsStore(db: Database) {
 
   return {
     list: enabledTools,
+    temporaryAgentTools: (userId: number, enabled = enabledTools(userId)) => readTemporaryTools(userId) ?? enabled.filter(isAgentToolId),
+    setTemporaryAgentTools(userId: number, tools: AgentToolId[] | null) {
+      if (tools === null) clearTemporaryTools.run(userId);
+      else setTemporaryTools.run(userId, JSON.stringify(tools));
+    },
     subagentPresetId: (userId: number) => findSubagent.get(userId)?.preset_id ?? null,
     selectSubagent(userId: number, presetId: string | null) {
       if (presetId !== null) return setSubagent.run(userId, presetId).changes > 0;

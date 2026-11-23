@@ -1,7 +1,7 @@
 import { isLlmErrorCode } from '@kuroko/contracts/errors';
 import type { ChatActivityEntry, ChatReasoningBlock, ChatReplyVariantSelection, ChatSnapshot, ChatSummary, ChatToolCall, SavedChat } from '@kuroko/contracts/chat';
 import type { LlmAssistantPart, LlmCompletion, LlmEvent, LlmMessage, LlmRequest, LlmTextDelta, LlmToolCall } from '@kuroko/contracts/llm';
-import type { DelegateTaskEvent, DelegateTaskRequest, DelegateTaskResult, ToolId } from '@kuroko/contracts/tools';
+import { readSubagentResultName, type DelegateTaskEvent, type DelegateTaskRequest, type DelegateTaskResult, type ToolId } from '@kuroko/contracts/tools';
 import { createSubagentBatch, runToolCall, toolDeclarations } from '@kuroko/tool-runtime';
 import { createChatActivity, recordModelRequest } from '@kuroko/tool-runtime/chatActivity';
 import { toLlmMessages } from '@kuroko/tool-runtime/chatHistory';
@@ -104,7 +104,10 @@ export async function streamChatReply(
     presetId ??= completion.presetId;
     const recordedCalls = [...savedCalls, ...toolCalls];
     const delegateTask = createSubagentBatch(recordedCalls, async (request, signal, id) => {
-      const agent = start('agent', { task: request.task, callId: id }, request.name);
+      const agent = start('agent', {
+        task: request.task, callId: id,
+        ...(request.agentId && { savedAgentId: request.agentId, ...(request.name && { instanceName: request.name }) }),
+      }, request.name);
       const nestedEntries = new Map<string, ChatActivityEntry>();
       activeSubagents = [...activeSubagents, { id, name: request.name }];
       onSubagentActivity(activeSubagents);
@@ -126,7 +129,7 @@ export async function streamChatReply(
         for (const entry of nestedEntries.values()) {
           if (entry.status === 'running') onActivity({ ...entry, status: result.isError ? 'failed' : 'completed' });
         }
-        agent.finish(result.isError ? 'failed' : 'completed', { result: result.result });
+        agent.finish(result.isError ? 'failed' : 'completed', { result: result.result }, readSubagentResultName(result.result));
         return result;
       } finally {
         activeSubagents = activeSubagents.filter((agent) => agent.id !== id);
@@ -137,7 +140,7 @@ export async function streamChatReply(
       let recordId = uniqueToolIds ? `${recordPrefix}${nextRecordNumber++}` : call.id;
       while (recordedIds.has(recordId)) recordId = `${recordPrefix}${nextRecordNumber++}`;
       recordedIds.add(recordId);
-      const tool = start('tool', { arguments: call.arguments, ...(call.name === 'delegate_task' && { callId: recordId }) }, call.name);
+      const tool = start('tool', { arguments: call.arguments, ...(call.name === 'subagent' && { callId: recordId }) }, call.name);
       const { entry, message } = await runToolCall(call, enabledTools, { signal, id: recordId, history: recordedCalls, delegateTask });
       tool.finish(entry.isError ? 'failed' : 'completed', {
         result: entry.result, ...(message.content !== entry.result && { modelResult: message.content }),

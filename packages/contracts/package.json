@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./agents": "./src/agents.ts",
     "./auth": "./src/auth.ts",
     "./chat": "./src/chat.ts",
     "./chatSettings": "./src/chatSettings.ts",

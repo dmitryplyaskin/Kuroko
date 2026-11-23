@@ -1,6 +1,8 @@
 import { realmRequestByteLimit } from '@kuroko/contracts/realms';
 import type { Database } from 'bun:sqlite';
 import { json, Router } from 'express';
+import { createAgentsRouter } from '../agents/agentsRouter';
+import { createAgentsStore } from '../agents/agentsStore';
 import { createAccountStore } from '../auth/accountStore';
 import { createAuthRouter } from '../auth/authRouter';
 import { createChatSettingsStore } from '../chat-settings/chatSettingsStore';
@@ -16,7 +18,7 @@ import { createLlmRouter } from '../llm/llmRouter';
 import { createLlmService } from '../llm/llmService';
 import { createRealmRouter } from '../realms/realmRouter';
 import { createRealmStore } from '../realms/realmStore';
-import { createDelegateTask } from '../tools/delegateTask';
+import { createDelegateTask, createSubagentToolDescriptions } from '../tools/delegateTask';
 import { createToolsRouter } from '../tools/toolsRouter';
 import { createToolsStore } from '../tools/toolsStore';
 
@@ -29,16 +31,19 @@ export function createApiRouter(db: Database, vaultKey: Buffer, secureCookie: bo
   const llm = createLlmService(presets, keys, connections);
   const chats = createChatStore(db);
   const tools = createToolsStore(db);
-  const delegateTask = createDelegateTask(llm, tools);
+  const agents = createAgentsStore(db);
+  const delegateTask = createDelegateTask(llm, tools, agents);
+  const describeTools = createSubagentToolDescriptions(agents, tools);
 
-  router.use('/llm', requireUser, json({ limit: '4mb' }), createLlmRouter(llm, delegateTask));
-  router.use('/chats', requireUser, json({ limit: '8mb' }), createChatRouter(chats, createGmReply(chats, llm, tools.list, delegateTask)));
+  router.use('/llm', requireUser, json({ limit: '4mb' }), createLlmRouter(llm, delegateTask, describeTools));
+  router.use('/chats', requireUser, json({ limit: '8mb' }), createChatRouter(chats, createGmReply(chats, llm, tools.list, delegateTask, describeTools)));
   router.use('/realms', requireUser, json({ limit: realmRequestByteLimit }), createRealmRouter(createRealmStore(db)));
   router.use(json({ limit: '128kb' }));
   router.get('/health', (_request, response) => {
     response.json({ status: 'ok' });
   });
   router.use('/auth', authRouter);
+  router.use('/agents', requireUser, createAgentsRouter(agents));
   router.use('/settings/chat', requireUser, createChatSettingsRouter(createChatSettingsStore(db)));
   router.use('/settings/tools', requireUser, createToolsRouter(tools, presets.listPresets));
   router.use('/settings/connection', requireUser, createConnectionRouter(presets, keys, connections));

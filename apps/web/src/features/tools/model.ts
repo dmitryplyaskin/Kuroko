@@ -1,5 +1,5 @@
 import { attach, createEffect, createEvent, createStore, sample } from 'effector';
-import type { ToolId, ToolPreset, ToolsResponse } from '@kuroko/contracts/tools';
+import type { AgentToolId, ToolId, ToolPreset, ToolsResponse } from '@kuroko/contracts/tools';
 import type { PresetAction } from '@kuroko/contracts/presets';
 import { $activeSession, protectedRequestFailed, sessionEnded, sessionStarted, type ActiveSession } from '../../platform/session/model';
 import { inActiveSession, sessionRequest } from '../../platform/session/request';
@@ -7,12 +7,14 @@ import { errorCode, type ErrorCode } from '../../shared/http/api';
 import { requestPresetAction } from '../../platform/presets';
 
 type Toggle = { id: ToolId; enabled: boolean };
-type Change = { kind: 'toggle'; tool: Toggle } | { kind: 'clear' } | { kind: 'subagent'; presetId: string | null } | PresetAction;
+type Change = { kind: 'toggle'; tool: Toggle } | { kind: 'clear' } | { kind: 'subagent'; presetId: string | null }
+  | { kind: 'temporaryAgentTools'; tools: AgentToolId[] | null } | PresetAction;
 type Preferences = {
   status: 'idle' | 'loading' | 'ready' | 'loadError' | 'saving';
   enabled: ToolId[];
   presets: ToolPreset[];
   activePresetId: string | null;
+  temporaryAgentTools?: AgentToolId[];
   subagent?: ToolsResponse['subagent'];
   error?: ErrorCode;
 };
@@ -35,7 +37,9 @@ const saveToolSettingFx = createEffect(({ session, change, enabled }: { session:
     case 'clear':
       return sessionRequest<ToolsResponse>(session, `${path}/enabled`, { method: 'DELETE' });
     case 'subagent':
-      return sessionRequest<ToolsResponse>(session, `${path}/subagent`, { method: 'PUT', body: { presetId: change.presetId } });
+      return sessionRequest<ToolsResponse>(session, `${path}/subagent-connection`, { method: 'PUT', body: { presetId: change.presetId } });
+    case 'temporaryAgentTools':
+      return sessionRequest<ToolsResponse>(session, `${path}/temporary-agent-tools`, { method: 'PUT', body: { tools: change.tools } });
     case 'create':
       return sessionRequest<ToolsResponse>(session, presetsPath, { method: 'POST', body: { name: change.name, enabled, apply: true } });
     case 'update':
@@ -57,11 +61,11 @@ export const $toolSettings = createStore<Preferences>(initial)
   .on(saveToolSettingFx, (current) => ({ ...current, status: 'saving', error: undefined }))
   .on([loaded, saved], (_, { result }) => ({
     status: 'ready', enabled: result.enabled, presets: result.presets ?? [], activePresetId: result.activePresetId ?? null,
-    subagent: result.subagent,
+    subagent: result.subagent, temporaryAgentTools: result.temporaryAgentTools,
   }))
   .on(loadFailed, (current, { error }) => ({ ...current, status: 'loadError', error: errorCode(error) }))
   .on(saveFailed, (current, { change, error }) => ({
-    ...current, status: 'ready', error: change.kind === 'toggle' || change.kind === 'clear' || change.kind === 'subagent'
+    ...current, status: 'ready', error: change.kind === 'toggle' || change.kind === 'clear' || change.kind === 'subagent' || change.kind === 'temporaryAgentTools'
       ? errorCode(error) : undefined,
   }))
   .reset(sessionEnded);

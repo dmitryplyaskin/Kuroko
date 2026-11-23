@@ -1,5 +1,6 @@
 import type { ChatMessage, ChatToolCall } from '@kuroko/contracts/chat';
 import type { LlmMessage } from '@kuroko/contracts/llm';
+import { isSubagentTool } from '@kuroko/contracts/tools';
 import { toolHistoryResult } from './getRollDetails';
 
 export function hasMessageContent({ text, toolCalls }: ChatMessage) {
@@ -35,7 +36,7 @@ export function toLlmMessages(messages: ChatMessage[], privateContext?: Readonly
       const content = messageBlocks(message).map((block) => {
         if (block.kind === 'text') return block.text;
         const calls = block.calls.map((call) =>
-          `${call.name}(${JSON.stringify(call.arguments)}) ${call.isError ? 'failed' : 'returned'} ${JSON.stringify(toolHistoryResult(call))}`);
+          `${isSubagentTool(call.name) ? 'subagent' : call.name}(${JSON.stringify(call.arguments)}) ${call.isError ? 'failed' : 'returned'} ${JSON.stringify(toolHistoryResult(call))}`);
         return `Tool calls:\n${calls.join('\n')}`;
       });
       const notes = privateContext?.get(message.id);

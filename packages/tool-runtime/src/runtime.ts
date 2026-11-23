@@ -1,3 +1,4 @@
+import { isAgentId } from '@kuroko/contracts/agents';
 import type { ChatToolCall } from '@kuroko/contracts/chat';
 import type { JsonObject, JsonValue, LlmMessage, LlmTool, LlmToolCall } from '@kuroko/contracts/llm';
 import { delegatedTaskLimit, isToolId, readDelegatedTask, readSubagentName, subagentNameLimit, toolIds, type ToolId } from '@kuroko/contracts/tools';
@@ -6,7 +7,7 @@ import { resolveCheck, resolveCheckDeclaration } from './resolveCheck';
 import { rollDice, rollDiceDeclaration } from './rollDice';
 import type { RunSubagent } from './subagents';
 
-export { createSubagentBatch, recentSubagentNames } from './subagents';
+export { createSubagentBatch, recentNamedSubagents } from './subagents';
 
 type ToolResult = { result: JsonValue; modelResult?: JsonValue; replyResult?: JsonValue; isError?: true };
 type ToolContext = {
@@ -51,26 +52,30 @@ const tools: Record<ToolId, ToolDefinition> = {
       return { result: { text } };
     },
   },
-  delegate_task: {
+  subagent: {
     declaration: {
-      name: 'delegate_task',
-      description: 'Run a task in a separate model request and wait for its answer. The subagent can use enabled tools such as roll_dice. Give an agent a name and reuse it to continue its history in this chat. Use distinct names to delegate independent tasks in parallel.',
+      name: 'subagent',
+      description: 'Delegate a task and wait for its answer. Pass agentId to use a saved agent’s instructions and tools. Use distinct names to run independent instances in parallel, including with the same agentId. Reuse the same agentId and name, when provided, to continue an instance’s history in this chat.',
       parameters: {
         type: 'object',
         properties: {
           task: { type: 'string', description: 'The task and any relevant context.', minLength: 1, maxLength: delegatedTaskLimit },
-          name: { type: 'string', description: 'Optional subagent name. Reuse it to continue its history, or omit it for a one-off task.', minLength: 1, maxLength: subagentNameLimit },
+          agentId: { type: 'string', description: 'Optional saved agent ID. Omit it to create a temporary agent with the default tool permissions.' },
+          name: { type: 'string', description: 'Optional instance name. With a saved agent ID, use distinct names for independent runs of that agent.', minLength: 1, maxLength: subagentNameLimit },
         },
         required: ['task'],
       },
     },
-    async run({ task, name }, { delegateTask, signal, id }): Promise<ToolResult> {
+    async run({ task, name, agentId }, { delegateTask, signal, id }): Promise<ToolResult> {
       const input = readDelegatedTask(task);
       if (!input) return { result: `Set task to a non-empty string of at most ${delegatedTaskLimit} characters.`, isError: true };
       const agent = readSubagentName(name);
       if (name !== undefined && !agent) return { result: `Set name to a non-empty name of at most ${subagentNameLimit} characters.`, isError: true };
+      if (agentId !== undefined && !isAgentId(agentId)) {
+        return { result: 'Set agentId to an available saved agent ID.', isError: true };
+      }
       if (!delegateTask) return { result: 'Subagent delegation is unavailable.', isError: true };
-      const { result, isError, toolCalls } = await delegateTask({ task: input, name: agent }, signal, id);
+      const { result, isError, toolCalls } = await delegateTask({ task: input, name: agent, agentId }, signal, id);
       if (!toolCalls?.length) return { result, isError };
       return {
         result: typeof result === 'string' ? { error: result, toolCalls } : { ...result, toolCalls },

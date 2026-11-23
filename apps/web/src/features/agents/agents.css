@@ -1,0 +1,103 @@
+.agents-page { max-inline-size: 62rem; }
+.agents-heading, .agents-load-error {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 20px;
+}
+
+.agents-heading { justify-content: space-between; }
+.agents-setup { margin-block-end: 16px; color: var(--kr-muted); }
+.agents-setup a { color: var(--kr-accent); text-decoration: underline; }
+.agents-status { display: block; color: var(--kr-muted); }
+.agents-status:not(:empty) { margin-block-end: 12px; }
+.agents-error { color: var(--kr-danger); }
+
+.agents-list, .agents-empty {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--kr-border);
+  border-radius: var(--kr-radius-panel);
+  background: var(--kr-surface);
+}
+
+.agents-empty { padding: 24px 16px; color: var(--kr-muted); }
+.agents-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+}
+
+.agents-row + .agents-row { border-block-start: 1px solid var(--kr-border); }
+.agents-copy { overflow-wrap: anywhere; }
+.agents-copy h2 { font-size: 1rem; font-weight: 600; }
+.agents-copy p { color: var(--kr-muted); white-space: pre-wrap; }
+
+.agent-editor-bar {
+  position: sticky;
+  inset-block-start: 0;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 12px;
+  padding-block: 8px 16px;
+  background: var(--kr-canvas);
+}
+.agent-editor-heading { display: grid; justify-items: start; gap: 4px; margin: 0; }
+.agent-editor-heading .agent-back { min-block-size: 28px; padding-inline: 12px; }
+.agent-editor-heading h1 { font-size: clamp(1.5rem, 4vw, 2.25rem); }
+.agent-editor-actions { display: flex; align-items: center; gap: 12px; }
+.agent-editor :is(h1, input, textarea, .agent-editor-tabs button, .agent-confirmation button) { scroll-margin-block-start: 116px; }
+.agent-save-status { color: var(--kr-muted); font-size: .875rem; }
+.agent-save-status:empty { position: absolute; }
+.agent-editor-error { margin-block: 0 16px; }
+.agent-editor-tabs .mantine-Tabs-list { border-color: var(--kr-border); }
+.agent-editor-tabs .mantine-Tabs-tab { min-block-size: 44px; color: var(--kr-muted); font-weight: 600; }
+.agent-editor-tabs .mantine-Tabs-tab[data-active] { color: var(--kr-text); border-color: var(--kr-accent); }
+.agent-definition, .agent-tools-panel { padding-block-start: 24px; }
+.agent-writing-fields { display: grid; gap: 20px; }
+.agent-name-field { max-inline-size: 28rem; }
+.agent-editor :is(input, textarea)::placeholder { color: var(--kr-muted); opacity: 1; }
+.agent-editor textarea.agent-writing-input {
+  font-size: 1rem;
+  line-height: 1.6;
+  padding: 12px 16px;
+  overflow-wrap: anywhere;
+  scrollbar-gutter: stable;
+}
+.agent-text-count { color: var(--kr-muted); font-variant-numeric: tabular-nums; font-size: .875rem; }
+.agent-text-count { margin-block-start: 4px; text-align: end; }
+.agent-editor-footer {
+  display: flex;
+  justify-content: flex-end;
+  margin-block-start: 32px;
+  padding-block-start: 8px;
+  border-block-start: 1px solid var(--kr-border);
+}
+.agent-confirmation {
+  display: grid;
+  gap: 12px;
+  max-inline-size: 42rem;
+  padding: 20px;
+  border: 1px solid var(--kr-border);
+  border-radius: var(--kr-radius-panel);
+  background: var(--kr-surface);
+}
+.agent-confirmation h2 { font-size: 1.125rem; font-weight: 600; }
+.agent-confirmation p { overflow-wrap: anywhere; }
+.agent-confirm-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.agent-delete-dialog { display: grid; gap: 16px; overflow-wrap: anywhere; }
+.agent-delete-dialog .agent-confirm-actions { justify-content: flex-end; }
+
+@media (max-width: 540px) {
+  .agents-row { grid-template-columns: minmax(0, 1fr); }
+  .agents-row > button { justify-self: start; }
+  .agent-editor-actions { flex-direction: column-reverse; align-items: end; gap: 4px; }
+  .agent-save-status { max-inline-size: 10ch; text-align: end; }
+  .agent-editor textarea.agent-writing-input { padding-inline: 12px; }
+  .agent-definition, .agent-tools-panel { padding-block-start: 16px; }
+}

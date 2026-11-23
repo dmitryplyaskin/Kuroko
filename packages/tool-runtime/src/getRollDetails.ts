@@ -1,5 +1,6 @@
 import type { ChatToolCall } from '@kuroko/contracts/chat';
 import type { JsonObject, JsonValue, LlmTool } from '@kuroko/contracts/llm';
+import { isSubagentTool } from '@kuroko/contracts/tools';
 
 const maxRollIds = 20;
 
@@ -23,7 +24,7 @@ type RollRecord = Pick<ChatToolCall, 'id' | 'name' | 'result' | 'isError'>;
 function savedRolls(history: readonly ChatToolCall[]) {
   return history.flatMap<RollRecord>((call) => {
     if (call.name === 'roll_dice' || call.name === 'resolveCheck') return [call];
-    if (call.name !== 'delegate_task') return [];
+    if (!isSubagentTool(call.name)) return [];
     const children = object(call.result)?.toolCalls;
     if (!Array.isArray(children)) return [];
 

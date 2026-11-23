@@ -1,4 +1,5 @@
-import { readDelegatedTask, readSubagentName } from '@kuroko/contracts/tools';
+import { isAgentId } from '@kuroko/contracts/agents';
+import { isSubagentTool, readDelegatedTask, readSubagentName, readSubagentResultName } from '@kuroko/contracts/tools';
 import type { ChatActivityEntry, ChatActivityTurn, ChatMessage, ChatToolCall } from '@kuroko/contracts/chat';
 import type { JsonValue } from '@kuroko/contracts/llm';
 import { useI18n } from '../../shared/i18n/i18n';
@@ -10,7 +11,7 @@ export function activityObject(value: JsonValue | undefined) {
 type SourceEntry = ChatActivityEntry & { legacyCallId?: string };
 
 export function activityToolDetails(entry: ActivityEntry) {
-  if (entry.kind !== 'tool' || entry.name !== 'delegate_task') return entry.details;
+  if (entry.kind !== 'tool' || !isSubagentTool(entry.name)) return entry.details;
   const { callId: _, result, modelResult, ...details } = entry.details;
   const returned = modelResult ?? result;
   const object = activityObject(returned);
@@ -34,13 +35,17 @@ function legacyEntries({ toolCalls, time }: ChatMessage): SourceEntry[] {
   return (toolCalls ?? []).flatMap((call, index): SourceEntry[] => {
     const id = `tool-${index}`;
     const tool = toolEntry(call, id);
-    const task = call.name === 'delegate_task' && readDelegatedTask(call.arguments.task);
+    const task = isSubagentTool(call.name) && readDelegatedTask(call.arguments.task);
     const result = activityObject(call.result);
     if (!task || !result) return [{ ...tool, legacyCallId: call.id }];
     const agentId = `agent-${index}`;
+    const name = readSubagentName(call.arguments.name);
     const agent: ChatActivityEntry = {
-      id: agentId, kind: 'agent', time, name: readSubagentName(call.arguments.name), status: tool.status,
-      details: { task, result: call.result },
+      id: agentId, kind: 'agent', time, name: readSubagentResultName(call.result) ?? name, status: tool.status,
+      details: {
+        task, result: call.result,
+        ...(isAgentId(call.arguments.agentId) && { savedAgentId: call.arguments.agentId, ...(name && { instanceName: name }) }),
+      },
     };
     const nested = Array.isArray(result.toolCalls) ? result.toolCalls.flatMap((value, index) => {
       const call = activityObject(value);
@@ -77,14 +82,18 @@ export function chatActivityView(turns: ChatActivityTurn[], messages: ChatMessag
       entries.push(entry);
       const callId = item.details.callId ?? item.legacyCallId;
       const delegateKey = JSON.stringify([item.agentId, callId]);
-      if (item.kind === 'tool' && item.name === 'delegate_task') delegates.set(delegateKey, entry);
+      if (item.kind === 'tool' && isSubagentTool(item.name)) delegates.set(delegateKey, entry);
       if (item.kind === 'agent') {
         const parentKey = parent?.agent.key;
-        const agentKey = item.name ? JSON.stringify([parentKey, item.name.toLowerCase()]) : key;
+        const savedId = isAgentId(item.details.savedAgentId) ? item.details.savedAgentId : undefined;
+        const instanceName = readSubagentName(item.details.instanceName)?.toLowerCase();
+        const agentKey = savedId ? JSON.stringify([parentKey, 'saved', savedId, instanceName])
+          : item.name ? JSON.stringify([parentKey, item.name.toLowerCase()]) : key;
         const agent = agents.get(agentKey) ?? {
           key: agentKey, parentKey, identity: { name: item.name, number: item.name ? 0 : ++anonymous }, tasks: [],
         };
         const task = { entry, activity: [] };
+        if (savedId && item.name) agent.identity.name = item.name;
         agent.tasks.push(task);
         agents.set(agentKey, agent);
         tasks.set(item.id, { agent, task });

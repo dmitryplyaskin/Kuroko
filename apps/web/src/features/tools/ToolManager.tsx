@@ -1,10 +1,11 @@
 import { ActionIcon, Button, NativeSelect, Switch, TextInput } from '@mantine/core';
 import { providers } from '@kuroko/contracts/connectionSettings';
-import { toolIds, type ToolId } from '@kuroko/contracts/tools';
+import { isAgentToolId, toolIds, type AgentToolId, type ToolId } from '@kuroko/contracts/tools';
 import { useUnit } from 'effector-react';
 import { ChevronDown, Power, Search, X } from 'lucide-react';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useI18n } from '../../shared/i18n/i18n';
+import { AgentTools } from '../agents/AgentTools';
 import { tools } from './catalog';
 import { $toolSettings, toolManagerOpened, toolSettingChanged, toolSettingsChangeFx, toolSettingsRetried } from './model';
 import { PresetControls } from '../../shared/presets/PresetControls';
@@ -68,14 +69,20 @@ export default function ToolManager() {
         </div>
         {visible.length ? <ul className="tool-manager-list" aria-label={t('tools.label')}>
           {visible.map((id) => <ToolRow key={id} id={id} enabled={settings.enabled.includes(id)} disabled={disabled}
-            configuration={id === 'delegate_task' && <NativeSelect
-              label={t('tools.delegatePreset')}
-              description={t(subagentOptions.length ? 'tools.delegatePresetHint' : 'tools.delegatePresetEmpty')}
-              disabled={disabled || !subagentOptions.length}
-              value={settings.subagent?.presetId ?? ''}
-              data={[{ value: '', label: t('tools.delegatePresetNone') }, ...subagentOptions]}
-              onChange={({ currentTarget: { value } }) => void change({ kind: 'subagent', presetId: value || null }).catch(() => {})}
-            />}
+            configuration={id === 'subagent' && <>
+              <NativeSelect
+                label={t('tools.delegatePreset')}
+                description={t(subagentOptions.length ? 'tools.delegatePresetHint' : 'tools.delegatePresetEmpty')}
+                disabled={disabled || !subagentOptions.length}
+                value={settings.subagent?.presetId ?? ''}
+                data={[{ value: '', label: t('tools.delegatePresetNone') }, ...subagentOptions]}
+                onChange={({ currentTarget: { value } }) => void change({ kind: 'subagent', presetId: value || null }).catch(() => {})}
+              />
+              <TemporaryAgentTools
+                inherited={settings.enabled.filter(isAgentToolId)} configured={settings.temporaryAgentTools} disabled={disabled}
+                onSave={async (tools) => Boolean(await change({ kind: 'temporaryAgentTools', tools }))}
+              />
+            </>}
             onToggle={(enabled) => toggle({ id, enabled })} />)}
         </ul> : <div className="tool-manager-empty">
           <output>{t('tools.noResults')}</output>
@@ -84,6 +91,33 @@ export default function ToolManager() {
       </div>
     </section>
   );
+}
+
+function TemporaryAgentTools({ inherited, configured, disabled, onSave }: {
+  inherited: AgentToolId[];
+  configured?: AgentToolId[];
+  disabled: boolean;
+  onSave: (tools: AgentToolId[] | null) => Promise<boolean>;
+}) {
+  const { t } = useI18n();
+  const [draft, setDraft] = useState<AgentToolId[]>();
+
+  async function save(tools: AgentToolId[] | null) {
+    if (await onSave(tools)) setDraft(undefined);
+  }
+
+  return <section className="temporary-agent-tools" aria-labelledby="temporary-agent-tools-title">
+    <h2 id="temporary-agent-tools-title">{t('tools.temporaryAgentTools')}</h2>
+    <p>{t(configured ? 'tools.temporaryToolsCustom' : 'tools.temporaryToolsInherited')}</p>
+    <AgentTools selected={draft ?? configured ?? inherited} disabled={disabled} onChange={setDraft} />
+    <div className="temporary-agent-actions">
+      {configured && <Button variant="default" disabled={disabled}
+        onClick={() => void save(null).catch(() => {})}>{t('tools.temporaryToolsReset')}</Button>}
+      <Button disabled={disabled || !draft} onClick={() => { if (draft) void save(draft).catch(() => {}); }}>
+        {t('tools.temporaryToolsSave')}
+      </Button>
+    </div>
+  </section>;
 }
 
 function ToolRow({ id, enabled, disabled, configuration, onToggle }: {

@@ -1,7 +1,7 @@
-import { Router } from 'express';
+import { Router, type Request, type Response } from 'express';
 import { isConnectionPresetId } from '@kuroko/contracts/connectionSettings';
 import { errorBody } from '@kuroko/contracts/errors';
-import { isToolId, isToolSelection, type ToolsResponse } from '@kuroko/contracts/tools';
+import { isAgentToolSelection, isToolId, isToolSelection, type ToolsResponse } from '@kuroko/contracts/tools';
 import { readPresetName } from '@kuroko/contracts/presets';
 import type { createConnectionStore } from '../connection/connectionStore';
 import { createPresetRouter, respondToPresetWrite } from '../http/presetRouter';
@@ -19,7 +19,7 @@ export function createToolsRouter(
   }
 
   router.get('/', (_request, response) => { response.json(read(response.locals.user.id)); });
-  router.put('/subagent', (request, response) => {
+  function selectSubagent(request: Request, response: Response) {
     const presetId: unknown = request.body?.presetId;
     if (presetId !== null && !isConnectionPresetId(presetId)) {
       response.status(400).json(errorBody('invalid_request'));
@@ -28,6 +28,21 @@ export function createToolsRouter(
     const userId: number = response.locals.user.id;
     if (store.selectSubagent(userId, presetId)) response.json(read(userId));
     else response.status(404).json(errorBody('preset_not_found'));
+  }
+  router.put('/subagent-connection', selectSubagent);
+  router.put('/temporary-agent-tools', (request, response) => {
+    const selection: unknown = request.body?.tools;
+    if (selection !== null && !isAgentToolSelection(selection)) {
+      response.status(400).json(errorBody('invalid_request'));
+      return;
+    }
+    const userId: number = response.locals.user.id;
+    store.setTemporaryAgentTools(userId, selection);
+    response.json(read(userId));
+  });
+  router.put('/subagent', (request, response, next) => {
+    if (request.body && Object.hasOwn(request.body, 'presetId')) selectSubagent(request, response);
+    else next();
   });
   router.delete('/enabled', (_request, response) => {
     const userId: number = response.locals.user.id;
@@ -60,7 +75,7 @@ export function createToolsRouter(
   });
   router.use('/presets', createPresetRouter({ ...store, read }));
   router.put('/:id', (request, response) => {
-    const { id } = request.params;
+    const id = request.params.id === 'delegate_task' ? 'subagent' : request.params.id;
     const enabled: unknown = request.body?.enabled;
     if (!isToolId(id) || typeof enabled !== 'boolean') {
       response.status(400).json(errorBody('invalid_request'));

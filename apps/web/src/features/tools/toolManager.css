@@ -76,6 +76,11 @@
 }
 
 .tool-manager-details-heading { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; }
+.temporary-agent-tools { display: grid; gap: 12px; padding-block: 16px; border-block-start: 1px solid var(--kr-border); }
+.temporary-agent-tools h2 { font-size: 1rem; font-weight: 600; }
+.temporary-agent-tools > p { color: var(--kr-muted); }
+.temporary-agent-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.temporary-agent-actions > button { max-inline-size: 100%; white-space: normal; }
 .tool-manager-details-heading h2 { font-size: .875rem; font-weight: 650; }
 .tool-manager-details-heading code { color: var(--kr-muted); font-size: .8125rem; overflow-wrap: anywhere; }
 .tool-manager-details dl { display: grid; gap: 8px; }

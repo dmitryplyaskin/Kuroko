@@ -3,7 +3,7 @@ import type { Database } from 'bun:sqlite';
 import { createHash } from 'node:crypto';
 import { realmFilterKey, realmTagKeys } from '../realms/realmFilterKeys';
 
-const latestVersion = 14;
+const latestVersion = 16;
 
 const initialSchema = `
   CREATE TABLE vault_settings (
@@ -224,6 +224,50 @@ export function migrateDatabase(db: Database, vaultKey: Buffer) {
         selected_index INTEGER NOT NULL CHECK (selected_index >= 0 AND selected_index <= json_array_length(archived_json)),
         archived_json TEXT NOT NULL CHECK (json_type(archived_json) = 'array' AND json_array_length(archived_json) > 0),
         PRIMARY KEY (chat_id, reply_id)
+      ) STRICT;
+    `);
+
+    if (version < 15) db.exec(`
+      CREATE TABLE agents (
+        id TEXT PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        name_key TEXT NOT NULL,
+        description TEXT NOT NULL,
+        instructions TEXT NOT NULL,
+        tools_json TEXT NOT NULL CHECK (json_type(tools_json) = 'array'),
+        UNIQUE (user_id, name_key)
+      ) STRICT;
+
+      UPDATE OR IGNORE enabled_tools SET tool_id = 'subagent' WHERE tool_id = 'delegate_task';
+      DELETE FROM enabled_tools WHERE tool_id = 'delegate_task';
+      UPDATE tool_presets SET tools_json = (
+        SELECT json_group_array(tool) FROM (
+          SELECT DISTINCT CASE value WHEN 'delegate_task' THEN 'subagent' ELSE value END AS tool
+          FROM json_each(tool_presets.tools_json)
+        )
+      ) WHERE EXISTS (SELECT 1 FROM json_each(tools_json) WHERE value = 'delegate_task');
+    `);
+
+    if (version < 16) db.exec(`
+      CREATE TABLE agents_v16 (
+        id TEXT PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        name_key TEXT NOT NULL,
+        description TEXT NOT NULL,
+        instructions TEXT NOT NULL,
+        tools_json TEXT NOT NULL CHECK (json_type(tools_json) = 'array')
+      ) STRICT;
+      INSERT INTO agents_v16 (id, user_id, name, name_key, description, instructions, tools_json)
+        SELECT id, user_id, name, name_key, description, instructions, tools_json FROM agents;
+      DROP TABLE agents;
+      ALTER TABLE agents_v16 RENAME TO agents;
+      CREATE INDEX agents_owner_name ON agents (user_id, name_key, id);
+
+      CREATE TABLE temporary_agent_tools (
+        user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+        tools_json TEXT NOT NULL CHECK (json_type(tools_json) = 'array')
       ) STRICT;
     `);
 

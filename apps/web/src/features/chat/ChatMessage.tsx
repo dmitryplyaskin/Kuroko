@@ -1,6 +1,6 @@
 import { useI18n } from '../../shared/i18n/i18n';
 import type { ChatReplyVariants, ChatReplyVariantSelection, ChatToolCall } from '@kuroko/contracts/chat';
-import { readSubagentName } from '@kuroko/contracts/tools';
+import { isSubagentTool, readSubagentName, readSubagentResultName } from '@kuroko/contracts/tools';
 import { Button, Menu } from '@mantine/core';
 import { Bot, ChevronLeft, ChevronRight, Copy, Ellipsis, LoaderCircle, Pencil, RotateCw, Trash2 } from 'lucide-react';
 import { memo, useCallback, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
@@ -60,7 +60,7 @@ function ToolCalls({ calls }: { calls: ChatToolCall[] }) {
   return (
     <ul className="chat-tool-calls" aria-label={t('chat.toolCalls')}>
       {calls.map((call) => {
-        const name = call.name === 'delegate_task' ? readSubagentName(call.arguments.name) : undefined;
+        const name = isSubagentTool(call.name) ? readSubagentResultName(call.result) ?? readSubagentName(call.arguments.name) : undefined;
         return <li key={call.id}>
           <details className="chat-tool-call">
             <summary>

@@ -2,11 +2,11 @@ import type { SavedChat } from '@kuroko/contracts/chat';
 import { CodedError } from '@kuroko/contracts/errors';
 import type { JsonObject, LlmMessage, LlmTool } from '@kuroko/contracts/llm';
 import type { ToolId } from '@kuroko/contracts/tools';
-import { createSubagentBatch, recentSubagentNames, runToolCall, toolDeclarations } from '@kuroko/tool-runtime';
+import { createSubagentBatch, recentNamedSubagents, runToolCall, toolDeclarations } from '@kuroko/tool-runtime';
 import { toLlmMessages } from '@kuroko/tool-runtime/chatHistory';
 import { randomUUID } from 'node:crypto';
 import type { createLlmService } from '../llm/llmService';
-import type { createDelegateTask } from '../tools/delegateTask';
+import type { createDelegateTask, createSubagentToolDescriptions } from '../tools/delegateTask';
 import type { createChatStore, PrivateTurn } from './chatStore';
 
 const instructions = [
@@ -41,18 +41,19 @@ export function createGmReply(
   llm: Pick<ReturnType<typeof createLlmService>, 'generate'>,
   enabledTools: (userId: number) => readonly ToolId[],
   delegateTask: ReturnType<typeof createDelegateTask>,
+  describeTools: ReturnType<typeof createSubagentToolDescriptions>,
 ) {
   return async (userId: number, chat: SavedChat, signal: AbortSignal, replaceId?: number) => {
     const enabled = enabledTools(userId);
-    const tools = [...toolDeclarations(enabled), publishScene];
+    const tools = describeTools(userId, [...toolDeclarations(enabled), publishScene]);
     const history = replaceId === undefined ? chat.messages : chat.messages.slice(0, -1);
     const privateTurns = store.privateTurns(userId, chat.id).filter(({ replyId }) => replyId !== replaceId);
     const notesByReply = new Map(privateTurns.flatMap(({ replyId, turn }) =>
       turn.notes ? [[replyId, `Private GM notes (do not quote to player):\n${turn.notes}`] as const] : []));
     const privateCalls = privateTurns.flatMap(({ turn }) => turn.rounds.flatMap(({ calls }) => calls));
-    const names = enabled.includes('delegate_task') ? recentSubagentNames(privateCalls) : [];
-    const context = names.length
-      ? `${instructions}\nUse these private subagent names as identifiers for follow-up tasks: ${JSON.stringify(names)}.`
+    const instances = enabled.includes('subagent') ? recentNamedSubagents(privateCalls) : [];
+    const context = instances.length
+      ? `${instructions}\nUse the same name and agentId, if present, for follow-up tasks to these private subagents: ${JSON.stringify(instances)}.`
       : instructions;
     const messages: LlmMessage[] = [{ role: 'system', content: context }, ...toLlmMessages(history, notesByReply)];
     const callHistory = [...privateCalls, ...history.flatMap(({ toolCalls }) => toolCalls ?? [])];

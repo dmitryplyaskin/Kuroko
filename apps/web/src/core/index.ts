@@ -1,3 +1,4 @@
+import { agentsModule } from '../features/agents/module';
 import { chatModule } from '../features/chat/module';
 import { connectionModule } from '../features/connection/module';
 import { copyMessageTextModule } from '../features/copyMessageText/module';
@@ -10,7 +11,7 @@ import type { ModuleBundle } from '../modules/contracts';
 
 export const corePlugin = {
   id: 'kuroko.core',
-  modules: [scenesModule, realmsModule, chatModule, toolsModule, copyMessageTextModule, settingsModule, appearanceModule, connectionModule],
+  modules: [scenesModule, realmsModule, chatModule, toolsModule, agentsModule, copyMessageTextModule, settingsModule, appearanceModule, connectionModule],
   defaultScreen: 'kuroko.scenes.index',
   defaultSettingsTab: 'appearance',
   routeAliases: [
