@@ -20,7 +20,9 @@ test('OpenRouter keeps tool calls at the position of their first delta', async (
       { index: 1, id: 'call_2', function: { name: 'weather', arguments: '{}' } }] }, 'tool_calls');
     yield { data: '[DONE]' };
   }
-  expect(await Array.fromAsync(providerAdapters.openrouter.read(stream(), output, true))).toEqual(['Before.', 'Between.']);
+  expect(await Array.fromAsync(providerAdapters.openrouter.read(stream(), output, true))).toEqual([
+    { type: 'text_delta', text: 'Before.' }, { type: 'text_delta', text: 'Between.' },
+  ]);
   expect(output.parts).toMatchObject([
     { type: 'text', text: 'Before.' }, { type: 'toolCall', id: 'call_1' },
     { type: 'text', text: 'Between.' }, { type: 'toolCall', id: 'call_2' },
@@ -44,21 +46,32 @@ test('Anthropic accepts native settings and streams mixed text, tools and cumula
     { type: 'message_start', message: { usage: { input_tokens: 5, cache_read_input_tokens: 12, output_tokens: 1 } } },
     { type: 'content_block_start', index: 0, content_block: { type: 'text', text: 'First.' } },
     { type: 'content_block_stop', index: 0 },
-    { type: 'content_block_start', index: 1, content_block: { type: 'tool_use', id: 'toolu_1', name: 'weather', input: {} } },
-    { type: 'content_block_delta', index: 1, delta: { type: 'input_json_delta', partial_json: '{"city":' } },
-    { type: 'content_block_delta', index: 1, delta: { type: 'input_json_delta', partial_json: '"Oslo"}' } },
+    { type: 'content_block_start', index: 1, content_block: { type: 'thinking', thinking: '' } },
+    { type: 'content_block_delta', index: 1, delta: { type: 'thinking_delta', thinking: 'Checking the city.' } },
+    { type: 'content_block_delta', index: 1, delta: { type: 'signature_delta', signature: 'signed' } },
     { type: 'content_block_stop', index: 1 },
-    { type: 'content_block_start', index: 2, content_block: { type: 'text', text: '' } },
-    { type: 'content_block_delta', index: 2, delta: { type: 'text_delta', text: 'Last.' } },
+    { type: 'content_block_start', index: 2, content_block: { type: 'redacted_thinking', data: 'opaque' } },
     { type: 'content_block_stop', index: 2 },
+    { type: 'content_block_start', index: 3, content_block: { type: 'tool_use', id: 'toolu_1', name: 'weather', input: {} } },
+    { type: 'content_block_delta', index: 3, delta: { type: 'input_json_delta', partial_json: '{"city":' } },
+    { type: 'content_block_delta', index: 3, delta: { type: 'input_json_delta', partial_json: '"Oslo"}' } },
+    { type: 'content_block_stop', index: 3 },
+    { type: 'content_block_start', index: 4, content_block: { type: 'text', text: '' } },
+    { type: 'content_block_delta', index: 4, delta: { type: 'text_delta', text: 'Last.' } },
+    { type: 'content_block_stop', index: 4 },
     { type: 'message_delta', delta: { stop_reason: 'tool_use' }, usage: { input_tokens: 5, output_tokens: 11 } },
     { type: 'message_stop' },
   ];
-  expect(await Array.fromAsync(adapter.read(frames(events), output, true))).toEqual(['First.', 'Last.']);
+  expect(await Array.fromAsync(adapter.read(frames(events), output, true))).toEqual([
+    { type: 'text_delta', text: 'First.' }, { type: 'reasoning_delta', text: 'Checking the city.' }, { type: 'text_delta', text: 'Last.' },
+  ]);
+  expect(output.reasoningText).toBe('Checking the city.');
   expect(output.finish).toEqual({ reason: 'tool_calls', raw: 'tool_use' });
   expect(output.usage).toEqual({ inputTokens: 17, outputTokens: 11 });
   expect(output.parts).toEqual([
     { type: 'text', text: 'First.', geminiSignature: undefined },
+    { type: 'anthropicThinking', block: { type: 'thinking', thinking: 'Checking the city.', signature: 'signed' } },
+    { type: 'anthropicThinking', block: { type: 'redacted_thinking', data: 'opaque' } },
     { type: 'toolCall', id: 'toolu_1', name: 'weather', arguments: { city: 'Oslo' } },
     { type: 'text', text: 'Last.', geminiSignature: undefined },
   ]);
@@ -74,7 +87,8 @@ test('Anthropic accepts native settings and streams mixed text, tools and cumula
     messages: [
       { role: 'user', content: [{ type: 'text', text: 'What is the forecast?' }] },
       { role: 'assistant', content: [
-        { type: 'text', text: 'First.' }, { type: 'tool_use', id: 'toolu_1', name: 'weather', input: { city: 'Oslo' } },
+        { type: 'text', text: 'First.' }, { type: 'thinking', thinking: 'Checking the city.', signature: 'signed' },
+        { type: 'redacted_thinking', data: 'opaque' }, { type: 'tool_use', id: 'toolu_1', name: 'weather', input: { city: 'Oslo' } },
         { type: 'text', text: 'Last.' },
       ] },
       { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: 'Unavailable', is_error: true }] },
@@ -86,28 +100,36 @@ test('Anthropic accepts native settings and streams mixed text, tools and cumula
     content: [{ type: 'tool_use', id: 'toolu_1', name: 'weather', input: { city: 'Oslo' } }], stop_reason: 'tool_use',
   }]), json, false));
   expect(json.parts).toHaveLength(1);
-  expect(json.parts[0]).toEqual(output.parts[1]);
+  expect(json.parts[0]).toEqual(output.parts[3]);
+  expect(adapter.request({
+    ...input, includeReasoning: true, toolChoice: 'auto', settings: { ...defaultConnectionSettings, model: 'claude-sonnet-4-6' },
+  })).toMatchObject({ thinking: { type: 'adaptive', display: 'summarized' } });
 });
 
 test('Gemini replays parallel results in call order and keeps signatures attached to their parts', async () => {
   const adapter = providerAdapters.gemini;
   const output = new ProviderOutput();
   const parts = [
+    { text: 'Second thought.', thought: true, thoughtSignature: 'signed-thought' },
     { text: 'Checking.' },
     { functionCall: { id: 'native-1', name: 'weather', args: { city: 'Oslo' } }, thoughtSignature: 'signed-call' },
     { functionCall: { name: 'weather', args: { city: 'Riga' } } },
     { text: '', thoughtSignature: 'signed-text' },
   ];
   const response = [{
-    candidates: [{ content: { parts }, finishReason: 'STOP' }],
+    candidates: [{ content: { parts: [{ text: 'First thought. ', thought: true }, ...parts] }, finishReason: 'STOP' }],
     usageMetadata: { promptTokenCount: 5, candidatesTokenCount: 10, thoughtsTokenCount: 2, totalTokenCount: 17 },
   }];
-  expect(await Array.fromAsync(adapter.read(frames(response), output))).toEqual(['Checking.']);
+  expect(await Array.fromAsync(adapter.read(frames(response), output))).toEqual([
+    { type: 'reasoning_delta', text: 'First thought. ' },
+    { type: 'reasoning_delta', text: 'Second thought.' }, { type: 'text_delta', text: 'Checking.' },
+  ]);
   expect(output.usage).toEqual({ inputTokens: 5, outputTokens: 12, totalTokens: 17 });
   const calls = output.parts.filter((part) => part.type === 'toolCall');
   expect(calls[1]?.id).toStartWith('call_');
   const followUp = adapter.request({
-    ...input, toolChoice: { name: 'weather' }, messages: [
+    ...input, includeReasoning: true, settings: { ...input.settings, model: 'gemini-2.5-pro' },
+    toolChoice: { name: 'weather' }, messages: [
       ...messages, { role: 'assistant', parts: output.parts },
       { role: 'tool', callId: calls[1]!.id, content: 21 },
       { role: 'tool', callId: 'native-1', content: { temperature: 18 } },
@@ -115,7 +137,7 @@ test('Gemini replays parallel results in call order and keeps signatures attache
   });
   expect(JSON.parse(JSON.stringify(followUp))).toEqual({
     systemInstruction: { parts: [{ text: 'Use Celsius.' }] },
-    generationConfig: { maxOutputTokens: 60, temperature: 0, topK: 8 },
+    generationConfig: { maxOutputTokens: 60, temperature: 0, topK: 8, thinkingConfig: { includeThoughts: true } },
     toolConfig: { functionCallingConfig: { mode: 'ANY', allowedFunctionNames: ['weather'] } },
     tools: [{ functionDeclarations: [{ name: 'weather', parametersJsonSchema: { type: 'object' } }] }],
     contents: [
@@ -127,6 +149,15 @@ test('Gemini replays parallel results in call order and keeps signatures attache
       ] },
     ],
   });
+});
+
+test('reads public reasoning from a compatible JSON response', async () => {
+  const output = new ProviderOutput();
+  const response = { choices: [{ message: { reasoning_content: 'Compare the dates.', content: 'The second date is earlier.' }, finish_reason: 'stop' }] };
+  expect(await Array.fromAsync(providerAdapters.custom.read(frames([response]), output, false))).toEqual([
+    { type: 'reasoning_delta', text: 'Compare the dates.' }, { type: 'text_delta', text: 'The second date is earlier.' },
+  ]);
+  expect(output.parts).toMatchObject([{ type: 'text', text: 'The second date is earlier.' }]);
 });
 
 test('generation URLs use the configured server base and the provider protocol', () => {

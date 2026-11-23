@@ -90,7 +90,8 @@ export default function Chat() {
 
   const openDelete = useCallback((message: Message) => setDialog({ kind: 'delete', message }), []);
   const openPreview = useCallback((image: ChatImage) => setDialog({ kind: 'preview', image }), []);
-  const setReasoningOpen = useCallback((id: number, open: boolean) => toggleReasoning({ id, open }), [toggleReasoning]);
+  const setReasoningOpen = useCallback((id: number, afterToolCallId: string | undefined, open: boolean) =>
+    toggleReasoning({ id, afterToolCallId, open }), [toggleReasoning]);
   const updateMessageDraft = useCallback((id: number, index: number, text: string) => changeDraft({ id, index, text }), [changeDraft]);
   const regenerate = useCallback((id: number) => {
     history.current?.focus();
@@ -100,7 +101,7 @@ export default function Chat() {
     <ChatMessage message={message} username={username} phase={message.id === replyId && replyPhase ? replyPhase : undefined} locked={locked}
       activeSubagents={message.id === replyId ? activeSubagents : undefined}
       editor={editor?.id === message.id ? editor : undefined}
-      reasoningOpen={expandedReasoning.has(message.id)} onToggleReasoning={setReasoningOpen}
+      expandedReasoning={expandedReasoning.get(message.id)} onToggleReasoning={setReasoningOpen}
       onEdit={openEditor} onDraftChange={updateMessageDraft} onCancelEdit={closeEditor} onSaveEdit={saveEdit}
       onRegenerate={message.id === regenerateId ? regenerate : undefined} variants={variants[message.id]} onSelectVariant={selectVariant}
       onDelete={openDelete} onPreview={openPreview} />

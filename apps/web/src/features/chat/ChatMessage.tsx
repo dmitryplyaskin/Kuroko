@@ -7,7 +7,7 @@ import { memo, useCallback, useId, useLayoutEffect, useRef, useState, type React
 import { useModuleExtensions } from '../../modules/ModuleExtensions';
 import { notify } from '../../shared/notifications/notifications';
 import { ChatText } from './ChatText';
-import { messageBlocks, type ActiveSubagent, type ChatImage, type Message, type ReplyPhase } from './message';
+import { displayMessageBlocks, type ActiveSubagent, type ChatImage, type Message, type ReplyPhase } from './message';
 import type { MessageAction, MessageActionContext } from './messageActions';
 
 export function ChatMessageFrame({ role, author, time, edited, image, actions, heading: Heading = 'h2', children }: {
@@ -114,8 +114,8 @@ type Props = {
   activeSubagents?: readonly ActiveSubagent[];
   locked?: boolean;
   editor?: { texts: readonly string[]; canSave: boolean };
-  reasoningOpen: boolean;
-  onToggleReasoning: (id: number, open: boolean) => void;
+  expandedReasoning?: ReadonlySet<string | undefined>;
+  onToggleReasoning: (id: number, afterToolCallId: string | undefined, open: boolean) => void;
   onEdit: (id: number) => void;
   onDraftChange: (id: number, index: number, value: string) => void;
   onCancelEdit: () => void;
@@ -128,11 +128,11 @@ type Props = {
 };
 
 export const ChatMessage = memo(function ChatMessage({
-  message, username, phase, activeSubagents, locked, editor, reasoningOpen, onToggleReasoning,
+  message, username, phase, activeSubagents, locked, editor, expandedReasoning, onToggleReasoning,
   onEdit, onDraftChange, onSaveEdit, onCancelEdit, onRegenerate, variants, onSelectVariant, onDelete, onPreview,
 }: Props) {
   const { t, number } = useI18n();
-  const { id, text, time, image, edited, reasoning } = message;
+  const { id, text, time, image, edited } = message;
   const assistant = message.role === 'assistant';
   const author = assistant ? t('common.model') : username;
   const editing = editor !== undefined;
@@ -145,6 +145,7 @@ export const ChatMessage = memo(function ChatMessage({
   const editButton = useRef<HTMLButtonElement>(null);
   const editInput = useRef<HTMLTextAreaElement>(null);
   const editFormId = useId();
+  const reasoningId = useId();
   const moveFocus = useRef(false);
 
   useLayoutEffect(() => {
@@ -173,9 +174,9 @@ export const ChatMessage = memo(function ChatMessage({
     }
   }
 
-  function toggleReasoning(button: HTMLButtonElement) {
-    onToggleReasoning(id, !reasoningOpen);
-    if (reasoningOpen) return;
+  function toggleReasoning(button: HTMLButtonElement, afterToolCallId: string | undefined, open: boolean) {
+    onToggleReasoning(id, afterToolCallId, !open);
+    if (open) return;
     requestAnimationFrame(() => {
       // Let the virtualizer apply the expanded row height before revealing its toggle.
       requestAnimationFrame(() => {
@@ -186,11 +187,29 @@ export const ChatMessage = memo(function ChatMessage({
     });
   }
 
-  const blocks = messageBlocks(message);
+  const blocks = displayMessageBlocks(message);
   if (editing && !blocks.some((block) => block.kind === 'text')) blocks.push({ kind: 'text', text: '' });
   const content: ReactNode[] = [];
   let textIndex = 0;
   for (const block of blocks) {
+    if (block.kind === 'reasoning') {
+      const { afterToolCallId } = block;
+      const open = expandedReasoning?.has(afterToolCallId) ?? false;
+      const active = phase === 'reasoning' && afterToolCallId === message.reasoningBlocks?.at(-1)?.afterToolCallId;
+      const key = afterToolCallId === undefined ? 'reasoning-first' : `reasoning-after-${afterToolCallId}`;
+      const bodyId = `${reasoningId}-${key}`;
+      content.push(
+        <div key={key} className="chat-reasoning">
+          <button type="button" className="chat-reasoning-toggle" aria-expanded={open} aria-controls={bodyId}
+            onClick={(event) => toggleReasoning(event.currentTarget, afterToolCallId, open)}>
+            <ChevronRight size={16} aria-hidden="true" />
+            {active ? t('chat.reasoningPending') : t('chat.reasoning')}
+          </button>
+          <div id={bodyId} className="chat-reasoning-body" hidden={!open}>{open && <ChatText>{block.text}</ChatText>}</div>
+        </div>,
+      );
+      continue;
+    }
     if (block.kind === 'tools') {
       content.push(<ToolCalls key={`calls-${block.calls[0]!.id}`} calls={block.calls} />);
       continue;
@@ -269,21 +288,8 @@ export const ChatMessage = memo(function ChatMessage({
             select={(index) => onSelectVariant({ replyId: id, index })} />}
         </div>
       )}>
-      {assistant && reasoning !== undefined && (
-        <div className="chat-reasoning">
-          <button type="button" className="chat-reasoning-toggle" aria-expanded={reasoningOpen}
-            aria-controls={`chat-reasoning-${id}`} onClick={(event) => toggleReasoning(event.currentTarget)}>
-            <ChevronRight size={16} aria-hidden="true" />
-            {phase === 'reasoning' ? t('chat.reasoningPending') : t('chat.reasoning')}
-          </button>
-          <div id={`chat-reasoning-${id}`} className="chat-reasoning-body" hidden={!reasoningOpen}>
-            {reasoningOpen && reasoning && <ChatText>{reasoning}</ChatText>}
-          </div>
-        </div>
-      )}
-      {blocks.length ? (
-        <div className="chat-message-blocks">{content}</div>
-      ) : phase === 'answer' && <p className="chat-typing">{t('chat.answering')}</p>}
+      {content.length > 0 && <div className="chat-message-blocks">{content}</div>}
+      {phase === 'answer' && !blocks.some((block) => block.kind !== 'reasoning') && <p className="chat-typing">{t('chat.answering')}</p>}
       {activeSubagents?.map(({ id, name }) => (
         <p key={id} className="chat-tool-call chat-subagent-progress">
           <LoaderCircle size={16} className="chat-subagent-spinner" aria-hidden="true" />

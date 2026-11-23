@@ -1,4 +1,4 @@
-import type { JsonObject, LlmAssistantPart, LlmFinishReason, LlmToolCall, LlmUsage } from '@kuroko/contracts/llm';
+import type { JsonObject, LlmAssistantPart, LlmFinishReason, LlmTextDelta, LlmToolCall, LlmUsage } from '@kuroko/contracts/llm';
 import { parseObject, record } from './json';
 import { LlmError, upstreamError } from './llmErrors';
 
@@ -90,6 +90,7 @@ export function providerObject(frame: ProviderFrame) {
 export class ProviderOutput {
   private readonly blocks: (LlmAssistantPart | null)[] = [];
   openrouterReasoning?: JsonObject[];
+  reasoningText?: string;
   usage?: LlmUsage;
   finish?: { reason: LlmFinishReason; raw: string };
 
@@ -101,12 +102,18 @@ export class ProviderOutput {
     this.blocks.push(part);
   }
 
-  text(text: unknown, geminiSignature?: string): string | undefined {
+  text(text: unknown, geminiSignature?: string): LlmTextDelta | undefined {
     if (typeof text !== 'string' || (!text && !geminiSignature)) return;
     const last = this.blocks.at(-1);
     if (last?.type === 'text' && !last.geminiSignature && !geminiSignature) last.text += text;
     else this.append({ type: 'text', text, geminiSignature });
-    return text || undefined;
+    if (text) return { type: 'text_delta', text };
+  }
+
+  reasoning(text: unknown): LlmTextDelta | undefined {
+    if (typeof text !== 'string' || !text) return;
+    this.reasoningText = (this.reasoningText ?? '') + text;
+    return { type: 'reasoning_delta', text };
   }
 
   reserveCall() {

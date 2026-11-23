@@ -1,7 +1,7 @@
 import type { MessageKey } from '../../shared/i18n/i18n';
 import { combine, createEffect, createEvent, createStore, sample, scopeBind, type StoreValue } from 'effector';
 import {
-  chatReplyPrompt, chatTitleLimit, type ChatActivityEntry, type ChatActivityTurn, type ChatReplyVariantSelection,
+  chatReplyPrompt, chatTitleLimit, type ChatActivityEntry, type ChatActivityTurn, type ChatReasoningBlock, type ChatReplyVariantSelection,
   type ChatReplyVariants, type ChatSnapshot, type ChatSummary, type ChatToolCall, type SavedChat,
 } from '@kuroko/contracts/chat';
 import type { ToolId } from '@kuroko/contracts/tools';
@@ -11,11 +11,18 @@ import { ApiError, errorCode, type ErrorCode } from '../../shared/http/api';
 import { $activeSession, protectedRequestFailed, sessionEnded, type ActiveSession } from '../../platform/session/model';
 import { inActiveSession } from '../../platform/session/request';
 import { $enabledTools, $toolSettingsBusy } from '../tools/model';
-import { chatApi, streamChatReply } from './chatApi';
+import { chatApi, streamChatReply, type ChatReplyDelta } from './chatApi';
 import { editMessageText, hasMessageContent, messageDraftTexts, type ActiveSubagent, type Message, type ReplyPhase } from './message';
 
 type Generation = { session: ActiveSession; controller: AbortController; enabledTools: readonly ToolId[] };
-type Reply = { generation: Generation; message: Message; activity: ChatActivityEntry[]; replaceId?: number; activeSubagents?: readonly ActiveSubagent[] };
+type Reply = {
+  generation: Generation;
+  message: Message;
+  activity: ChatActivityEntry[];
+  replaceId?: number;
+  activeSubagents?: readonly ActiveSubagent[];
+  reasoningActive?: boolean;
+};
 type Navigation = { session: ActiveSession; action: 'initial' | 'create' | 'open'; id?: string };
 type Save = { session: ActiveSession; id: string; revision: number } & (
   (Omit<ChatSnapshot, 'revision'> & { reply?: Reply; selection?: never }) |
@@ -42,7 +49,7 @@ export const messageEditSubmitted = createEvent<number>();
 export const messageDeleteRequested = createEvent<number>();
 export const messageRegenerateRequested = createEvent<number>();
 export const replyVariantRequested = createEvent<ChatReplyVariantSelection>();
-export const reasoningToggled = createEvent<{ id: number; open: boolean }>();
+export const reasoningToggled = createEvent<{ id: number; afterToolCallId: string | undefined; open: boolean }>();
 
 const $visible = createStore(false).on(chatShown, () => true).reset(chatHidden, sessionEnded);
 const navigateFx = createEffect(async ({ session, action, id }: Navigation) => {
@@ -274,8 +281,8 @@ const replyRegenerated = sample({
 });
 $nextId.on(replyRegenerated, (nextId, { reply }) => Math.max(nextId, reply.message.id + 1));
 
-const replyDelta = createEvent<{ generation: Generation; text: string }>();
-const replyContentReceived = createEvent<{ generation: Generation; text: string; toolCalls: ChatToolCall[] }>();
+const replyDelta = createEvent<ChatReplyDelta & { generation: Generation }>();
+const replyContentReceived = createEvent<{ generation: Generation; text: string; toolCalls: ChatToolCall[]; reasoningBlocks: ChatReasoningBlock[] }>();
 const replySubagentActivity = createEvent<{ generation: Generation; active: readonly ActiveSubagent[] }>();
 const replyActivityReceived = createEvent<{ generation: Generation; entry: ChatActivityEntry }>();
 const generateReplyFx = createEffect(async ({ reply: { generation, replaceId }, chat }: { reply: Reply; chat: SavedChat }) => {
@@ -291,7 +298,7 @@ const generateReplyFx = createEffect(async ({ reply: { generation, replaceId }, 
   try {
     const history = replaceId === undefined ? chat.messages : chat.messages.slice(0, -1);
     const text = await streamChatReply(generation.session, history, generation.enabledTools, signal,
-      (delta) => publish({ generation, text: delta }), (text, toolCalls) => report({ generation, text, toolCalls }),
+      (delta) => publish({ generation, ...delta }), (text, toolCalls, reasoningBlocks) => report({ generation, text, toolCalls, reasoningBlocks }),
       (active) => reportSubagent({ generation, active }), start, onActivity, replaceId !== undefined || chat.replyVariants !== undefined);
     reply.finish('completed', {});
     return text;
@@ -330,9 +337,14 @@ const replyContentUpdated = sample({
   clock: replyContentReceived,
   source: $reply,
   filter: (reply, { generation }) => reply?.generation === generation,
-  fn: (reply, { text, toolCalls }): Reply => ({
-    ...reply!, message: { ...reply!.message, text, toolCalls: toolCalls.length ? toolCalls : undefined },
-  }),
+  fn: (reply, { text, toolCalls, reasoningBlocks }): Reply => {
+    const message = { ...reply!.message, text };
+    if (reasoningBlocks.length) message.reasoningBlocks = reasoningBlocks;
+    else delete message.reasoningBlocks;
+    if (toolCalls.length) message.toolCalls = toolCalls;
+    else delete message.toolCalls;
+    return { ...reply!, reasoningActive: false, message };
+  },
 });
 $reply.on(replyContentUpdated, (_, reply) => reply);
 
@@ -357,7 +369,19 @@ const replyUpdated = sample({
   clock: replyDelta,
   source: $reply,
   filter: (reply, { generation, text }) => reply?.generation === generation && Boolean(text),
-  fn: (reply, { text }): Reply => ({ ...reply!, message: { ...reply!.message, text: reply!.message.text + text } }),
+  fn: (reply, delta): Reply => {
+    const message = reply!.message;
+    if (delta.type === 'text_delta') return { ...reply!, reasoningActive: false, message: { ...message, text: message.text + delta.text } };
+    const { afterToolCallId, text, textOffset } = delta;
+    const reasoningBlocks = [...(message.reasoningBlocks ?? [])];
+    const last = reasoningBlocks.at(-1);
+    if (last && last.afterToolCallId === afterToolCallId) {
+      reasoningBlocks[reasoningBlocks.length - 1] = { ...last, text: last.text + text };
+    } else {
+      reasoningBlocks.push({ text, textOffset, ...(afterToolCallId && { afterToolCallId }) });
+    }
+    return { ...reply!, reasoningActive: true, message: { ...message, reasoningBlocks } };
+  },
 });
 $reply.on(replyUpdated, (_, reply) => reply);
 
@@ -395,18 +419,29 @@ const replyStopped = sample({
 const replyPartial = sample({
   clock: [replyFailed, replyStopped],
   filter: ({ replaceId }) => replaceId === undefined,
-  fn: ({ message, activity }) => ({ message, activity, replaceId: undefined }),
+  fn: ({ message, activity }) => {
+    const partial = { ...message };
+    const reasoningBlocks = partial.reasoningBlocks?.filter(({ text }) => text.trim())
+      .map((block) => ({ ...block, text: block.text.toWellFormed() }));
+    if (reasoningBlocks?.length) partial.reasoningBlocks = reasoningBlocks;
+    else delete partial.reasoningBlocks;
+    return { message: partial, activity, replaceId: undefined };
+  },
 });
+
+function hasReplyContent(message: Message) {
+  return Boolean(message.reasoning || message.reasoningBlocks?.length) || hasMessageContent(message);
+}
 
 sample({ clock: replyStopped, fn: ({ controller }) => controller, target: abortFx });
 $reply.reset(replyCompleted, replyFailed, replyStopped);
 $messages
   .on(replyCompleted, (messages, { message, saved, replaceId }) => {
     if (saved) return saved.messages;
-    if (!hasMessageContent(message)) return messages;
+    if (!hasReplyContent(message)) return messages;
     return [...(replaceId === undefined ? messages : messages.slice(0, -1)), message];
   })
-  .on(replyPartial, (messages, { message }) => hasMessageContent(message) ? [...messages, message] : messages);
+  .on(replyPartial, (messages, { message }) => hasReplyContent(message) ? [...messages, message] : messages);
 $saved.on(replyCompleted, (chat, { saved }) => saved ?? chat);
 $chats.on(replyCompleted, (chats, { saved }) => saved ? updateChatList(chats, saved) : chats);
 function withoutActivity(turns: ChatActivityTurn[], promptId: number) {
@@ -451,7 +486,8 @@ const $editorCandidate = combine($editor, $messages, $chatLocked, (editor, messa
   const original = messages.find((message) => message.id === editor.id);
   if (locked || !original) return { ...editor, update: undefined };
   const draft = editMessageText(original, editor.texts);
-  const changed = (draft.text || original.image) && (draft.text !== original.text || draft.toolCalls !== original.toolCalls);
+  const changed = (draft.text || original.image) &&
+    (draft.text !== original.text || draft.toolCalls !== original.toolCalls || draft.reasoningBlocks !== original.reasoningBlocks);
   return { ...editor, update: changed ? draft : undefined };
 });
 export const $messageEditor = $editorCandidate.map((editor) => editor && ({
@@ -491,7 +527,7 @@ sample({
 });
 sample({
   clock: [replyCompleted.filter({ fn: ({ saved }) => !saved }), replyPartial],
-  filter: ({ message, activity }) => hasMessageContent(message) || Boolean(activity),
+  filter: ({ message, activity }) => hasReplyContent(message) || Boolean(activity),
   fn: ({ activity, replaceId }) => ({ activity, replaceId }),
   target: historyChanged,
 });
@@ -504,17 +540,20 @@ sample({
   target: saveChatFx,
 });
 
-export const $expandedReasoning = createStore<ReadonlySet<number>>(new Set())
-  .on(reasoningToggled, (expanded, { id, open }) => {
-    if (expanded.has(id) === open) return expanded;
-    const next = new Set(expanded);
-    if (open) next.add(id);
+export const $expandedReasoning = createStore<ReadonlyMap<number, ReadonlySet<string | undefined>>>(new Map())
+  .on(reasoningToggled, (expanded, { id, afterToolCallId, open }) => {
+    const blocks = new Set(expanded.get(id));
+    if (blocks.has(afterToolCallId) === open) return expanded;
+    if (open) blocks.add(afterToolCallId);
+    else blocks.delete(afterToolCallId);
+    const next = new Map(expanded);
+    if (blocks.size) next.set(id, blocks);
     else next.delete(id);
     return next;
   })
   .on(messageDeleted, (expanded, { id }) => {
     if (!expanded.has(id)) return expanded;
-    const next = new Set(expanded);
+    const next = new Map(expanded);
     next.delete(id);
     return next;
   })
@@ -536,7 +575,8 @@ export const $chatAnnouncement = createStore<MessageKey | null>(null)
 
 export const $replyPhase = $reply.map((reply): ReplyPhase | null => {
   if (!reply) return null;
-  return reply.activeSubagents?.length ? 'subagent' : 'answer';
+  if (reply.activeSubagents?.length) return 'subagent';
+  return reply.reasoningActive ? 'reasoning' : 'answer';
 });
 const noSubagents: readonly ActiveSubagent[] = [];
 export const $activeSubagents = $reply.map((reply) => reply?.activeSubagents ?? noSubagents);

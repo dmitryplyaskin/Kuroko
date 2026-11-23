@@ -309,9 +309,6 @@
 
 .chat-typing { color: var(--kr-muted); }
 
-.chat-reasoning { margin-block-end: 8px; }
-.chat-reasoning:last-child { margin-block-end: 0; }
-
 .chat-reasoning-toggle {
   display: inline-flex;
   align-items: center;

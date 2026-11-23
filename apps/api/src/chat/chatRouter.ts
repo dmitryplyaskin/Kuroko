@@ -1,6 +1,6 @@
 import {
   chatActivityKinds, chatActivityStatuses, chatReplyPrompt, chatTitleLimit,
-  type ChatActivityEntry, type ChatActivityTurn, type ChatMessage, type ChatSnapshot, type ChatToolCall,
+  type ChatActivityEntry, type ChatActivityTurn, type ChatMessage, type ChatReasoningBlock, type ChatSnapshot, type ChatToolCall,
 } from '@kuroko/contracts/chat';
 import { errorBody } from '@kuroko/contracts/errors';
 import { Router } from 'express';
@@ -111,19 +111,46 @@ function readSnapshot(value: unknown): ChatSnapshot | undefined {
   for (const value of snapshot.messages as unknown[]) {
     const message = record(value);
     if (!message) return;
-    const { id, role, text, time, edited } = message;
+    const { id, role, text, time, edited, reasoning } = message;
     if (!nonNegativeInteger(id) || id <= previousId || id >= Number.MAX_SAFE_INTEGER - 1 ||
       (role !== 'user' && role !== 'assistant') || !nonNegativeInteger(time) || time > 8.64e15 ||
       typeof text !== 'string' || !text.isWellFormed() ||
-      (edited !== undefined && typeof edited !== 'boolean')) return;
+      (edited !== undefined && typeof edited !== 'boolean') ||
+      (reasoning !== undefined && (role !== 'assistant' || typeof reasoning !== 'string' || !reasoning.isWellFormed() || !reasoning.trim()))) return;
     const toolCalls = readToolCalls(message.toolCalls, text);
-    if ((!text && !toolCalls) || (message.toolCalls !== undefined && (role !== 'assistant' || !toolCalls))) return;
-    messages.push({ id, role, text, time, edited, toolCalls });
+    if (message.toolCalls !== undefined && (role !== 'assistant' || !toolCalls)) return;
+    const reasoningBlocks = readReasoningBlocks(message.reasoningBlocks, text, toolCalls ?? []);
+    if (message.reasoningBlocks !== undefined && (role !== 'assistant' || reasoning !== undefined || !reasoningBlocks)) return;
+    if (!text && !toolCalls && !reasoning && !reasoningBlocks) return;
+    messages.push({ id, role, text, time, edited, toolCalls, reasoning, reasoningBlocks });
     previousId = id;
   }
   const activity = readActivity(snapshot.activity, messages);
   if (snapshot.activity !== undefined && !activity) return;
   return { revision: snapshot.revision, messages, gmMode: snapshot.gmMode, activity, replaceId: snapshot.replaceId };
+}
+
+function readReasoningBlocks(value: unknown, messageText: string, toolCalls: ChatToolCall[]): ChatReasoningBlock[] | undefined {
+  if (!Array.isArray(value) || !value.length) return;
+  const positions = new Map(toolCalls.map(({ id }, index) => [id, index]));
+  const blocks: ChatReasoningBlock[] = [];
+  let previous = -2;
+  for (const raw of value as unknown[]) {
+    const block = record(raw);
+    if (!block) return;
+    const { afterToolCallId, text, textOffset } = block;
+    if (typeof text !== 'string' || !text.isWellFormed() || !text.trim() ||
+        (afterToolCallId !== undefined && typeof afterToolCallId !== 'string')) return;
+    const position = afterToolCallId === undefined ? -1 : positions.get(afterToolCallId);
+    if (position === undefined || position <= previous) return;
+    const start = toolCalls[position]?.textOffset ?? 0;
+    const nextCall = toolCalls[position + 1];
+    const end = position === -1 ? 0 : nextCall ? (nextCall.textOffset ?? 0) : messageText.length;
+    if (!isTextOffset(textOffset, messageText) || textOffset < start || textOffset > end) return;
+    blocks.push({ text, textOffset, afterToolCallId });
+    previous = position;
+  }
+  return blocks;
 }
 
 function readActivity(value: unknown, messages: ChatMessage[]): ChatActivityTurn | undefined {
@@ -162,14 +189,18 @@ function readToolCalls(value: unknown, text: string): ChatToolCall[] | undefined
     if (!isToolCallId(id) || ids.has(id) || !isToolName(name) || !jsonObject(args) || !jsonValue(result) ||
       (modelResult !== undefined && !jsonValue(modelResult)) || (isError !== undefined && typeof isError !== 'boolean')) return;
     const offset = textOffset === undefined ? 0 : textOffset;
-    if (!nonNegativeInteger(offset) || offset < previousOffset || offset > text.length) return;
-    const code = text.charCodeAt(offset);
-    if (code >= 0xdc00 && code <= 0xdfff) return;
+    if (!isTextOffset(offset, text) || offset < previousOffset) return;
     previousOffset = offset;
     calls.push({ id, name, arguments: args, result, modelResult, isError, textOffset: textOffset === undefined ? undefined : offset });
     ids.add(id);
   }
   return calls;
+}
+
+function isTextOffset(value: unknown, text: string): value is number {
+  if (!nonNegativeInteger(value) || value > text.length) return false;
+  const code = text.charCodeAt(value);
+  return !(code >= 0xdc00 && code <= 0xdfff);
 }
 
 function nonNegativeInteger(value: unknown): value is number {

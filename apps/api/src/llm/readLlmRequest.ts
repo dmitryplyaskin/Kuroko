@@ -1,6 +1,6 @@
 import { connectionParameterRanges, isConnectionPresetId, isOptionalConnectionNumber, providers, type Provider } from '@kuroko/contracts/connectionSettings';
 import type {
-  LlmAssistantPart, LlmMessage, LlmParameters, LlmRequest, LlmTool, LlmToolChoice,
+  AnthropicThinkingBlock, LlmAssistantPart, LlmMessage, LlmParameters, LlmRequest, LlmTool, LlmToolChoice,
 } from '@kuroko/contracts/llm';
 import { jsonObject, jsonValue, record } from './json';
 import { LlmError } from './llmErrors';
@@ -23,6 +23,16 @@ export function isToolName(value: unknown): value is string {
   return typeof value === 'string' && /^[a-z_][\w-]{0,63}$/i.test(value);
 }
 
+export function readAnthropicThinking(value: unknown): AnthropicThinkingBlock | undefined {
+  const block = record(value);
+  if (block?.type === 'thinking' && isText(block.thinking) && isText(block.signature) && block.signature) {
+    return { type: block.type, thinking: block.thinking, signature: block.signature };
+  }
+  if (block?.type === 'redacted_thinking' && isText(block.data) && block.data) {
+    return { type: block.type, data: block.data };
+  }
+}
+
 function readAssistantPart(value: unknown): LlmAssistantPart {
   const part = record(value);
   if (!part) invalid();
@@ -30,6 +40,10 @@ function readAssistantPart(value: unknown): LlmAssistantPart {
   if (geminiSignature !== undefined && !isText(geminiSignature)) invalid();
   if (type === 'text' && isText(text)) return { type, text, geminiSignature };
   if (type === 'geminiThought' && isText(text) && geminiSignature) return { type, text, geminiSignature };
+  if (type === 'anthropicThinking') {
+    const block = readAnthropicThinking(part.block);
+    if (block) return { type, block };
+  }
   if (type === 'toolCall' && isToolCallId(id) && isToolName(name) && jsonObject(args) &&
     (geminiId === undefined || isToolCallId(geminiId))) {
     return { type, id, name, arguments: args, geminiId, geminiSignature };
@@ -117,13 +131,14 @@ function readParameters(value: unknown): LlmParameters | undefined {
 export function readLlmRequest(value: unknown): LlmRequest {
   const input = record(value);
   if (!input) invalid();
-  if (Object.keys(input).some((key) => !['presetId', 'messages', 'parameters', 'tools', 'toolChoice', 'stream'].includes(key))) invalid();
-  const { presetId, messages, parameters, tools, toolChoice, stream } = input;
+  if (Object.keys(input).some((key) => !['presetId', 'messages', 'parameters', 'tools', 'toolChoice', 'stream', 'includeReasoning'].includes(key))) invalid();
+  const { presetId, messages, parameters, tools, toolChoice, stream, includeReasoning } = input;
   if ((presetId !== undefined && !isConnectionPresetId(presetId)) ||
-    (stream !== undefined && typeof stream !== 'boolean')) invalid();
+    (stream !== undefined && typeof stream !== 'boolean') ||
+    (includeReasoning !== undefined && typeof includeReasoning !== 'boolean')) invalid();
   const declarations = readTools(tools);
   return {
-    presetId, stream, messages: readMessages(messages), parameters: readParameters(parameters),
+    presetId, stream, includeReasoning, messages: readMessages(messages), parameters: readParameters(parameters),
     tools: declarations, toolChoice: readToolChoice(toolChoice, declarations),
   };
 }

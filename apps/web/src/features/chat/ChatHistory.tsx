@@ -43,7 +43,8 @@ export const ChatHistory = memo(function ChatHistory({ messages, renderMessage, 
     getItemKey,
     estimateSize: (index) => {
       const message = messages[index]!;
-      return 85 + 24 * Math.floor(message.text.length / 90) + (message.image ? 255 : 0) + (message.reasoning !== undefined ? 44 : 0);
+      const reasoningCount = message.reasoningBlocks?.length ?? (message.reasoning ? 1 : 0);
+      return 85 + 24 * Math.floor(message.text.length / 90) + (message.image ? 255 : 0) + 44 * reasoningCount;
     },
     anchorTo: 'end',
     followOnAppend: true,

@@ -15,9 +15,13 @@ export type LlmToolCall = {
   geminiId?: string;
   geminiSignature?: string;
 };
+export type AnthropicThinkingBlock =
+  | { type: 'thinking'; thinking: string; signature: string }
+  | { type: 'redacted_thinking'; data: string };
 export type LlmAssistantPart =
   | { type: 'text'; text: string; geminiSignature?: string }
   | { type: 'geminiThought'; text: string; geminiSignature: string }
+  | { type: 'anthropicThinking'; block: AnthropicThinkingBlock }
   | LlmToolCall;
 export type LlmAssistantMessage = {
   role: 'assistant';
@@ -38,6 +42,7 @@ export type LlmRequest = {
   tools?: LlmTool[];
   toolChoice?: LlmToolChoice;
   stream?: boolean;
+  includeReasoning?: boolean;
 };
 
 export type LlmUsage = { inputTokens?: number; outputTokens?: number; totalTokens?: number };
@@ -47,6 +52,7 @@ export type LlmCompletion = {
   provider: Provider;
   model: string;
   message: LlmAssistantMessage;
+  reasoning?: string;
   finishReason: LlmFinishReason;
   providerFinishReason: string;
   usage?: LlmUsage;
@@ -55,8 +61,11 @@ export type LlmCompletion = {
 };
 
 export type LlmErrorBody = { code: LlmErrorCode };
-export type LlmEvent =
+export type LlmTextDelta =
   | { type: 'text_delta'; text: string }
+  | { type: 'reasoning_delta'; text: string };
+export type LlmEvent =
+  | LlmTextDelta
   | { type: 'tool_call'; call: LlmToolCall }
   | { type: 'done'; completion: LlmCompletion }
   | ({ type: 'error' } & LlmErrorBody);

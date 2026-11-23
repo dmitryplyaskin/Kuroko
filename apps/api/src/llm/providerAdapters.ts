@@ -1,9 +1,9 @@
 import type { ConnectionSettings } from '@kuroko/contracts/connectionSettings';
-import type { JsonObject, JsonValue, LlmFinishReason, LlmMessage, LlmTool, LlmToolCall, LlmToolChoice } from '@kuroko/contracts/llm';
+import type { JsonObject, JsonValue, LlmFinishReason, LlmMessage, LlmTextDelta, LlmTool, LlmToolCall, LlmToolChoice } from '@kuroko/contracts/llm';
 import { jsonObject, list, parseObject, record } from './json';
 import { LlmError, upstreamError } from './llmErrors';
 import { providerObject, tokenCount, type ProviderFrame, type ProviderOutput } from './providerResponse';
-import { isToolCallId, isToolName } from './readLlmRequest';
+import { isToolCallId, isToolName, readAnthropicThinking } from './readLlmRequest';
 
 export type GenerationInput = {
   settings: ConnectionSettings;
@@ -11,11 +11,12 @@ export type GenerationInput = {
   tools: LlmTool[];
   toolChoice?: LlmToolChoice;
   stream: boolean;
+  includeReasoning?: boolean;
 };
 
 type Adapter = {
   request: (input: GenerationInput) => object;
-  read: (frames: AsyncIterable<ProviderFrame>, output: ProviderOutput, stream: boolean) => AsyncIterable<string>;
+  read: (frames: AsyncIterable<ProviderFrame>, output: ProviderOutput, stream: boolean) => AsyncIterable<LlmTextDelta>;
 };
 
 function invalidResponse(): never {
@@ -98,9 +99,12 @@ async function* readChat(frames: AsyncIterable<ProviderFrame>, output: ProviderO
     if (!choice) continue;
     if (choice.finish_reason === 'error') throw upstreamError(record(choice.error)?.code);
     const message = record(stream ? choice.delta : choice.message);
+    let detailText = '';
     if (openrouter) {
       for (const detail of list(message?.reasoning_details)) {
         if (!jsonObject(detail)) continue;
+        const visible = detail.type === 'reasoning.text' ? detail.text : detail.type === 'reasoning.summary' ? detail.summary : undefined;
+        if (typeof visible === 'string') detailText += visible;
         const index = tokenCount(detail.index);
         const previous = stream && index !== undefined ? reasoningByIndex.get(index) : undefined;
         if (previous && previous.type === detail.type && (previous.id == null || detail.id == null || previous.id === detail.id)) {
@@ -116,6 +120,9 @@ async function* readChat(frames: AsyncIterable<ProviderFrame>, output: ProviderO
         }
       }
     }
+    const reasoningText = typeof message?.reasoning === 'string' ? message.reasoning : '';
+    const reasoningDelta = output.reasoning(detailText || reasoningText || message?.reasoning_content);
+    if (reasoningDelta) yield reasoningDelta;
     const text = output.text(message?.content ?? message?.refusal);
     if (text) yield text;
     for (const [position, raw] of list(message?.tool_calls).entries()) {
@@ -143,7 +150,7 @@ async function* readChat(frames: AsyncIterable<ProviderFrame>, output: ProviderO
 
 type AnthropicTurn = { role: 'user' | 'assistant'; content: object[] };
 
-function anthropicRequest({ settings, messages, tools, toolChoice, stream }: GenerationInput) {
+function anthropicRequest({ settings, messages, tools, toolChoice, stream, includeReasoning }: GenerationInput) {
   const system: string[] = [];
   const turns: AnthropicTurn[] = [];
   function append(role: AnthropicTurn['role'], blocks: object[]) {
@@ -158,6 +165,7 @@ function anthropicRequest({ settings, messages, tools, toolChoice, stream }: Gen
       case 'assistant':
         append('assistant', message.parts.flatMap<object>((part) => {
           if (part.type === 'text') return part.text ? [{ type: 'text', text: part.text }] : [];
+          if (part.type === 'anthropicThinking') return [part.block];
           if (part.type === 'toolCall') return [{ type: 'tool_use', id: part.id, name: part.name, input: part.arguments }];
           return [];
         }));
@@ -171,6 +179,10 @@ function anthropicRequest({ settings, messages, tools, toolChoice, stream }: Gen
   }
   const choice = typeof toolChoice === 'object' ? { type: 'tool', name: toolChoice.name }
     : toolChoice ? { type: toolChoice === 'required' ? 'any' : toolChoice } : undefined;
+  const forcesTool = choice?.type === 'any' || choice?.type === 'tool';
+  const adaptive = /^claude-(?:(?:opus|sonnet|haiku|fable|mythos)-5(?:-|$)|mythos-preview(?:-|$))/i.test(settings.model);
+  const adaptive4 = /^claude-(?:opus-4-[678]|sonnet-4-6)(?:-|$)/i.test(settings.model) &&
+    settings.temperature == null && settings.topK == null && (settings.topP == null || settings.topP >= 0.95);
   return {
     model: settings.model, stream, messages: turns,
     system: system.length ? system.join('\n\n') : undefined,
@@ -178,6 +190,8 @@ function anthropicRequest({ settings, messages, tools, toolChoice, stream }: Gen
     temperature: settings.temperature ?? undefined,
     top_p: settings.topP ?? undefined,
     top_k: settings.topK ?? undefined,
+    thinking: includeReasoning && (adaptive || adaptive4) && !forcesTool
+      ? { type: 'adaptive', display: 'summarized' } : undefined,
     tools: tools.length ? tools.map(({ name, description, parameters }) => ({ name, description, input_schema: parameters })) : undefined,
     tool_choice: tools.length ? choice : undefined,
   };
@@ -196,6 +210,7 @@ async function* readAnthropic(frames: AsyncIterable<ProviderFrame>, output: Prov
   const calls = new Map<number, {
     id: unknown; name: unknown; input: unknown; fragments: string; closed: boolean; position: number;
   }>();
+  let thinking: { index: number; text: string; signature: string } | undefined;
   let usage: Record<string, unknown> = {};
   function updateUsage(value: unknown) {
     const counts = { ...usage, ...record(value) };
@@ -217,6 +232,13 @@ async function* readAnthropic(frames: AsyncIterable<ProviderFrame>, output: Prov
           calls.set(index, {
             id: block.id, name: block.name, input: block.input, fragments: '', closed: true, position: output.reserveCall(),
           });
+        } else {
+          const native = readAnthropicThinking(block);
+          if (native) output.append({ type: 'anthropicThinking', block: native });
+          if (block?.type === 'thinking') {
+            const delta = output.reasoning(block.thinking);
+            if (delta) yield delta;
+          }
         }
       }
       updateUsage(value.usage);
@@ -237,6 +259,13 @@ async function* readAnthropic(frames: AsyncIterable<ProviderFrame>, output: Prov
           calls.set(index, {
             id: block.id, name: block.name, input: block.input, fragments: '', closed: false, position: output.reserveCall(),
           });
+        } else if (block?.type === 'thinking' && index !== undefined) {
+          thinking = { index, text: typeof block.thinking === 'string' ? block.thinking : '', signature: '' };
+          const delta = output.reasoning(thinking.text);
+          if (delta) yield delta;
+        } else if (block?.type === 'redacted_thinking') {
+          const native = readAnthropicThinking(block);
+          if (native) output.append({ type: 'anthropicThinking', block: native });
         }
         break;
       }
@@ -249,12 +278,25 @@ async function* readAnthropic(frames: AsyncIterable<ProviderFrame>, output: Prov
           const call = index === undefined ? undefined : calls.get(index);
           if (!call || call.closed || typeof delta.partial_json !== 'string') invalidResponse();
           call.fragments += delta.partial_json;
+        } else if (thinking && index === thinking.index) {
+          if (delta?.type === 'thinking_delta' && typeof delta.thinking === 'string') {
+            thinking.text += delta.thinking;
+            const fragment = output.reasoning(delta.thinking);
+            if (fragment) yield fragment;
+          } else if (delta?.type === 'signature_delta' && typeof delta.signature === 'string') {
+            thinking.signature += delta.signature;
+          }
         }
         break;
       }
       case 'content_block_stop': {
         const call = index === undefined ? undefined : calls.get(index);
         if (call) call.closed = true;
+        if (thinking && index === thinking.index) {
+          const block = readAnthropicThinking({ type: 'thinking', thinking: thinking.text, signature: thinking.signature });
+          if (block) output.append({ type: 'anthropicThinking', block });
+          thinking = undefined;
+        }
         break;
       }
       case 'message_delta':
@@ -275,7 +317,7 @@ async function* readAnthropic(frames: AsyncIterable<ProviderFrame>, output: Prov
 
 type GeminiTurn = { role: 'user' | 'model'; parts: object[] };
 
-function geminiRequest({ settings, messages, tools, toolChoice }: GenerationInput) {
+function geminiRequest({ settings, messages, tools, toolChoice, includeReasoning }: GenerationInput) {
   const system: { text: string }[] = [];
   const contents: GeminiTurn[] = [];
   let previousCalls: LlmToolCall[] = [];
@@ -291,12 +333,13 @@ function geminiRequest({ settings, messages, tools, toolChoice }: GenerationInpu
       case 'user': append('user', [{ text: message.content }]); break;
       case 'assistant':
         previousCalls = [];
-        append('model', message.parts.map((part) => {
+        append('model', message.parts.flatMap<object>((part) => {
+          if (part.type === 'anthropicThinking') return [];
           const thoughtSignature = part.geminiSignature;
-          if (part.type === 'text') return { text: part.text, thoughtSignature };
-          if (part.type === 'geminiThought') return { text: part.text, thought: true, thoughtSignature };
+          if (part.type === 'text') return [{ text: part.text, thoughtSignature }];
+          if (part.type === 'geminiThought') return [{ text: part.text, thought: true, thoughtSignature }];
           previousCalls.push(part);
-          return { functionCall: { id: part.geminiId, name: part.name, args: part.arguments }, thoughtSignature };
+          return [{ functionCall: { id: part.geminiId, name: part.name, args: part.arguments }, thoughtSignature }];
         }));
         break;
       case 'tool':
@@ -313,11 +356,14 @@ function geminiRequest({ settings, messages, tools, toolChoice }: GenerationInpu
   }
   const forced = typeof toolChoice === 'object';
   const mode = forced || toolChoice === 'required' ? 'ANY' : toolChoice === 'none' ? 'NONE' : 'AUTO';
+  const supportsThoughts = /^gemini-(?:(?:2\.5|[3-9](?:\.\d+)?)-(?:flash|pro)|(?:flash|pro)-latest|4-hydrogen)(?:-|$)/i.test(settings.model) &&
+    !/-(?:image|tts|live|native-audio)(?:-|$)/i.test(settings.model);
   const generationConfig = {
     maxOutputTokens: settings.responseTokens ?? undefined,
     temperature: settings.temperature ?? undefined,
     topP: settings.topP ?? undefined,
     topK: settings.topK ?? undefined,
+    ...(includeReasoning && supportsThoughts && { thinkingConfig: { includeThoughts: true } }),
   };
   return {
     contents, systemInstruction: system.length ? { parts: system } : undefined,
@@ -370,9 +416,11 @@ async function* readGemini(frames: AsyncIterable<ProviderFrame>, output: Provide
         const geminiId = typeof call.id === 'string' && call.id ? call.id : undefined;
         const id = geminiId ?? `call_${crypto.randomUUID()}`;
         output.call({ ...readCall(id, call.name, call.args ?? {}), geminiId, geminiSignature: signature });
-      } else if (part.thought === true && signature) {
-        output.append({ type: 'geminiThought', text: typeof part.text === 'string' ? part.text : '', geminiSignature: signature });
-      } else if (part.thought !== true) {
+      } else if (part.thought === true) {
+        if (signature) output.append({ type: 'geminiThought', text: typeof part.text === 'string' ? part.text : '', geminiSignature: signature });
+        const delta = output.reasoning(part.text);
+        if (delta) yield delta;
+      } else {
         const text = output.text(part.text ?? '', signature);
         if (text) yield text;
       }

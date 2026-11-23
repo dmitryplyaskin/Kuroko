@@ -263,8 +263,8 @@ test('a write finished after switching tabs updates connection data without rest
 const sseHeaders = { 'Content-Type': 'text/event-stream' };
 const encode = (text: string) => new TextEncoder().encode(text);
 const sse = (value: object) => `data: ${JSON.stringify(value)}\r\n\r\n`;
-const completed = (text: string) => sse({
-  type: 'done', completion: { message: { role: 'assistant', parts: [{ type: 'text', text }] }, finishReason: 'stop' },
+const completed = (text: string, reasoning?: string) => sse({
+  type: 'done', completion: { message: { role: 'assistant', parts: [{ type: 'text', text }] }, finishReason: 'stop', reasoning },
 });
 
 async function openChat() {
@@ -401,7 +401,7 @@ test('GM chat uses the server publication and restores its mode without re-savin
   }
 });
 
-test('chat streams replies, restores separate chats, and sends the selected conversation history', async () => {
+test('chat streams reasoning separately, restores it, and sends the selected conversation history', async () => {
   const payloads: unknown[] = [];
   const stream = new TransformStream<Uint8Array, Uint8Array>();
   const writer = stream.writable.getWriter();
@@ -418,22 +418,31 @@ test('chat streams replies, restores separate chats, and sends the selected conv
   });
   const scope = await openChat();
   const partial = Promise.withResolvers<void>();
+  const thinking = Promise.withResolvers<void>();
   const unwatch = createWatch({
-    scope, unit: $chatRows, fn: (rows) => { if (rows.at(-1)?.text === 'При') partial.resolve(); },
+    scope, unit: $chatRows, fn: (rows) => {
+      if (rows.at(-1)?.reasoningBlocks?.[0]?.text === 'Начинаю с приветствия.') thinking.resolve();
+      if (rows.at(-1)?.text === 'При') partial.resolve();
+    },
   });
   try {
     assert.deepEqual(scope.getState($chatRows), []);
     await allSettled(chatDraftChanged, { scope, params: '  Привет  ' });
     scopeBind(chatSendRequested, { scope })();
+    await writer.write(encode(sse({ type: 'reasoning_delta', text: 'Начинаю с приветствия.' })));
+    await thinking.promise;
+    assert.equal(scope.getState($replyPhase), 'reasoning');
+    assert.equal(scope.getState($chatRows).at(-1)?.text, '');
     const bytes = encode(': ping\r\n\r\n' + sse({ type: 'text_delta', text: 'При' }));
     const split = bytes.findIndex((byte) => byte > 127) + 1;
     await writer.write(bytes.subarray(0, split));
     await writer.write(bytes.subarray(split));
     await partial.promise;
     assert.notEqual(scope.getState($replyId), null);
+    assert.equal(scope.getState($replyPhase), 'answer');
     assert.deepEqual(scope.getState($chatRows).map(({ text }) => text), ['Привет', 'При']);
 
-    await writer.write(encode(completed('Привет!')));
+    await writer.write(encode(completed('Привет!', 'Начинаю с приветствия.')));
     void writer.close().catch(() => undefined);
     await allSettled(scope);
     assert.equal(scope.getState($replyId), null);
@@ -446,12 +455,13 @@ test('chat streams replies, restores separate chats, and sends the selected conv
     assert.equal(reloaded.getState($chatId), second);
     await allSettled(chatOpenRequested, { scope: reloaded, params: first });
     assert.deepEqual(reloaded.getState($chatRows).map(({ text }) => text), ['Привет', 'Привет!']);
+    assert.deepEqual(reloaded.getState($chatRows).at(-1)?.reasoningBlocks, [{ text: 'Начинаю с приветствия.', textOffset: 0 }]);
     await allSettled(chatDraftChanged, { scope: reloaded, params: 'Второй запрос' });
     await allSettled(chatSendRequested, { scope: reloaded });
     assert.deepEqual(reloaded.getState($chatRows).map(({ text }) => text), ['Привет', 'Привет!', 'Второй запрос', 'Второй ответ.']);
     assert.deepEqual(payloads, [
-      { stream: true, messages: [{ role: 'user', content: 'Привет' }] },
-      { stream: true, messages: [
+      { stream: true, includeReasoning: true, messages: [{ role: 'user', content: 'Привет' }] },
+      { stream: true, includeReasoning: true, messages: [
         { role: 'user', content: 'Привет' }, { role: 'assistant', parts: [{ type: 'text', text: 'Привет!' }] },
         { role: 'user', content: 'Второй запрос' },
       ] },
@@ -617,11 +627,12 @@ test('chat displays connection and stream errors and keeps partial text', async 
   }
 });
 
-test('chat keeps tools available after each batch and records successive rolls in the same reply', async () => {
+test('chat starts a new reasoning block after a tool batch and preserves its position', async () => {
   const originalFetch = globalThis.fetch;
   const presetId = 'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa';
   const prompt = { role: 'user', content: 'Проведи боевой раунд' };
   const initiative = 'Бросаю инициативу. 🎲';
+  const waitText = ' Смотрю результат.';
   const attack = 'Морвен ходит первой, бросаю атаку.';
   const roll = (text: string, expression: string) => ({
     role: 'assistant', parts: [
@@ -630,11 +641,13 @@ test('chat keeps tools available after each batch and records successive rolls i
     ],
   });
   const first = roll(initiative, 'd1 + 6');
+  first.parts.push({ type: 'text', text: waitText });
   const second = roll(attack, 'd1 + 16');
   const result = (total: number, rollId: string) => ({ role: 'tool', callId: 'call_same', content: { rollId, values: { total } } });
-  const toolReply = (message: typeof first, text: string) => new Response(sse({ type: 'text_delta', text }) + sse({
-    type: 'done', completion: { presetId, message, finishReason: 'tool_calls' },
-  }), { headers: sseHeaders });
+  const toolDone = (message: typeof first, reasoning: string) =>
+    sse({ type: 'done', completion: { presetId, message, finishReason: 'tool_calls', reasoning } });
+  const continuation = new TransformStream<Uint8Array, Uint8Array>();
+  const writer = continuation.writable.getWriter();
   let requests = 0;
   globalThis.fetch = withSavedChats(async (input, init) => {
     assert.equal(input, '/api/llm/generate');
@@ -642,14 +655,15 @@ test('chat keeps tools available after each batch and records successive rolls i
     assert.deepEqual(body.tools.map(({ name }: { name: string }) => name), ['roll_dice']);
     if (++requests === 1) {
       assert.deepEqual(body.messages, [prompt]);
-      return toolReply(first, initiative);
+      return new Response(sse({ type: 'reasoning_delta', text: 'Определю порядок ходов.' }) +
+        sse({ type: 'text_delta', text: initiative + waitText }) + toolDone(first, 'Определю порядок ходов.'), { headers: sseHeaders });
     }
     assert.equal(body.presetId, presetId);
     assert.equal(body.toolChoice, 'auto');
     const expected = [prompt, first, result(7, 'call_same')];
     if (requests === 2) {
       assert.deepEqual(body.messages, expected);
-      return toolReply(second, attack);
+      return new Response(continuation.readable, { headers: sseHeaders });
     }
     assert.equal(requests, 3);
     const recordId = body.messages[4].content.rollId;
@@ -657,20 +671,46 @@ test('chat keeps tools available after each batch and records successive rolls i
     assert.deepEqual(body.messages, [...expected, second, result(17, recordId)]);
     return new Response(completed('Атака попала.'), { headers: sseHeaders });
   });
+  const scope = await openChat();
+  const secondThinking = Promise.withResolvers<void>();
+  const unwatch = createWatch({ scope, unit: $chatRows, fn: (rows) => {
+    if (rows.at(-1)?.reasoningBlocks?.at(-1)?.text === 'Сравню') secondThinking.resolve();
+  } });
   try {
-    const scope = await openChat();
     await allSettled(toolSettingChanged, { scope, params: { id: 'roll_dice', enabled: true } });
     await allSettled(chatDraftChanged, { scope, params: prompt.content });
-    await allSettled(chatSendRequested, { scope });
+    scopeBind(chatSendRequested, { scope })();
+    await writer.write(encode(sse({ type: 'reasoning_delta', text: 'Сравню' })));
+    await secondThinking.promise;
+    assert.equal(scope.getState($replyPhase), 'reasoning');
+    const firstRound = initiative + waitText;
+    const firstReasoning = { text: 'Определю порядок ходов.', textOffset: 0 };
+    const secondReasoning = { text: 'Сравню', afterToolCallId: 'call_same', textOffset: firstRound.length };
+    assert.deepEqual(scope.getState($chatRows).at(-1)?.reasoningBlocks, [firstReasoning, secondReasoning]);
+    await writer.write(encode(sse({ type: 'reasoning_delta', text: ' инициативу.' }) +
+      sse({ type: 'text_delta', text: attack }) + toolDone(second, 'Сравню инициативу.')));
+    void writer.close().catch(() => undefined);
+    await allSettled(scope);
     assert.equal(requests, 3);
     assert.equal(scope.getState($chatError), null);
     const reloaded = await openChat();
     const answer = reloaded.getState($chatRows).at(-1);
-    assert.equal(answer?.text, `${initiative}\n\n${attack}\n\nАтака попала.`);
-    assert.deepEqual(answer.toolCalls?.map(({ textOffset }) => textOffset), [initiative.length, initiative.length + 2 + attack.length]);
+    assert.equal(answer?.text, `${firstRound}\n\n${attack}\n\nАтака попала.`);
+    assert.deepEqual(answer.reasoningBlocks, [firstReasoning, { ...secondReasoning, text: 'Сравню инициативу.' }]);
+    assert.deepEqual(answer.toolCalls?.map(({ textOffset }) => textOffset), [initiative.length, firstRound.length + 2 + attack.length]);
     assert.equal(new Set(answer.toolCalls?.map(({ id }) => id)).size, 2);
+
+    const updatedWait = ' Проверяю бросок.';
+    await allSettled(messageEditRequested, { scope: reloaded, params: answer.id });
+    await allSettled(messageEditChanged, { scope: reloaded, params: { id: answer.id, index: 1, text: updatedWait } });
+    await allSettled(messageEditSubmitted, { scope: reloaded, params: answer.id });
+    const edited = reloaded.getState($chatRows).at(-1);
+    assert.equal(edited?.text, `${initiative}${updatedWait}\n\n${attack}\n\nАтака попала.`);
+    assert.equal(edited?.reasoningBlocks?.[1]?.textOffset, initiative.length + updatedWait.length);
   } finally {
+    unwatch();
     globalThis.fetch = originalFetch;
+    void writer.abort().catch(() => undefined);
   }
 });
 

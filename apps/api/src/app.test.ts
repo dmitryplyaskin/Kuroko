@@ -344,8 +344,11 @@ test('stores chats by account and rejects stale writes without losing the saved 
   const second = await (await request('/chats', { method: 'POST', cookie })).json() as SavedChat;
   const snapshot: ChatSnapshot = { revision: 0, messages: [
     { id: 1, role: 'user', text: 'Первая строка\nвторая строка', time: 1 },
-    { id: 2, role: 'assistant', text: 'Ответ', time: 2 },
-    { id: 3, role: 'assistant', text: '🎲', time: 3, toolCalls: [
+    { id: 2, role: 'assistant', text: 'Ответ', reasoning: 'Сопоставляю варианты.', time: 2 },
+    { id: 3, role: 'assistant', text: '🎲', time: 3, reasoningBlocks: [
+      { text: 'Выбираю проверку.', textOffset: 0 },
+      { text: 'Смотрю на результат.', textOffset: 2, afterToolCallId: 'dice-1' },
+    ], toolCalls: [
       { id: 'dice-1', name: 'roll_dice', arguments: { rolls: { attack: 'd20' } },
         result: { rollId: 'dice-1', values: { attack: 13 }, details: [{ dice: [{ results: [13] }] }] },
         modelResult: { rollId: 'dice-1', values: { attack: 13 } }, textOffset: 2 },
@@ -360,6 +363,9 @@ test('stores chats by account and rejects stale writes without losing the saved 
   const splitEmoji = structuredClone(snapshot);
   splitEmoji.messages[2]!.toolCalls![0]!.textOffset = 1;
   expect((await save(cookie, splitEmoji)).status).toBe(400);
+  const unknownCall = structuredClone(snapshot);
+  unknownCall.messages[2]!.reasoningBlocks![1]!.afterToolCallId = 'other-call';
+  expect((await save(cookie, unknownCall)).status).toBe(400);
   const stored = await (await save(cookie)).json() as SavedChat;
   expect(stored).toMatchObject({ revision: 1, title: 'Первая строка вторая строка', messages: snapshot.messages });
   expect(await (await save(cookie)).json()).toEqual(stored);
@@ -1323,7 +1329,7 @@ test('generates JSON with the active or selected owned preset and applies per-re
   }
 });
 
-test('streams text before completion and assembles and replays OpenRouter tool calls', async () => {
+test('streams OpenRouter text and reasoning separately and replays tool calls', async () => {
   await register('stream-owner');
   const cookie = sessionCookie(await login('stream-owner')).token;
   await saveGenerationPreset(cookie, 'openrouter', 'stream-key');
@@ -1363,11 +1369,12 @@ test('streams text before completion and assembles and replays OpenRouter tool c
     expect(firstEvent).toContain('Привет');
     await firstWrites;
     const chunks = [
-      { choices: [{ delta: { tool_calls: [{ index: 0, id: 'call_1', function: { name: 'weather', arguments: '{"city":' } }],
+      { choices: [{ delta: { reasoning: 'a', tool_calls: [{ index: 0, id: 'call_1', function: { name: 'weather', arguments: '{"city":' } }],
         reasoning_details: [{ type: 'reasoning.text', index: 0, text: 'a' }] } }] },
       { choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: '"Москва"}' } }],
         reasoning_details: [{ type: 'reasoning.text', index: 0, text: 'b', signature: 'opaque' }] }, finish_reason: 'tool_calls' }] },
-      { choices: [{ delta: {}, finish_reason: 'tool_calls' }], usage: { prompt_tokens: 8, completion_tokens: 4, total_tokens: 12 } },
+      { choices: [{ delta: { reasoning_details: [{ type: 'reasoning.encrypted', index: 1, data: 'private' }] },
+        finish_reason: 'tool_calls' }], usage: { prompt_tokens: 8, completion_tokens: 4, total_tokens: 12 } },
     ];
     await writer.write(encoder.encode(chunks.map((chunk) => `data: ${JSON.stringify(chunk)}\n\n`).join('') + 'data: [DONE]\n\n'));
     void writer.close().catch(() => undefined);
@@ -1379,19 +1386,22 @@ test('streams text before completion and assembles and replays OpenRouter tool c
       },
     })).text();
     const events = tail.split('\n').filter((line) => line.startsWith('data: ')).map((line) => JSON.parse(line.slice(6)));
-    expect(events.map(({ type }) => type)).toEqual(['tool_call', 'done']);
-    expect(events[0]?.call).toEqual({ type: 'toolCall', id: 'call_1', name: 'weather', arguments: { city: 'Москва' } });
-    expect(events[1]?.completion).toMatchObject({ finishReason: 'tool_calls', usage: { totalTokens: 12 } });
+    expect(events.slice(0, 2)).toEqual([{ type: 'reasoning_delta', text: 'a' }, { type: 'reasoning_delta', text: 'b' }]);
+    expect(events.map(({ type }) => type)).toEqual(['reasoning_delta', 'reasoning_delta', 'tool_call', 'done']);
+    expect(events[2]?.call).toEqual({ type: 'toolCall', id: 'call_1', name: 'weather', arguments: { city: 'Москва' } });
+    const { completion } = events[3]!;
+    expect(completion).toMatchObject({ reasoning: 'ab', finishReason: 'tool_calls', usage: { totalTokens: 12 } });
 
     const followUp = await request(generatePath, { method: 'POST', cookie, body: {
-      messages: [...greeting, events[1]?.completion.message, { role: 'tool', callId: 'call_1', content: { temperature: 18 } }], tools,
+      messages: [...greeting, completion.message, { role: 'tool', callId: 'call_1', content: { temperature: 18 } }], tools,
     } });
     expect(followUp.status).toBe(200);
     expect(continuation).toEqual([
       ...greeting,
       { role: 'assistant', content: 'Привет', tool_calls: [
         { id: 'call_1', type: 'function', function: { name: 'weather', arguments: '{"city":"Москва"}' } },
-      ], reasoning_details: [{ type: 'reasoning.text', index: 0, text: 'ab', signature: 'opaque' }] },
+      ], reasoning_details: [{ type: 'reasoning.text', index: 0, text: 'ab', signature: 'opaque' },
+        { type: 'reasoning.encrypted', index: 1, data: 'private' }] },
       { role: 'tool', tool_call_id: 'call_1', content: '{"temperature":18}' },
     ]);
   } finally {

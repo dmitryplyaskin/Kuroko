@@ -1,5 +1,5 @@
 import { isApiKey } from '@kuroko/contracts/connectionSettings';
-import type { LlmCompletion, LlmEvent, LlmRequest } from '@kuroko/contracts/llm';
+import type { LlmCompletion, LlmEvent, LlmRequest, LlmTextDelta } from '@kuroko/contracts/llm';
 import type { createConnectionStore } from '../connection/connectionStore';
 import type { ProviderConnections } from '../connection/providerConnections';
 import type { ProviderKeyStore } from '../connection/providerKeyStore';
@@ -10,7 +10,7 @@ import { validateParameterOverrides } from './readLlmRequest';
 
 type StreamOutput = {
   start: () => void;
-  emit: (event: Extract<LlmEvent, { type: 'text_delta' | 'tool_call' }>, signal: AbortSignal) => Promise<void>;
+  emit: (event: LlmTextDelta | Extract<LlmEvent, { type: 'tool_call' }>, signal: AbortSignal) => Promise<void>;
 };
 
 export function createLlmService(
@@ -34,6 +34,7 @@ export function createLlmService(
       const settings = { ...preset, ...request.parameters, model };
       const body = JSON.stringify(adapter.request({
         settings, messages: request.messages, tools: request.tools ?? [], toolChoice: request.toolChoice, stream,
+        includeReasoning: request.includeReasoning,
       }));
       const url = connection.generationUrl(model, stream);
       const timeout = AbortSignal.timeout(120_000);
@@ -64,8 +65,8 @@ export function createLlmService(
         }
         const frames = readProviderFrames(upstream.body, stream, signal);
         downstream?.start();
-        for await (const text of adapter.read(frames, output, stream)) {
-          if (downstream) await downstream.emit({ type: 'text_delta', text }, signal);
+        for await (const delta of adapter.read(frames, output, stream)) {
+          if (downstream) await downstream.emit(delta, signal);
         }
       } catch (error) {
         if (clientSignal.aborted) throw clientSignal.reason;
@@ -100,6 +101,7 @@ function complete(output: ProviderOutput, presetId: string, provider: LlmComplet
   return {
     presetId, provider, model,
     message: { role: 'assistant', parts, openrouterReasoning: output.openrouterReasoning },
+    reasoning: output.reasoningText?.trim() ? output.reasoningText.toWellFormed() : undefined,
     finishReason: calls.length && finish.reason === 'stop' ? 'tool_calls' : finish.reason,
     providerFinishReason: finish.raw,
     usage, contextTokens,

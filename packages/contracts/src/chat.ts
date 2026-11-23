@@ -11,10 +11,21 @@ export type ChatToolCall = {
   textOffset?: number;
 };
 
+export type ChatReasoningBlock = {
+  text: string;
+  /** UTF-16 offset in the assistant message's text. */
+  textOffset: number;
+  /** Omitted for reasoning before the first tool batch. */
+  afterToolCallId?: string;
+};
+
 export type ChatMessage = {
   id: number;
   role: 'user' | 'assistant';
   text: string;
+  /** Older messages store their reasoning in a single block. */
+  reasoning?: string;
+  reasoningBlocks?: ChatReasoningBlock[];
   time: number;
   edited?: boolean;
   toolCalls?: ChatToolCall[];

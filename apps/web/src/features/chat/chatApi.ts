@@ -1,6 +1,6 @@
 import { isLlmErrorCode } from '@kuroko/contracts/errors';
-import type { ChatActivityEntry, ChatReplyVariantSelection, ChatSnapshot, ChatSummary, ChatToolCall, SavedChat } from '@kuroko/contracts/chat';
-import type { LlmAssistantPart, LlmCompletion, LlmEvent, LlmMessage, LlmRequest, LlmToolCall } from '@kuroko/contracts/llm';
+import type { ChatActivityEntry, ChatReasoningBlock, ChatReplyVariantSelection, ChatSnapshot, ChatSummary, ChatToolCall, SavedChat } from '@kuroko/contracts/chat';
+import type { LlmAssistantPart, LlmCompletion, LlmEvent, LlmMessage, LlmRequest, LlmTextDelta, LlmToolCall } from '@kuroko/contracts/llm';
 import type { DelegateTaskEvent, DelegateTaskRequest, DelegateTaskResult, ToolId } from '@kuroko/contracts/tools';
 import { createSubagentBatch, runToolCall, toolDeclarations } from '@kuroko/tool-runtime';
 import { createChatActivity, recordModelRequest } from '@kuroko/tool-runtime/chatActivity';
@@ -30,6 +30,8 @@ export const chatApi = {
 
 const maxToolRounds = 16;
 
+export type ChatReplyDelta = Extract<LlmTextDelta, { type: 'text_delta' }> | ({ type: 'reasoning_delta' } & ChatReasoningBlock);
+
 function readEvent(frame: string): LlmEvent | DelegateTaskEvent | undefined {
   const lines = frame.split(/\r?\n/).filter((line) => line.startsWith('data:'));
   if (!lines.length) return;
@@ -44,7 +46,7 @@ function readEvent(frame: string): LlmEvent | DelegateTaskEvent | undefined {
 
 export async function streamChatReply(
   session: ActiveSession, messages: ChatSnapshot['messages'], enabledTools: readonly ToolId[], signal: AbortSignal,
-  onText: (delta: string) => void, onContent: (text: string, calls: ChatToolCall[]) => void,
+  onDelta: (delta: ChatReplyDelta) => void, onContent: (text: string, calls: ChatToolCall[], reasoning: ChatReasoningBlock[]) => void,
   onSubagentActivity: (active: readonly ActiveSubagent[]) => void, start: ReturnType<typeof createChatActivity>,
   onActivity: (entry: ChatActivityEntry) => void, uniqueToolIds: boolean,
 ): Promise<string> {
@@ -58,36 +60,44 @@ export async function streamChatReply(
   let nextRecordNumber = 1;
   let presetId: string | undefined;
   let text = '';
+  const reasoningBlocks: ChatReasoningBlock[] = [];
   let activeSubagents: readonly ActiveSubagent[] = [];
 
   for (let round = 0; ; round++) {
     signal.throwIfAborted();
     const separator = text.trim() ? '\n\n' : '';
     let startsParagraph = Boolean(separator);
+    let roundReasoning = '';
+    const afterToolCallId = toolCalls.at(-1)?.id;
+    const textOffset = text.length;
     const request: LlmRequest = {
-      presetId, messages: history, stream: true, tools, toolChoice: presetId && tools ? 'auto' : undefined,
+      presetId, messages: history, stream: true, includeReasoning: true, tools, toolChoice: presetId && tools ? 'auto' : undefined,
     };
-    const completion = await recordModelRequest(start, request, () => streamCompletion(session, request, signal, (delta) => {
+    const completion = await recordModelRequest(start, request, () => streamCompletion(session, request, signal, ({ type, text: delta }) => {
       if (!delta) return;
-      onText(startsParagraph ? separator + delta : delta);
-      startsParagraph = false;
+      if (type === 'reasoning_delta') {
+        onDelta({ type, text: delta, textOffset, afterToolCallId });
+        roundReasoning += delta;
+      } else {
+        onDelta({ type, text: startsParagraph ? separator + delta : delta });
+        startsParagraph = false;
+      }
     }), signal, errorCode);
+    const completedReasoning = completion.reasoning ?? roundReasoning;
+    if (completedReasoning.trim()) {
+      reasoningBlocks.push({ text: completedReasoning.toWellFormed(), textOffset, ...(afterToolCallId && { afterToolCallId }) });
+    }
     const { text: roundText, calls } = readToolTurn(completion.message.parts);
     const textStart = text.length + (roundText ? separator.length : 0);
     if (roundText) text += separator + roundText;
+    onContent(text, [...toolCalls], [...reasoningBlocks]);
 
-    if (completion.finishReason === 'length') {
-      onContent(text, toolCalls);
-      throw new ApiError(422, 'response_length');
-    }
+    if (completion.finishReason === 'length') throw new ApiError(422, 'response_length');
     if (!tools || !calls.length) {
       if (roundText.trim()) return text;
       throw new ApiError(422, completion.finishReason === 'content_filter' ? 'response_blocked' : 'response_empty');
     }
-    if (round === maxToolRounds) {
-      onContent(text, toolCalls);
-      throw new ApiError(422, 'tool_round_limit');
-    }
+    if (round === maxToolRounds) throw new ApiError(422, 'tool_round_limit');
 
     signal.throwIfAborted();
     if (typeof completion.presetId !== 'string') throw new ApiError(502, 'invalid_response');
@@ -136,7 +146,7 @@ export async function streamChatReply(
     }));
     signal.throwIfAborted();
     toolCalls.push(...results.map(({ entry }) => entry));
-    onContent(text, [...toolCalls]);
+    onContent(text, [...toolCalls], [...reasoningBlocks]);
     history.push(completion.message, ...results.map(({ message }) => message));
   }
 }
@@ -171,13 +181,13 @@ function readToolTurn(parts: LlmAssistantPart[]) {
 }
 
 async function streamCompletion(
-  session: ActiveSession, body: LlmRequest, signal: AbortSignal, onText: (delta: string) => void,
+  session: ActiveSession, body: LlmRequest, signal: AbortSignal, onDelta: (delta: LlmTextDelta) => void,
 ): Promise<LlmCompletion> {
   const response = await sessionResponse(session, '/llm/generate', {
     method: 'POST', body, signal, accept: 'text/event-stream', timeoutMs: 130_000,
   });
   return readStream(response, (event) => {
-    if (event.type === 'text_delta' && typeof event.text === 'string') onText(event.text);
+    if ((event.type === 'text_delta' || event.type === 'reasoning_delta') && typeof event.text === 'string') onDelta(event);
     if (event.type === 'done' && 'completion' in event && Array.isArray(event.completion?.message?.parts)) return event.completion;
   });
 }
