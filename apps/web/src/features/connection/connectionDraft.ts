@@ -8,11 +8,13 @@ export type NumericField = 'contextTokens' | 'responseTokens' | 'temperature' | 
 type NumericValue = number | string;
 export type ConnectionDraft = Record<NumericField, NumericValue> & {
   provider: Provider; model: string; keyId: string; baseUrl: string; openrouterProvider: string;
+  base?: Pick<ConnectionPreset, 'id' | 'revision'>;
 };
 
 export function createDraft(preset?: ConnectionPreset): ConnectionDraft {
   const settings = preset ?? defaultConnectionSettings;
   return {
+    base: preset && { id: preset.id, revision: preset.revision },
     provider: preset?.provider ?? 'openai',
     model: settings.model,
     keyId: preset?.keyId ?? '',
@@ -30,8 +32,8 @@ export function numericValue(value: NumericValue) {
   return value === '' ? null : Number(value);
 }
 
-export function validateDraft(draft: ConnectionDraft, keyId: string, name: string):
-  { preset: SaveConnectionPreset } | { code: ErrorCode } {
+export function validateDraft(draft: ConnectionDraft, keyId: string):
+  { preset: Omit<SaveConnectionPreset, 'name'> } | { code: ErrorCode } {
   if (draft.provider === 'custom' && !readCustomBaseUrl(draft.baseUrl)) return { code: 'custom_api_url_invalid' };
 
   const settings = readConnectionSettings(draft.provider, {
@@ -46,5 +48,5 @@ export function validateDraft(draft: ConnectionDraft, keyId: string, name: strin
   });
   if (!settings) return { code: 'preset_settings_invalid' };
 
-  return { preset: { name, provider: draft.provider, settings, keyId: keyId || null } };
+  return { preset: { provider: draft.provider, settings, keyId: keyId || null } };
 }

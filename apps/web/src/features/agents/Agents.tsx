@@ -49,6 +49,7 @@ export default function Agents() {
           <div className={classes['agents-copy']}>
             <h2><bdi>{agent.name}</bdi></h2>
             <p id={`agent-description-${agent.id}`} dir="auto">{agent.description}</p>
+            {agent.descriptionIssue && <p className={classes['agents-error']}>{t('agents.descriptionTemplateInvalid')}</p>}
           </div>
           <Button variant="default" aria-label={t('agents.editNamed', { name: agent.name })}
             aria-describedby={`agent-description-${agent.id}`} onClick={() => edit(agent)}>

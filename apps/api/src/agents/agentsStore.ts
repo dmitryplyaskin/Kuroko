@@ -23,7 +23,11 @@ export function createAgentsStore(db: Database) {
     UPDATE agents SET name = ?, name_key = ?, description = ?, instructions = ?, tools_json = ?, world_id = ?, revision = revision + 1
     WHERE user_id = ? AND id = ? RETURNING ${fields}
   `);
-  const remove = db.query('DELETE FROM agents WHERE user_id = ? AND id = ?');
+  const remove = db.query('DELETE FROM agents WHERE user_id = ? AND id = ? AND revision = ?');
+  const removeVersion = db.transaction((userId: number, id: string, revision: number) => {
+    if (remove.run(userId, id, revision).changes) return 'deleted';
+    return find.get(userId, id) ? 'conflict' : 'missing';
+  });
   const save = db.transaction((userId: number, id: string, draft: UpdateAgent) => {
     const current = find.get(userId, id);
     if (!current) return 'missing';
@@ -48,6 +52,6 @@ export function createAgentsStore(db: Database) {
         JSON.stringify(draft.tools), draft.worldId ?? null)!);
     },
     save: save.immediate,
-    remove: (userId: number, id: string) => remove.run(userId, id).changes > 0,
+    remove: removeVersion.immediate,
   };
 }

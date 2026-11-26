@@ -90,8 +90,8 @@ export function createChatStore(db: Database) {
     return variants && { index: variants.index, archived: JSON.parse(variants.archivedJson) as ReplyVersion[] };
   }
 
-  function readVersion(id: string, message: ChatMessage): ReplyVersion {
-    const activity = findActivity.get(id, message.id - 1);
+  function readVersion(id: string, message: ChatMessage, promptId?: number): ReplyVersion {
+    const activity = promptId === undefined ? undefined : findActivity.get(id, promptId);
     const privateTurn = findPrivate.get(id, message.id);
     return {
       message,
@@ -100,18 +100,18 @@ export function createChatStore(db: Database) {
     };
   }
 
-  function clearReplyContext(id: string, replyId: number) {
-    deleteActivity.run(id, replyId - 1);
-    deletePrivate.run(id, replyId, replyId - 1);
+  function clearReplyContext(id: string, replyId: number, promptId: number) {
+    deleteActivity.run(id, promptId);
+    deletePrivate.run(id, replyId, promptId);
   }
 
-  function archiveReply(id: string, current: ChatMessage, nextId: number) {
+  function archiveReply(id: string, current: ChatMessage, nextId: number, promptId: number) {
     // The selected version lives in the active chat. The array holds the other versions in display order.
     const { index, archived } = readVariants(id, current.id) ?? { index: 0, archived: [] };
-    archived.splice(index, 0, readVersion(id, current));
+    archived.splice(index, 0, readVersion(id, current, promptId));
     if (current.id !== nextId) deleteVariants.run(id, current.id);
     upsertVariants.run(id, nextId, archived.length, JSON.stringify(archived));
-    clearReplyContext(id, current.id);
+    clearReplyContext(id, current.id, promptId);
   }
 
   function invalidateArchivedContext(id: string, replyId: number, promptDeleted: boolean) {
@@ -139,20 +139,28 @@ export function createChatStore(db: Database) {
       const reply = messages.at(-1);
       if (mode || !prompt || reply?.role !== 'assistant' || reply.id !== prompt.id + 1 || (activity && activity.promptId !== prompt.id) ||
           JSON.stringify(messages.slice(0, -1)) !== JSON.stringify(previous.slice(0, -1))) return 'conflict';
-      archiveReply(id, previous.at(-1)!, reply.id);
+      archiveReply(id, previous.at(-1)!, reply.id, prompt.id);
     } else if (row.messagesJson !== messagesJson) {
-      const current = new Map(messages.map((message) => [message.id, message]));
-      for (const previous of readChat(row).messages) {
-        const message = current.get(previous.id);
-        const removed = message?.role !== previous.role;
-        if (removed || message.text !== previous.text) {
+      const current = new Map(messages.map((message, position) => [message.id, { message, position }]));
+      const previousMessages = readChat(row).messages;
+      for (const [position, previous] of previousMessages.entries()) {
+        const next = current.get(previous.id);
+        const removed = next?.message.role !== previous.role;
+        if (removed || next.message.text !== previous.text) {
           deletePrivate.run(id, previous.id, previous.id);
-          if (previous.role === 'user') invalidateArchivedContext(id, previous.id + 1, removed);
+          const reply = previousMessages[position + 1];
+          if (!removed && previous.role === 'user' && reply?.role === 'assistant') invalidateArchivedContext(id, reply.id, false);
         }
-        if (removed) {
-          deleteActivity.run(id, previous.role === 'user' ? previous.id : previous.id - 1);
-          if (previous.role === 'assistant') deleteVariants.run(id, previous.id);
+        if (previous.role === 'user') {
+          if (removed) deleteActivity.run(id, previous.id);
+          continue;
         }
+        const oldPrompt = previousMessages[position - 1];
+        const newPrompt = next && messages[next.position - 1];
+        if (!removed && oldPrompt?.id === newPrompt?.id && oldPrompt?.role === newPrompt?.role) continue;
+        if (oldPrompt?.role === 'user') clearReplyContext(id, previous.id, oldPrompt.id);
+        if (removed) deleteVariants.run(id, previous.id);
+        else invalidateArchivedContext(id, previous.id, true);
       }
     }
     update.run(title, updatedAt, messagesJson, Number(mode), userId, id);
@@ -172,7 +180,7 @@ export function createChatStore(db: Database) {
     if (!prompt) return 'conflict';
     const reply: ChatMessage = { id: prompt.id + 1, role: 'assistant', text, time: Date.now() };
     if (replaceId !== undefined) {
-      archiveReply(id, chat.messages.pop()!, reply.id);
+      archiveReply(id, chat.messages.pop()!, reply.id, prompt.id);
     }
     chat.messages.push(reply);
     update.run(row.title, reply.time, JSON.stringify(chat.messages), row.gmMode, userId, id);
@@ -187,6 +195,8 @@ export function createChatStore(db: Database) {
     if (!row) return 'missing';
     const chat = readChat(row);
     const position = chat.messages.findIndex((message) => message.id === replyId && message.role === 'assistant');
+    const prompt = chat.messages[position - 1];
+    const promptId = prompt?.role === 'user' ? prompt.id : undefined;
     const variants = readVariants(id, replyId);
     if (position === -1 || !variants || index > variants.archived.length) return 'conflict';
     if (variants.index === index && (row.revision === revision || row.revision === revision + 1)) {
@@ -195,13 +205,15 @@ export function createChatStore(db: Database) {
     if (row.revision !== revision) return 'conflict';
 
     const { archived } = variants;
-    archived.splice(variants.index, 0, readVersion(id, chat.messages[position]!));
+    archived.splice(variants.index, 0, readVersion(id, chat.messages[position]!, promptId));
     const [selected] = archived.splice(index, 1);
     const { message, activity, privateTurn } = selected!;
     chat.messages[position] = { ...message, id: replyId };
-    clearReplyContext(id, replyId);
-    if (activity) insertActivity.run(id, replyId - 1, JSON.stringify(activity));
-    if (privateTurn) insertPrivate.run(id, replyId, replyId - 1, JSON.stringify(privateTurn));
+    if (promptId !== undefined) {
+      clearReplyContext(id, replyId, promptId);
+      if (activity) insertActivity.run(id, promptId, JSON.stringify(activity));
+      if (privateTurn) insertPrivate.run(id, replyId, promptId, JSON.stringify(privateTurn));
+    }
     upsertVariants.run(id, replyId, index, JSON.stringify(archived));
     const updatedAt = Date.now();
     update.run(row.title, updatedAt, JSON.stringify(chat.messages), row.gmMode, userId, id);

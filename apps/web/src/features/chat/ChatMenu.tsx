@@ -1,8 +1,8 @@
 import { Button, Group, Menu, Modal, TextInput } from '@mantine/core';
 import { useUnit } from 'effector-react';
+import { chatTitleLimit } from '@kuroko/contracts/chat';
 import { ArrowDownToLine, ArrowUpToLine, BookOpen, ChevronRight, List, Pencil, Plus, Trash2 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
-import { chatTitleLimit } from '@kuroko/contracts/chat';
 import { useI18n } from '../../shared/i18n/i18n';
 import { TemplateGuideModal } from '../../shared/prompt-templates/TemplateHelp';
 import {
@@ -98,8 +98,8 @@ export function ChatMenu({ hasMessages, scrollToStart, scrollToEnd }: {
           <form onSubmit={(event) => { event.preventDefault(); rename(); }}>
             <TextInput ref={titleInput} name="title" label={t('chat.name')} value={draft} disabled={managing}
               onChange={(event) => changeTitle(event.currentTarget.value)}
-              error={invalid && t('chat.titleLength', { count: chatTitleLimit })} />
-            {error && <p className={chatClasses['chat-manager-error']} role="alert">{t(`error.${error}`)}</p>}
+              error={invalid && t('error.chat_title_invalid', { count: chatTitleLimit })} />
+            {error && <p className={chatClasses['chat-manager-error']} role="alert">{t(`error.${error}`, { count: chatTitleLimit })}</p>}
             <Group justify="flex-end" mt="md">
               <Button type="button" variant="default" disabled={managing} onClick={() => show({ kind: 'list' })}>{t('common.cancel')}</Button>
               <Button type="submit" loading={managing} disabled={locked && !managing}>{t('common.save')}</Button>

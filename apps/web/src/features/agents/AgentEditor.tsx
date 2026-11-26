@@ -48,6 +48,12 @@ export function AgentEditor() {
   const issueText = issue && t(issue.key, issue.line ? { line: issue.line } : undefined);
   const editorTab = issue?.field ? issue.field === 'tools' ? 'tools' : 'definition' : tab;
 
+  function openComparison() {
+    setConfirmDelete(false);
+    setComparisonOpen(true);
+    if (!conflict?.latest) compare();
+  }
+
   function textCount(value: string, limit: number) {
     return t('agents.textCount', { count: number.format(value.length), limit: number.format(limit) });
   }
@@ -69,12 +75,9 @@ export function AgentEditor() {
       </div>
     </div>
     {issue && !issue.field && <p className={[classes['agents-error'], classes['agent-editor-error']].join(' ')} role="alert">{issueText}</p>}
-    {conflict && !confirmLeave && <div className={classes['agents-load-error']}>
+    {conflict && !confirmLeave && !confirmDelete && <div className={classes['agents-load-error']}>
       <p className={classes['agents-error']} role="alert">{t('error.agent_conflict')}</p>
-      <Button type="button" variant="default" onClick={() => {
-        setComparisonOpen(true);
-        if (!conflict.latest) compare();
-      }}>{t('agents.compareVersions')}</Button>
+      <Button type="button" variant="default" onClick={openComparison}>{t('agents.compareVersions')}</Button>
     </div>}
     <Tabs className={classes['agent-editor-tabs']} value={editorTab} onChange={(value) => {
       if (!value) return;
@@ -95,7 +98,8 @@ export function AgentEditor() {
             classNames={{ input: classes['agent-writing-input'], description: classes['agent-text-count'] }}
             ref={(input) => { fields.current.description = input; }} maxLength={agentDescriptionLimit} minRows={4} autosize
             inputWrapperOrder={['label', 'input', 'description', 'error']} description={textCount(draft.description, agentDescriptionLimit)}
-            error={issue?.field === 'description' && issueText} onChange={(event) => change({ description: event.currentTarget.value })} />
+            error={issue?.field === 'description' ? issueText
+              : agent?.descriptionIssue && draft.description === agent.description && t('agents.descriptionTemplateInvalid')} onChange={(event) => change({ description: event.currentTarget.value })} />
           <div>
             <PromptTemplateControls text={draft.instructions} disabled={busy} worldId={draft.worldId} worldTitle={draft.worldTitle}
               agentName={draft.name} onWorld={(world, code) => {
@@ -120,7 +124,7 @@ export function AgentEditor() {
       </Tabs.Panel>
     </Tabs>
     {agent && <footer className={classes['agent-editor-footer']}>
-      <Button type="button" variant="subtle" color="red" disabled={busy} onClick={() => {
+      <Button type="button" variant="subtle" color="red" disabled={busy || Boolean(conflict)} onClick={() => {
         clearDeleteError();
         setConfirmDelete(true);
       }}>
@@ -132,12 +136,15 @@ export function AgentEditor() {
       classNames={{ body: classes['agent-delete-dialog'] }} closeButtonProps={{ 'aria-label': t('common.close') }}
       closeOnEscape={!removing} closeOnClickOutside={!removing} withCloseButton={!removing}>
       <p>{t('agents.deleteBody', { name: agent.name })}</p>
-      {deleteError && <p className={classes['agents-error']} role="alert">{t(`error.${deleteError}`)}</p>}
+      {(conflict || deleteError) && <p className={classes['agents-error']} role="alert">
+        {t(conflict ? 'error.agent_conflict' : `error.${deleteError!}`)}
+      </p>}
       <div className={classes['agent-confirm-actions']}>
         <Button type="button" variant="default" disabled={removing} data-autofocus onClick={() => setConfirmDelete(false)}>
           {t('common.cancel')}
         </Button>
-        <Button type="button" color="red" loading={removing} onClick={remove}>{t('common.delete')}</Button>
+        {conflict ? <Button type="button" onClick={openComparison}>{t('agents.compareVersions')}</Button>
+          : <Button type="button" color="red" loading={removing} onClick={remove}>{t('common.delete')}</Button>}
       </div>
     </Modal>}
     {conflict && <Modal opened={comparisonOpen} onClose={() => setComparisonOpen(false)} title={t('agents.compareVersions')}

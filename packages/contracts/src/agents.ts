@@ -3,7 +3,8 @@ import { isAgentToolSelection, readSubagentName, type AgentToolId } from './tool
 
 export type AgentDraft = { name: string; description: string; instructions: string; tools: AgentToolId[]; worldId?: string | null };
 export type UpdateAgent = AgentDraft & { revision: number };
-export type SavedAgent = UpdateAgent & { id: string; worldTitle?: string };
+export type DeleteAgent = Pick<UpdateAgent, 'revision'>;
+export type SavedAgent = UpdateAgent & { id: string; worldTitle?: string; descriptionIssue?: true };
 export type AgentSummary = Pick<SavedAgent, 'id' | 'name' | 'description'>;
 export type AgentField = Exclude<keyof AgentDraft, 'worldId'>;
 

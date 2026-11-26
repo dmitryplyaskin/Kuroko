@@ -1,6 +1,6 @@
 import { attach, combine, createEffect, createEvent, createStore, sample, type StoreValue } from 'effector';
 import {
-  isApiKey, providers, readConnectionName, type ConnectionState, type Provider, type ProviderKey, type SaveConnectionPreset,
+  isApiKey, providers, readConnectionName, type ConnectionState, type Provider, type ProviderKey, type SaveConnectionPreset, type UpdateConnectionPreset,
 } from '@kuroko/contracts/connectionSettings';
 import { readPresetName, type PresetAction, type PresetManagementAction } from '@kuroko/contracts/presets';
 import { abortFx } from '../../shared/async/abort';
@@ -16,7 +16,11 @@ type LoadState = { status: 'loading' } | { status: 'error'; code: ErrorCode } | 
 type KeySubmission = { status: 'idle' | 'added' | 'removed' } | { status: 'error'; code: ErrorCode };
 type KeyAction = { kind: 'deleteKey'; id: string }
   | { kind: 'addKey'; name: FormDataEntryValue | null; apiKey: FormDataEntryValue | null };
-type Mutation = { kind: 'savePreset'; id: string; preset: SaveConnectionPreset }
+type Mutation = ({ kind: 'savePreset' } & ({
+  id?: never; preset: SaveConnectionPreset;
+} | {
+  id: string; preset: UpdateConnectionPreset;
+}))
   | { kind: 'managePreset'; action: PresetManagementAction }
   | { kind: 'addKey'; provider: Provider; presetId: string; name: string; apiKey: string }
   | { kind: 'deleteKey'; provider: Provider; id: string };
@@ -62,7 +66,9 @@ export const mutateConnectionFx = createEffect(async ({ page, mutation }: Mutati
   const { session } = page;
   switch (mutation.kind) {
     case 'savePreset':
-      return { kind: mutation.kind, id: mutation.id, state: await connectionApi.savePreset(session, mutation.id, mutation.preset) };
+      return { kind: mutation.kind, state: mutation.id !== undefined
+        ? await connectionApi.updatePreset(session, mutation.id, mutation.preset)
+        : await connectionApi.createPreset(session, mutation.preset) };
     case 'managePreset':
       return { kind: mutation.kind, action: mutation.action, state: await connectionApi.managePreset(session, mutation.action) };
     case 'addKey':
@@ -230,12 +236,17 @@ export const connectionPresetChangeFx = attach({
     let mutation: Mutation;
     if (action.kind === 'create' || action.kind === 'update') {
       if (catalog.status === 'loading' || endpoints.status === 'loading') return false;
-      const name = action.kind === 'create' ? readPresetName(action.name)
-        : selection.activePreset?.id === action.id ? selection.activePreset.name : undefined;
-      if (!name) throw new ApiError(400, action.kind === 'create' ? 'preset_name_invalid' : 'preset_not_found');
-      const result = validateDraft(selection.draft, selection.keyId, name);
+      const { draft, keyId } = selection;
+      const result = validateDraft(draft, keyId);
       if ('code' in result) throw new ApiError(400, result.code);
-      mutation = { kind: 'savePreset', id: action.kind === 'update' ? action.id : '', preset: result.preset };
+      if (action.kind === 'create') {
+        const name = readPresetName(action.name);
+        if (!name) throw new ApiError(400, 'preset_name_invalid');
+        mutation = { kind: 'savePreset', preset: { ...result.preset, name } };
+      } else {
+        if (draft.base?.id !== action.id) throw new ApiError(409, 'preset_conflict');
+        mutation = { kind: 'savePreset', id: action.id, preset: { ...result.preset, revision: draft.base.revision } };
+      }
     } else {
       mutation = { kind: 'managePreset', action };
     }

@@ -41,6 +41,12 @@ export function chatReplyPrompt(messages: readonly ChatMessage[], replaceId?: nu
 export type ChatSummary = { id: string; title: string; updatedAt: number };
 export const chatTitleLimit = 64;
 
+export function readChatTitle(value: unknown): string | undefined {
+  if (typeof value !== 'string') return;
+  const title = value.trim();
+  if (title && title.isWellFormed() && !/\p{Cc}/u.test(title) && Array.from(title).length <= chatTitleLimit) return title;
+}
+
 export const chatActivityKinds = ['reply', 'instruction', 'model', 'tool', 'agent'] as const;
 export const chatActivityStatuses = ['running', 'completed', 'failed', 'stopped'] as const;
 export type ChatActivityEntry = {

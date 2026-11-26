@@ -3,7 +3,7 @@ import type { Database } from 'bun:sqlite';
 import { createHash } from 'node:crypto';
 import { realmFilterKey, realmTagKeys } from '../realms/realmFilterKeys';
 
-const latestVersion = 20;
+const latestVersion = 21;
 
 const initialSchema = `
   CREATE TABLE vault_settings (
@@ -301,6 +301,23 @@ export function migrateDatabase(db: Database, vaultKey: Buffer) {
       WHEN OLD.world_id IS NOT NEW.world_id AND NEW.revision = OLD.revision
       BEGIN
         UPDATE agents SET revision = revision + 1 WHERE id = NEW.id;
+      END;
+    `);
+
+    if (version < 21) db.exec(`
+      ALTER TABLE connection_presets ADD COLUMN revision INTEGER NOT NULL DEFAULT 0 CHECK (revision >= 0);
+      ALTER TABLE instruction_presets ADD COLUMN revision INTEGER NOT NULL DEFAULT 0 CHECK (revision >= 0);
+
+      CREATE TRIGGER connection_presets_key_revision AFTER UPDATE OF key_id ON connection_presets
+      WHEN OLD.key_id IS NOT NEW.key_id AND NEW.revision = OLD.revision
+      BEGIN
+        UPDATE connection_presets SET revision = revision + 1 WHERE id = NEW.id;
+      END;
+
+      CREATE TRIGGER instruction_presets_world_revision AFTER UPDATE OF world_id ON instruction_presets
+      WHEN OLD.world_id IS NOT NEW.world_id AND NEW.revision = OLD.revision
+      BEGIN
+        UPDATE instruction_presets SET revision = revision + 1 WHERE id = NEW.id;
       END;
     `);
 

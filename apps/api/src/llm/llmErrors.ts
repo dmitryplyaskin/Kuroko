@@ -3,6 +3,7 @@ import type { LlmErrorBody } from '@kuroko/contracts/llm';
 
 const errors = {
   invalid_request: 400,
+  payload_too_large: 413,
   missing_preset: 404,
   missing_key: 422,
   provider_rejected: 422,

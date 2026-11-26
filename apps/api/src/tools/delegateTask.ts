@@ -4,6 +4,7 @@ import { delegatedAnswerLimit, type DelegateTaskRequest, type DelegateTaskResult
 import { runToolCall, toolDeclarations } from '@kuroko/tool-runtime';
 import { createChatActivity, recordModelRequest } from '@kuroko/tool-runtime/chatActivity';
 import { randomUUID } from 'node:crypto';
+import { renderAgentDescription } from '../agents/agentDescription';
 import type { createAgentsStore } from '../agents/agentsStore';
 import { PromptTemplateError, type createPromptRenderer } from '../instructions/promptTemplate';
 import { LlmError } from '../llm/llmErrors';
@@ -19,9 +20,10 @@ export function createSubagentToolDescriptions(
 ) {
   return (userId: number, declarations: LlmTool[]) => {
     if (!declarations.some(({ name }) => name === 'subagent')) return declarations;
-    const catalog = agents.catalog(userId).map(({ id, name, description, worldId }) => ({
-      id, name, description: renderPrompt(userId, { agent: { name } }, worldId)(description).trim(),
-    }));
+    const catalog = agents.catalog(userId).flatMap((agent) => {
+      const description = renderAgentDescription(renderPrompt, userId, agent);
+      return description === undefined ? [] : [{ id: agent.id, name: agent.name, description }];
+    });
     const temporaryTools = tools.temporaryAgentTools(userId);
     return declarations.map((tool) => tool.name === 'subagent' ? {
       ...tool,
@@ -41,7 +43,7 @@ export function createDelegateTask(
   renderPrompt: ReturnType<typeof createPromptRenderer>,
 ) {
   return async (userId: number, { task, name: instanceName, agentId, history = [] }: DelegateTaskRequest, signal: AbortSignal,
-    onActivity?: (entry: ChatActivityEntry) => void): Promise<DelegateTaskResult> => {
+    onActivity?: (entry: ChatActivityEntry, signal: AbortSignal) => Promise<void>): Promise<DelegateTaskResult> => {
     signal.throwIfAborted();
     const enabled = tools.list(userId);
     if (!enabled.includes('subagent')) return { result: 'Tool is not enabled.', isError: true };
@@ -82,7 +84,7 @@ export function createDelegateTask(
     const timeout = AbortSignal.timeout(120_000);
     const runSignal = AbortSignal.any([signal, timeout]);
     const fail = (result: string): DelegateTaskResult => ({ result, isError: true, toolCalls: trace.length ? trace : undefined });
-    const start = onActivity && createChatActivity(onActivity);
+    const start = onActivity && createChatActivity((entry) => onActivity(entry, runSignal));
 
     try {
       for (let round = 0; round <= maxToolRounds; round++) {
@@ -112,8 +114,9 @@ export function createDelegateTask(
 
         const results = await Promise.all(calls.map(async (call) => {
           const activity = start?.('tool', { arguments: call.arguments }, call.name);
+          await activity?.ready;
           const result = await runToolCall(call, allowedTools, { signal: runSignal, id: `sub_${randomUUID()}`, history: trace });
-          activity?.finish(result.entry.isError ? 'failed' : 'completed', {
+          await activity?.finish(result.entry.isError ? 'failed' : 'completed', {
             result: result.entry.result,
             ...(result.message.content !== result.entry.result && { modelResult: result.message.content }),
           });

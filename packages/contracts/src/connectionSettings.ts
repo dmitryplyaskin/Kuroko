@@ -21,7 +21,8 @@ export type ConnectionSettings = {
 };
 
 export type SaveConnectionPreset = { name: string; provider: Provider; settings: ConnectionSettings; keyId: string | null };
-export type ConnectionPreset = ConnectionSettings & Preset & { provider: Provider; keyId: string | null };
+export type UpdateConnectionPreset = Omit<SaveConnectionPreset, 'name'> & { revision: number };
+export type ConnectionPreset = ConnectionSettings & Preset & Pick<UpdateConnectionPreset, 'provider' | 'keyId' | 'revision'>;
 export type ProviderKey = { id: string; name: string; provider: Provider };
 export type ConnectionState = {
   activePresetId: string | null;

@@ -1,5 +1,5 @@
 import type { MessageKey } from '../../shared/i18n/i18n';
-import { readAgent, type AgentDraft, type AgentField, type SavedAgent } from '@kuroko/contracts/agents';
+import { readAgent, type AgentDraft, type AgentField, type DeleteAgent, type SavedAgent } from '@kuroko/contracts/agents';
 import { createEffect, createEvent, createStore, sample } from 'effector';
 import { inActiveSession, $activeSession, protectedRequestFailed, sessionEnded, type ActiveSession } from '../../platform/session/model';
 import { sessionRequest } from '../../platform/session/request';
@@ -17,8 +17,8 @@ const saveFx = createEffect(({ session, agent, draft }: { session: ActiveSession
     : sessionRequest<SavedAgent>(session, path, { method: 'POST', body: draft }));
 const compareFx = createEffect(({ session, id }: { session: ActiveSession; id: string }) =>
   sessionRequest<SavedAgent>(session, agentPath(id)));
-const removeFx = createEffect(({ session, id }: { session: ActiveSession; id: string }) =>
-  sessionRequest<void>(session, agentPath(id), { method: 'DELETE' }));
+const removeFx = createEffect(({ session, id, revision }: { session: ActiveSession; id: string } & DeleteAgent) =>
+  sessionRequest<void>(session, agentPath(id), { method: 'DELETE', body: { revision } }));
 const loaded = inActiveSession(loadFx.done, (session) => session);
 const failed = inActiveSession(loadFx.fail, (session) => session);
 const saved = inActiveSession(saveFx.done, ({ session }) => session);
@@ -38,7 +38,7 @@ export const $agentLibrary = createStore(initial)
 sample({
   clock: agentsOpened,
   source: { session: $activeSession, library: $agentLibrary },
-  filter: ({ session, library }) => session !== null && (library.status === 'idle' || library.status === 'error'),
+  filter: ({ session, library }) => session !== null && (library.status !== 'loading'),
   fn: ({ session }) => session!,
   target: loadFx,
 });
@@ -122,7 +122,10 @@ export const $agentEditor = createStore<AgentEditorState | null>(null)
     ...(errorCode(error) === 'agent_conflict' ? { conflict: {} } : { issue: validationIssue(error) }),
   })
   .on(removeFx, (editor) => editor && { ...editor, status: 'deleting', deleteError: undefined })
-  .on(removeFailed, (editor, { error }) => editor && { ...editor, status: 'idle', deleteError: errorCode(error) })
+  .on(removeFailed, (editor, { error }) => editor && {
+    ...editor, status: 'idle',
+    ...(errorCode(error) === 'agent_conflict' ? { conflict: {} } : { deleteError: errorCode(error) }),
+  })
   .on(compareFx, (editor) => editor && { ...editor, status: 'comparing', conflict: {} })
   .on(compared, (editor, { result }) => editor && { ...editor, status: 'idle', conflict: { latest: result } })
   .on(compareFailed, (editor, { error }) => editor && { ...editor, status: 'idle', conflict: { error: errorCode(error) } })
@@ -182,8 +185,8 @@ sample({
 sample({
   clock: agentDeleteRequested,
   source: { session: $activeSession, editor: $agentEditor },
-  filter: ({ session, editor }) => session !== null && editor?.status === 'idle' && Boolean(editor.agent),
-  fn: ({ session, editor }) => ({ session: session!, id: editor!.agent!.id }),
+  filter: ({ session, editor }) => session !== null && editor?.status === 'idle' && !editor.conflict && Boolean(editor.agent),
+  fn: ({ session, editor }) => ({ session: session!, id: editor!.agent!.id, revision: editor!.agent!.revision }),
   target: removeFx,
 });
 sample({

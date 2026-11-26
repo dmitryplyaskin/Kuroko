@@ -1,7 +1,7 @@
 import type { SavedChat } from '@kuroko/contracts/chat';
 import { errorBody } from '@kuroko/contracts/errors';
 import { isWorldBinding, readInstructionText, type ActiveChatInstruction } from '@kuroko/contracts/instructions';
-import { readPresetName } from '@kuroko/contracts/presets';
+import { isPresetRevision, readPresetName } from '@kuroko/contracts/presets';
 import { Router, type RequestHandler } from 'express';
 import { createPresetRouter, respondToPresetWrite } from '../http/presetRouter';
 import type { createInstructionStore } from './instructionStore';
@@ -85,7 +85,12 @@ export function createInstructionRouter(
       return;
     }
     if (id) {
-      respondToPresetWrite(response, store.savePreset(userId, id, draft), () => store.read(userId));
+      const revision: unknown = request.body?.revision;
+      if (!isPresetRevision(revision)) {
+        response.status(400).json(errorBody('preset_settings_invalid', 'revision'));
+        return;
+      }
+      respondToPresetWrite(response, store.savePreset(userId, id, { ...draft, revision }), () => store.read(userId));
       return;
     }
     const name = readPresetName(request.body?.name);

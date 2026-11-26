@@ -53,7 +53,7 @@ export function createApiRouter(db: Database, vaultKey: Buffer, secureCookie: bo
     response.json({ status: 'ok' });
   });
   router.use('/auth', authRouter);
-  router.use('/agents', requireUser, createAgentsRouter(agents, worldExists));
+  router.use('/agents', requireUser, createAgentsRouter(agents, worldExists, renderPrompt));
   router.use('/settings/chat', requireUser, createChatSettingsRouter(createChatSettingsStore(db)));
   router.use('/settings/instructions', requireUser, createInstructionRouter(instructions, chats.find, worldExists, renderPrompt, preparePrompt));
   router.use('/settings/tools', requireUser, createToolsRouter(tools, presets.listPresets));

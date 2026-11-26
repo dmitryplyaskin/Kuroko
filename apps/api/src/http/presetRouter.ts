@@ -2,7 +2,7 @@ import { errorBody } from '@kuroko/contracts/errors';
 import { readPresetName } from '@kuroko/contracts/presets';
 import { Router, type RequestHandler, type Response } from 'express';
 
-export type PresetWriteResult = 'saved' | 'missing-preset' | 'duplicate';
+export type PresetWriteResult = 'saved' | 'missing-preset' | 'duplicate' | 'conflict';
 
 type PresetStore = {
   read(userId: number): object;
@@ -16,6 +16,7 @@ export function respondToPresetWrite(
   response: Response, result: PresetWriteResult, read: () => object, status = 200,
 ) {
   if (result === 'missing-preset') response.status(404).json(errorBody('preset_not_found'));
+  else if (result === 'conflict') response.status(409).json(errorBody('preset_conflict'));
   else if (result === 'duplicate') response.status(409).json(errorBody('preset_name_taken', 'name'));
   else response.status(status).json(read());
 }

@@ -1,5 +1,5 @@
 import {
-  chatActivityKinds, chatActivityStatuses, chatReplyPrompt, chatTitleLimit,
+  chatActivityKinds, chatActivityStatuses, chatReplyPrompt, readChatTitle,
   type ChatActivityEntry, type ChatActivityTurn, type ChatMessage, type ChatReasoningBlock, type ChatSnapshot, type ChatToolCall,
 } from '@kuroko/contracts/chat';
 import { errorBody } from '@kuroko/contracts/errors';
@@ -22,10 +22,9 @@ export function createChatRouter(store: ReturnType<typeof createChatStore>, gmRe
     else response.status(404).json(errorBody('chat_not_found'));
   });
   router.put('/:id/title', (request, response) => {
-    const value = record(request.body)?.title;
-    const title = typeof value === 'string' ? value.trim() : '';
-    if (!title || !title.isWellFormed() || /\p{Cc}/u.test(title) || Array.from(title).length > chatTitleLimit) {
-      response.status(400).json(errorBody('invalid_request'));
+    const title = readChatTitle(record(request.body)?.title);
+    if (!title) {
+      response.status(400).json(errorBody('chat_title_invalid', 'title'));
       return;
     }
     const chat = store.rename(response.locals.user.id, request.params.id, title);

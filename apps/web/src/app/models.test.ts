@@ -23,7 +23,7 @@ import {
 } from '../features/connection/model';
 import { $modelCatalog, loadModelCatalogFx } from '../features/connection/modelCatalog';
 import { $agentEditor, $agentLibrary, agentDraftChanged, agentEditorOpened, agentSaveRequested, agentsOpened } from '../features/agents/model';
-import { $instructions, instructionDraftChanged, instructionsOpened } from '../features/instructions/model';
+import { $instructions, changeInstructionFx, instructionDraftChanged, instructionsOpened } from '../features/instructions/model';
 import { templatePreview } from '../features/instructions/templateQueries';
 import {
   $realmAvatarOperation, $realmEditor, processRealmAvatarFx, realmAvatarSelected,
@@ -47,7 +47,7 @@ const noChatSettings = () => ({ settings: null, legacy: undefined });
 const connection: ConnectionState = {
   activePresetId: 'one',
   presets: [{
-    ...defaultConnectionSettings, id: 'one', name: 'Первый пресет', model: 'demo-model', provider: 'openai', keyId: 'key',
+    ...defaultConnectionSettings, id: 'one', name: 'Первый пресет', model: 'demo-model', provider: 'openai', keyId: 'key', revision: 0,
   }],
   keys: [
     { id: 'key', name: 'Первый ключ', provider: 'openai' },
@@ -162,11 +162,18 @@ test('legacy chat preferences are a draft and are applied only after a successfu
 
 test('copying a saved connection keeps the current draft and applying it loads its saved settings', async () => {
   const copy = { ...connection.presets[0]!, id: 'copy', name: 'Копия' };
-  const copied = { ...connection, presets: [...connection.presets, copy] };
+  const fresh = { ...connection.presets[0]!, model: 'changed-remotely', revision: 1 };
+  const copied = { ...connection, presets: [fresh, copy] };
   const scope = fork({
     handlers: [
       [loadConnectionFx, () => connection],
       [mutateConnectionFx, ({ mutation }: Parameters<typeof mutateConnectionFx>[0]) => {
+        if (mutation.kind === 'savePreset') {
+          assert.equal(mutation.id, 'one');
+          assert.equal(mutation.preset.revision, 0);
+          assert.equal(mutation.preset.settings.model, 'custom-model');
+          throw new ApiError(409, 'preset_conflict');
+        }
         assert.equal(mutation.kind, 'managePreset');
         const { action } = mutation;
         if (action.kind === 'apply' && action.id === 'missing') throw new ApiError(404, 'preset_not_found');
@@ -179,6 +186,9 @@ test('copying a saved connection keeps the current draft and applying it loads i
   await allSettled(connectionDraftChanged, { scope, params: { model: 'custom-model' } });
   await allSettled(connectionPresetChangeFx, { scope, params: { kind: 'copy', id: 'one', name: 'Копия' } });
   assert.equal(scope.getState($connectionSelection).presetId, 'one');
+  assert.equal(scope.getState($connectionSelection).draft.model, 'custom-model');
+  const stale = await allSettled(connectionPresetChangeFx, { scope, params: { kind: 'update', id: 'one' } });
+  assert.equal(stale.status, 'fail');
   assert.equal(scope.getState($connectionSelection).draft.model, 'custom-model');
 
   const failed = await allSettled(connectionPresetChangeFx, { scope, params: { kind: 'apply', id: 'missing' } });
@@ -1090,10 +1100,19 @@ test('chat recovers a send to a deleted conversation and keeps its text when ope
 test('instructions keeps a dirty draft on re-entry and resets it when the account session ends', async () => {
   const originalFetch = globalThis.fetch;
   let loads = 0;
-  globalThis.fetch = (async (input) => {
-    assert.equal(input, '/api/settings/instructions');
+  const preset = { id: 'first', name: 'Стиль', text: 'Сохранённая инструкция', revision: 0 };
+  const fresh = { ...preset, text: 'Новая версия', revision: 1 };
+  globalThis.fetch = (async (input, init) => {
+    const root = '/api/settings/instructions';
+    if (input === root + '/presets/first') {
+      assert.equal(init?.method, 'PUT');
+      assert.deepEqual(JSON.parse(String(init?.body)), { text: 'Черновик инструкции', revision: 0 });
+      return Response.json({ code: 'preset_conflict' }, { status: 409 });
+    }
+    if (input === root + '/presets/first/apply') return Response.json({ activePresetId: 'first', presets: [fresh] });
+    assert.equal(input, root);
     loads++;
-    return Response.json({ activePresetId: 'first', presets: [{ id: 'first', name: 'Стиль', text: 'Сохранённая инструкция' }] });
+    return Response.json({ activePresetId: 'first', presets: [preset] });
   }) as typeof fetch;
   try {
     const scope = fork();
@@ -1102,7 +1121,11 @@ test('instructions keeps a dirty draft on re-entry and resets it when the accoun
     await allSettled(instructionDraftChanged, { scope, params: { text: 'Черновик инструкции' } });
     await allSettled(instructionsOpened, { scope });
     assert.equal(loads, 1);
-    assert.partialDeepStrictEqual(scope.getState($instructions), { status: 'ready', draft: { text: 'Черновик инструкции' } });
+    const stale = await allSettled(changeInstructionFx, { scope, params: { kind: 'update', id: 'first' } });
+    assert.equal(stale.status, 'fail');
+    assert.partialDeepStrictEqual(scope.getState($instructions), { status: 'ready', draft: { text: 'Черновик инструкции', revision: 0 } });
+    await allSettled(changeInstructionFx, { scope, params: { kind: 'apply', id: 'first' } });
+    assert.partialDeepStrictEqual(scope.getState($instructions), { status: 'ready', draft: { text: fresh.text, revision: fresh.revision } });
     await allSettled(sessionEndRequested, { scope, params: { session: scope.getState($activeSession)! } });
     assert.deepEqual(scope.getState($instructions), { status: 'idle' });
   } finally {

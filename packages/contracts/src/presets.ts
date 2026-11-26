@@ -8,6 +8,10 @@ export type PresetAction = PresetManagementAction
   | { kind: 'create'; name: string }
   | { kind: 'update'; id: string };
 
+export function isPresetRevision(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+}
+
 export const presetNameLimit = 120;
 
 export function readPresetName(value: unknown): string | undefined {

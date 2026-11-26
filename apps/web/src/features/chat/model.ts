@@ -1,7 +1,7 @@
 import type { MessageKey } from '../../shared/i18n/i18n';
 import { combine, createEffect, createEvent, createStore, sample, scopeBind, type StoreValue } from 'effector';
 import {
-  chatReplyPrompt, chatTitleLimit, type ChatActivityEntry, type ChatActivityTurn, type ChatReasoningBlock, type ChatReplyVariantSelection,
+  chatReplyPrompt, readChatTitle, type ChatActivityEntry, type ChatActivityTurn, type ChatReasoningBlock, type ChatReplyVariantSelection,
   type ChatReplyVariants, type ChatSnapshot, type ChatSummary, type ChatToolCall, type SavedChat,
 } from '@kuroko/contracts/chat';
 import type { ToolId } from '@kuroko/contracts/tools';
@@ -229,7 +229,7 @@ const rename = sample({
   filter: ({ manager, locked }) => !locked && manager.dialog?.kind === 'rename',
   fn: ({ manager }) => {
     const title = manager.draft.trim();
-    return { id: (manager.dialog as { chat: ChatSummary }).chat.id, title, valid: Boolean(title && Array.from(title).length <= chatTitleLimit) };
+    return { id: (manager.dialog as { chat: ChatSummary }).chat.id, title, valid: Boolean(readChatTitle(title)) };
   },
 });
 $chatManager.on(rename, (state, { valid }) => ({ ...state, invalid: !valid }));

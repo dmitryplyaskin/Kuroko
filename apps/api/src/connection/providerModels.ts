@@ -55,14 +55,14 @@ const catalogProviders: Record<Provider, CatalogProvider> = {
 };
 
 export async function listProviderModels(
-  provider: Provider, apiKey: string, connections: ProviderConnections, baseUrl?: string,
+  provider: Provider, apiKey: string, connections: ProviderConnections, clientSignal: AbortSignal, baseUrl?: string,
 ): Promise<CatalogResult> {
   const { path, readPage, cursorParam, readModel } = catalogProviders[provider];
   if (provider === 'custom' && !baseUrl) return catalogUnavailable;
   const connection = provider === 'custom' ? connections.custom(baseUrl!) : connections[provider];
   const headers = new Headers({ Accept: 'application/json', ...connection.headers(apiKey) });
   const url = connection.catalogUrl(path);
-  const signal = AbortSignal.timeout(10_000);
+  const signal = AbortSignal.any([clientSignal, AbortSignal.timeout(10_000)]);
   const models = new Map<string, ProviderModel>();
   const cursors = new Set<string>();
 
@@ -102,12 +102,14 @@ export async function listProviderModels(
   return { models: [...models.values()].sort((first, second) => first.id.localeCompare(second.id)) };
 }
 
-export async function listOpenRouterEndpoints(model: string, apiKey: string, connection: ProviderConnections['openrouter']) {
+export async function listOpenRouterEndpoints(
+  model: string, apiKey: string, connection: ProviderConnections['openrouter'], clientSignal: AbortSignal,
+) {
   const [author, slug, ...rest] = model.split('/');
   if (!author || !isModelId(slug) || rest.length) return;
   const url = connection.catalogUrl(`models/${encodeURIComponent(author)}/${encodeURIComponent(slug)}/endpoints`);
   const headers = { Accept: 'application/json', ...connection.headers(apiKey) };
-  const signal = AbortSignal.timeout(10_000);
+  const signal = AbortSignal.any([clientSignal, AbortSignal.timeout(10_000)]);
   try {
     const response = await connection.fetch(url, { headers, signal });
     if (!response.ok) {

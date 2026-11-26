@@ -4,10 +4,10 @@ import { attach, createEffect, createEvent, createStore, sample } from 'effector
 import { createPresetControlsModel, requestPresetAction } from '../../platform/presets';
 import { inActiveSession, $activeSession, protectedRequestFailed, sessionEnded, type ActiveSession } from '../../platform/session/model';
 import { sessionRequest } from '../../platform/session/request';
-import { errorCode, type ErrorCode } from '../../shared/http/api';
+import { ApiError, errorCode, type ErrorCode } from '../../shared/http/api';
 
 type Change = PresetAction | { kind: 'clear' };
-type Draft = InstructionDraft & { worldTitle?: string };
+type Draft = InstructionDraft & { worldTitle?: string; revision?: number; baseId?: string };
 type Editor = { status: 'ready' | 'saving'; data: InstructionSettings; draft: Draft; error?: ErrorCode };
 type View = Editor | { status: 'idle' | 'loading' } | { status: 'error'; code: ErrorCode };
 
@@ -17,12 +17,12 @@ export const instructionsOpened = createEvent();
 export const instructionDraftChanged = createEvent<Partial<Draft>>();
 
 const loadFx = createEffect((session: ActiveSession) => sessionRequest<InstructionSettings>(session, path));
-const saveFx = createEffect(({ session, change, draft }: { session: ActiveSession; change: Change; draft?: InstructionDraft }) => {
+const saveFx = createEffect(({ session, change, draft, revision }: { session: ActiveSession; change: Change; draft?: InstructionDraft; revision?: number }) => {
   switch (change.kind) {
     case 'create':
       return sessionRequest<InstructionSettings>(session, presetsPath, { method: 'POST', body: { name: change.name, ...draft } });
     case 'update':
-      return sessionRequest<InstructionSettings>(session, `${presetsPath}/${encodeURIComponent(change.id)}`, { method: 'PUT', body: draft });
+      return sessionRequest<InstructionSettings>(session, `${presetsPath}/${encodeURIComponent(change.id)}`, { method: 'PUT', body: { ...draft, revision } });
     case 'clear':
       return sessionRequest<InstructionSettings>(session, `${path}/active`, { method: 'DELETE' });
     default:
@@ -32,7 +32,10 @@ const saveFx = createEffect(({ session, change, draft }: { session: ActiveSessio
 
 function activeDraft({ activePresetId, presets }: InstructionSettings): Draft {
   const active = presets.find(({ id }) => id === activePresetId);
-  return { text: active?.text ?? '', worldId: active?.worldId, worldTitle: active?.worldTitle };
+  return {
+    text: active?.text ?? '', worldId: active?.worldId, worldTitle: active?.worldTitle,
+    revision: active?.revision, baseId: active?.id,
+  };
 }
 
 const loaded = inActiveSession(loadFx.done, (session) => session);
@@ -52,7 +55,8 @@ export const $instructions = createStore<View>({ status: 'idle' })
     const next = activeDraft(result);
     const previous = view.status === 'saving' ? activeDraft(view.data) : undefined;
     const keepDraft = view.status === 'saving' && (change.kind === 'rename' || change.kind === 'copy') &&
-      result.activePresetId === view.data.activePresetId && next.text === previous?.text && next.worldId === previous.worldId;
+      (view.draft.text !== previous?.text || view.draft.worldId !== previous.worldId || view.draft.baseId !== previous.baseId ||
+        view.draft.revision !== previous.revision);
     return { status: 'ready', data: result, draft: keepDraft ? view.draft : next };
   })
   .on(saveFailed, (view, { change, error }) => view.status === 'saving' ? {
@@ -66,7 +70,11 @@ export const changeInstructionFx = attach({
     if (!session || view.status !== 'ready') return false;
     const text = readInstructionText(view.draft.text);
     if ((change.kind === 'create' || change.kind === 'update') && !text) return false;
-    await saveFx({ session, change, draft: text ? { text, worldId: view.draft.worldId } : undefined });
+    const { worldId, revision, baseId } = view.draft;
+    if (change.kind === 'update' && (change.id !== baseId || revision === undefined)) {
+      throw new ApiError(409, 'preset_conflict');
+    }
+    await saveFx({ session, change, draft: text ? { text, worldId } : undefined, revision });
     return !session.signal.aborted;
   },
 });
@@ -80,7 +88,8 @@ sample({
     if (!session || view.status === 'loading' || view.status === 'saving') return false;
     if (view.status !== 'ready') return true;
     const initial = activeDraft(view.data);
-    return view.draft.text === initial.text && (view.draft.worldId ?? null) === (initial.worldId ?? null);
+    return view.draft.baseId === initial.baseId && view.draft.revision === initial.revision &&
+      view.draft.text === initial.text && (view.draft.worldId ?? null) === (initial.worldId ?? null);
   },
   fn: ({ session }) => session!,
   target: loadFx,

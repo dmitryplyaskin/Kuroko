@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, expect, spyOn, test } from 'bun:test';
 import { randomBytes } from 'node:crypto';
 import { once } from 'node:events';
-import type { Server } from 'node:http';
+import type { Server, ServerResponse } from 'node:http';
 import type { AgentDraft, SavedAgent } from '@kuroko/contracts/agents';
 import type { ChatActivityTurn, ChatMessage, ChatSnapshot, ChatToolCall, SavedChat } from '@kuroko/contracts/chat';
 import { defaultChatSettings } from '@kuroko/contracts/chatSettings';
@@ -35,10 +35,10 @@ afterEach(async () => {
   db.close();
 });
 
-type RequestOptions = { method?: string; body?: object; cookie?: string; account?: number; withHeader?: boolean; signal?: AbortSignal };
+type RequestOptions = { headers?: Record<string, string>; method?: string; body?: object; cookie?: string; account?: number; withHeader?: boolean; signal?: AbortSignal };
 
-function request(path: string, { method = 'GET', body, cookie, account, withHeader = true, signal }: RequestOptions = {}) {
-  const headers = new Headers();
+function request(path: string, { method = 'GET', body, cookie, account, withHeader = true, signal, headers: additionalHeaders }: RequestOptions = {}) {
+  const headers = new Headers(additionalHeaders);
   if (method !== 'GET' && withHeader) headers.set('X-Kuroko-Request', '1');
   if (body) headers.set('Content-Type', 'application/json');
   if (cookie) headers.set('Cookie', cookie);
@@ -360,7 +360,7 @@ test('manages private chat instruction presets and reads the current selection a
   expect(created.status).toBe(201);
   const { activePresetId, presets: [preset] } = await created.json() as InstructionSettings;
   if (!activePresetId || !preset) throw new Error('Expected a new active instruction preset');
-  expect(preset).toEqual({ id: activePresetId, name: 'Диалог', text: instruction });
+  expect(preset).toEqual({ id: activePresetId, name: 'Диалог', text: instruction, revision: 0 });
   expect((await create('Диалог', 'Другая инструкция')).status).toBe(409);
   expect(await active()).toEqual({ text: instruction });
   expect(await active(other)).toEqual({ text: null });
@@ -368,7 +368,7 @@ test('manages private chat instruction presets and reads the current selection a
 
   const presetPath = `${path}/presets/${activePresetId}`;
   expect((await request(`${presetPath}/apply`, { method: 'PUT', cookie: other })).status).toBe(404);
-  expect((await request(presetPath, { method: 'PUT', cookie: other, body: { text: 'Чужой текст' } })).status).toBe(404);
+  expect((await request(presetPath, { method: 'PUT', cookie: other, body: { text: 'Чужой текст', revision: preset.revision } })).status).toBe(404);
   const copied = await request(`${presetPath}/copy`, { method: 'POST', cookie, body: { name: 'Копия' } });
   expect(copied.status).toBe(201);
   const copyState = await copied.json() as InstructionSettings;
@@ -381,10 +381,15 @@ test('manages private chat instruction presets and reads the current selection a
   const second = sessionCookie(await login('instructions-owner')).token;
   const copyPath = `${path}/presets/${copy.id}`;
   expect((await request(`${copyPath}/apply`, { method: 'PUT', cookie: second })).status).toBe(200);
-  expect((await request(copyPath, { method: 'PUT', cookie, body: { text: 'Подробно опиши сцену.' } })).status).toBe(200);
-  expect(await active(second)).toEqual({ text: 'Подробно опиши сцену.' });
+  const update = { text: 'Подробно опиши сцену.', revision: copy.revision };
+  expect((await request(copyPath, { method: 'PUT', cookie, body: update })).status).toBe(200);
+  expect((await request(copyPath, { method: 'PUT', cookie, body: update })).status).toBe(200);
+  const stale = await request(copyPath, { method: 'PUT', cookie: second, body: { ...update, text: 'Устаревший черновик' } });
+  expect(stale.status).toBe(409);
+  expect(await stale.json()).toEqual({ code: 'preset_conflict' });
+  expect(await active(second)).toEqual({ text: update.text });
   expect(await (await request(`${path}/active`, { method: 'DELETE', cookie })).json()).toMatchObject({
-    activePresetId: null, presets: expect.arrayContaining([{ ...copy, text: 'Подробно опиши сцену.' }]),
+    activePresetId: null, presets: expect.arrayContaining([{ ...copy, text: update.text, revision: copy.revision + 1 }]),
   });
   expect(await active(second)).toEqual({ text: null });
   expect((await request(`${copyPath}/apply`, { method: 'PUT', cookie })).status).toBe(200);
@@ -454,7 +459,11 @@ test('renames an owned chat independently of history and deletes its activity wi
 
   expect((await rename(other, 'Чужой чат')).status).toBe(404);
   expect((await remove(other)).status).toBe(404);
-  expect((await rename(cookie, ' '.repeat(10))).status).toBe(400);
+  for (const title of [' '.repeat(10), 'Первый\tвторой', '\uD800', '🌙'.repeat(65)]) {
+    const invalid = await rename(cookie, title);
+    expect(invalid.status).toBe(400);
+    expect(await invalid.json()).toEqual({ code: 'chat_title_invalid', field: 'title' });
+  }
   expect(await (await rename(cookie, '  Хроника  ')).json()).toMatchObject({ id, title: 'Хроника' });
   expect((await save({ ...snapshot, activity: { ...snapshot.activity!, promptId: 99 } })).status).toBe(400);
   const committed = await (await save()).json() as SavedChat;
@@ -627,7 +636,7 @@ test('manages and applies connection presets and unlinks a deleted key from all 
   const payload = await saved.text();
   expect(payload).not.toContain(apiKey);
   const firstId = JSON.parse(payload).activePresetId as string;
-  expect(JSON.parse(payload).presets).toEqual([{ ...settings, name: body.name, id: firstId, provider: 'openai', keyId: key.id }]);
+  expect(JSON.parse(payload).presets).toEqual([{ ...settings, name: body.name, id: firstId, provider: 'openai', keyId: key.id, revision: 0 }]);
   expect((await request(path, { method: 'POST', cookie, body })).status).toBe(409);
 
   const second = { ...body, name: 'Короткая сцена', settings: { ...settings, responseTokens: 500 } };
@@ -657,17 +666,27 @@ test('manages and applies connection presets and unlinks a deleted key from all 
   expect((await copyFirst('Копия')).status).toBe(409);
   expect(await (await applyFirst()).json()).toMatchObject({ activePresetId: firstId });
   expect(await (await request(connectionPath, { cookie })).json()).toMatchObject({ activePresetId: firstId });
-  expect((await request(`${path}/${firstId}`, { method: 'PUT', cookie: otherCookie, body })).status).toBe(404);
+  const update = { provider: body.provider, keyId: key.id, settings: { ...settings, model: 'new-model' }, revision: 0 };
+  const secondSession = sessionCookie(await login('owner')).token;
+  expect((await request(`${path}/${firstId}`, { method: 'PUT', cookie: otherCookie, body: update })).status).toBe(404);
   expect((await request(`${path}/${firstId}`, { method: 'DELETE', cookie: otherCookie })).status).toBe(404);
-  const updated = await request(`${path}/${firstId}`, { method: 'PUT', cookie, body: { ...body, name: 'Обновлённая сцена' } });
+  const updated = await request(`${path}/${firstId}`, {
+    method: 'PUT', cookie, body: { ...update, name: body.name },
+  });
   expect(await updated.json()).toMatchObject({ activePresetId: firstId, presets: expect.arrayContaining([
-    expect.objectContaining({ id: firstId, name: 'Обновлённая сцена', responseTokens: 2000 }),
+    expect.objectContaining({ id: firstId, name: 'Переименованная сцена', model: update.settings.model, revision: 1 }),
     expect.objectContaining({ id: secondId, name: second.name, responseTokens: 500 }),
   ]) });
 
+  const stale = await request(`${path}/${firstId}`, {
+    method: 'PUT', cookie: secondSession, body: { ...update, settings },
+  });
+  expect(stale.status).toBe(409);
+  expect(await stale.json()).toEqual({ code: 'preset_conflict' });
+
   const unlinked = await request(`${connectionPath}/keys/openai/${key.id}`, { method: 'DELETE', cookie });
   expect(await unlinked.json()).toMatchObject({ activePresetId: firstId, keys: [], presets: expect.arrayContaining([
-    expect.objectContaining({ id: firstId, keyId: null }), expect.objectContaining({ id: secondId, keyId: null }),
+    expect.objectContaining({ id: firstId, keyId: null, revision: 2 }), expect.objectContaining({ id: secondId, keyId: null, revision: 1 }),
   ]) });
   expect(db.query('SELECT id FROM secrets').all()).toEqual([]);
   expect(await (await request(`${path}/${firstId}`, { method: 'DELETE', cookie })).json()).toMatchObject({
@@ -779,6 +798,155 @@ function gmProviderStream(content: string, calls: { name: string; arguments: obj
     headers: { 'Content-Type': 'text/event-stream' },
   });
 }
+
+test('keeps generation available when a saved subagent description cannot render', async () => {
+  await register('invalid-description-owner');
+  const cookie = sessionCookie(await login('invalid-description-owner')).token;
+  await saveGenerationPreset(cookie, 'openai', 'fixture-description-key');
+  await request('/settings/tools/subagent', { method: 'PUT', cookie, body: { enabled: true } });
+  const draft = { instructions: 'Summarize the request.', tools: [] };
+  const create = (name: string, description: string) =>
+    request('/agents', { method: 'POST', cookie, body: { ...draft, name, description } });
+  const good = await (await create('Available', 'Summarizes requests')).json() as SavedAgent;
+  const broken = await (await create('Missing variable', '{{ vars.difficulty }}')).json() as SavedAgent;
+  expect(broken.descriptionIssue).toBe(true);
+  expect(await (await request('/agents', { cookie })).json()).toEqual([good, broken]);
+
+  const upstream = mockGeneration((_url, init) => {
+    const input = JSON.parse(String(init?.body));
+    const description = input.tools[0].function.description;
+    expect(description).toContain(good.id);
+    expect(description).not.toContain(broken.id);
+    return Response.json({ choices: [{ message: { content: 'Answer' }, finish_reason: 'stop' }] });
+  });
+  try {
+    expect((await request(generatePath, {
+      method: 'POST', cookie, body: { messages: greeting, tools: toolDeclarations(['subagent']) },
+    })).status).toBe(200);
+  } finally {
+    upstream.mockRestore();
+  }
+});
+
+test('rejects oversized provider requests after serialization', async () => {
+  await register('provider-size-owner');
+  const cookie = sessionCookie(await login('provider-size-owner')).token;
+  await saveGenerationPreset(cookie, 'openai', 'fixture-size-key');
+  let called = false;
+  const mock = mockGeneration(() => {
+    called = true;
+    return new Response(null, { status: 500 });
+  });
+  try {
+    const limit = 4 * 1024 * 1024;
+    const body = { messages: [{ role: 'user', content: '' }] };
+    body.messages[0]!.content = 'a'.repeat(limit - 8 - Buffer.byteLength(JSON.stringify(body)));
+    const response = await request(generatePath, { method: 'POST', cookie, body });
+    expect(response.status).toBe(413);
+    expect(await response.json()).toEqual({ code: 'payload_too_large' });
+    expect(called).toBe(false);
+  } finally {
+    mock.mockRestore();
+  }
+});
+
+test.each(['models', 'openrouter/endpoints'])('cancels the provider catalog when the browser closes %s', async (route) => {
+  await register('catalog-cancel-owner');
+  const cookie = sessionCookie(await login('catalog-cancel-owner')).token;
+  const { id: keyId } = await (await addKey(cookie, 'openrouter', 'Catalog key', 'fixture-catalog-key')).json() as ProviderKey;
+  const started = Promise.withResolvers<AbortSignal>();
+  const upstream = Promise.withResolvers<Response>();
+  const mock = mockGeneration((_url, init) => {
+    started.resolve(init!.signal!);
+    return upstream.promise;
+  });
+  const client = new AbortController();
+  try {
+    const pending = request(connectionPath + '/' + route, {
+      method: 'POST', cookie, signal: client.signal, body: { provider: 'openrouter', model: 'author/model', keyId },
+    });
+    const signal = await Promise.race([started.promise, pending.then(() => { throw new Error('Expected an upstream request'); })]);
+    const cancelled = once(signal, 'abort', { signal: AbortSignal.timeout(2_000) });
+    client.abort();
+    await expect(pending).rejects.toHaveProperty('name', 'AbortError');
+    await cancelled;
+    expect(signal.aborted).toBe(true);
+  } finally {
+    client.abort();
+    upstream.resolve(new Response(null, { status: 502 }));
+    mock.mockRestore();
+  }
+});
+
+function blockSseWrite(prefix: string) {
+  const blocked = Promise.withResolvers<ServerResponse>();
+  server.prependOnceListener('request', (_request, response) => {
+    const write = response.write;
+    response.write = function (chunk, ...args) {
+      const accepted = Reflect.apply(write, this, [chunk, ...args]) as boolean;
+      if (!String(chunk).startsWith(prefix)) return accepted;
+      response.write = write;
+      blocked.resolve(response);
+      return false;
+    };
+  });
+  return blocked.promise;
+}
+
+test('waits for delegation activity to drain before calling the provider', async () => {
+  await register('delegate-drain-owner');
+  const cookie = sessionCookie(await login('delegate-drain-owner')).token;
+  const presetId = await saveGenerationPreset(cookie, 'openai', 'fixture-delegate-key');
+  await request('/settings/tools/subagent-connection', { method: 'PUT', cookie, body: { presetId } });
+  await request('/settings/tools/subagent', { method: 'PUT', cookie, body: { enabled: true } });
+  let called = false;
+  const mock = mockGeneration(() => {
+    called = true;
+    return Response.json({ choices: [{ message: { content: 'Answer' }, finish_reason: 'stop' }] });
+  });
+  const client = new AbortController();
+  try {
+    const blocked = blockSseWrite('event: activity');
+    const reply = request('/llm/delegate', {
+      method: 'POST', cookie, signal: client.signal, headers: { Accept: 'text/event-stream' }, body: { task: 'Summarize.' },
+    });
+    const response = await blocked;
+    await Bun.sleep(25);
+    expect(called).toBe(false);
+    response.emit('drain');
+    const output = await (await reply).text();
+    expect(called).toBe(true);
+    expect(output).toContain('event: done');
+  } finally {
+    client.abort();
+    mock.mockRestore();
+  }
+});
+
+test('applies the generation deadline while waiting to send final tool calls', async () => {
+  await register('generation-drain-owner');
+  const cookie = sessionCookie(await login('generation-drain-owner')).token;
+  await saveGenerationPreset(cookie, 'openai', 'fixture-generation-drain-key');
+  const mock = mockGeneration(() => gmProviderStream('', [{ name: 'test_echo', arguments: { text: 'Done' } }]));
+  const deadline = new AbortController();
+  const timeout = AbortSignal.timeout;
+  const timer = spyOn(AbortSignal, 'timeout').mockImplementation((ms) => ms === 120_000 ? deadline.signal : timeout(ms));
+  const client = new AbortController();
+  try {
+    const blocked = blockSseWrite('event: tool_call');
+    const reply = request(generatePath, { method: 'POST', cookie, signal: client.signal, body: { messages: greeting, stream: true } });
+    await blocked;
+    deadline.abort(new DOMException('Generation timed out', 'TimeoutError'));
+    const output = await (await reply).text();
+    expect(output).toContain('event: error');
+    expect(output).toContain('"code":"timeout"');
+    expect(output).not.toContain('event: done');
+  } finally {
+    client.abort();
+    timer.mockRestore();
+    mock.mockRestore();
+  }
+});
 
 test('uses saved world variables and start context in chat and game master instructions', async () => {
   await register('template-owner');
@@ -892,7 +1060,7 @@ test('discovers account-owned agents and runs saved instructions with only the s
   const path = `/agents/${agent.id}`;
   const rename = (actor: string) => request(path, { method: 'PUT', cookie: actor, body: { ...draft, name: 'Летописец', revision: agent.revision } });
   expect((await rename(other)).status).toBe(404);
-  expect((await request(path, { method: 'DELETE', cookie: other })).status).toBe(404);
+  expect((await request(path, { method: 'DELETE', cookie: other, body: { revision: agent.revision } })).status).toBe(404);
   expect(await (await request('/agents', { cookie: other })).json()).toEqual([]);
 
   const presetId = await saveGenerationPreset(cookie, 'openai', 'saved-agent-key');
@@ -968,7 +1136,15 @@ test('discovers account-owned agents and runs saved instructions with only the s
     expect(upstream.at(-1)!.messages.slice(1)).toEqual([
       { role: 'user', content: 'Брось кубик.' }, { role: 'assistant', content: 'Выпало 3.' }, { role: 'user', content: followUp },
     ]);
-    expect((await request(path, { method: 'DELETE', cookie })).status).toBe(204);
+    const secondSession = sessionCookie(await login('saved-agent-owner')).token;
+    expect((await rename(secondSession)).status).toBe(200);
+    const remove = (revision: number) => request(path, { method: 'DELETE', cookie, body: { revision } });
+    expect((await request(path, { method: 'DELETE', cookie })).status).toBe(400);
+    const staleDelete = await remove(agent.revision);
+    expect(staleDelete.status).toBe(409);
+    expect(await staleDelete.json()).toEqual({ code: 'agent_conflict' });
+    expect(await (await request(path, { cookie })).json()).toMatchObject({ name: 'Летописец', revision: agent.revision + 1 });
+    expect((await remove(agent.revision + 1)).status).toBe(204);
     expect(await (await request('/agents', { cookie })).json()).toEqual([secondAgent]);
     expect(await (await delegate({ task, agentId: agent.id })).json()).toMatchObject({ isError: true });
   } finally {
@@ -1373,7 +1549,7 @@ test('keeps chat reply variants in order and restores their tools and activity',
   const created = await (await request('/chats', { method: 'POST', cookie })).json() as SavedChat;
   const path = `/chats/${created.id}`;
   const prompt: ChatMessage = { id: 1, role: 'user', text: 'Что у двери?', time: 1 };
-  const original: ChatMessage = { id: 2, role: 'assistant', text: 'Горит лампа.', time: 2, edited: true,
+  const original: ChatMessage = { id: 4, role: 'assistant', text: 'Горит лампа.', time: 2, edited: true,
     toolCalls: [{ id: 'original_call', name: 'test_echo', arguments: { message: 'лампа' }, result: 'лампа' }] };
   const second: ChatMessage = { id: 2, role: 'assistant', text: 'Висит фонарь.', time: 3 };
   const third: ChatMessage = { id: 2, role: 'assistant', text: 'Стоит свеча.', time: 4 };
@@ -1384,7 +1560,7 @@ test('keeps chat reply variants in order and restores their tools and activity',
   const save = (chat: SavedChat, messages: ChatMessage[], extra?: Partial<Pick<ChatSnapshot, 'activity' | 'replaceId'>>) =>
     request(path, { method: 'PUT', cookie, body: { revision: chat.revision, messages, ...extra } });
   const select = (chat: SavedChat, index: number, owner = cookie) => request(`${path}/reply-variant`, {
-    method: 'PUT', cookie: owner, body: { revision: chat.revision, replyId: original.id, index },
+    method: 'PUT', cookie: owner, body: { revision: chat.revision, replyId: second.id, index },
   });
   const ok = async (response: Response) => {
     expect(response.status).toBe(200);
@@ -1399,16 +1575,17 @@ test('keeps chat reply variants in order and restores their tools and activity',
   expect((await select(regenerated, 0, other)).status).toBe(404);
   expect((await select(regenerated, 2)).status).toBe(409);
   const restored = await ok(await select(regenerated, 0));
-  expect(restored.messages).toEqual([prompt, original]);
+  const restoredOriginal = { ...original, id: second.id };
+  expect(restored.messages).toEqual([prompt, restoredOriginal]);
   expect(restored.activity).toEqual([activity(original)]);
   expect(restored.replyVariants).toEqual({ 2: { index: 0, total: 2 } });
   expect(await ok(await select(regenerated, 0))).toEqual(restored);
 
-  const regeneratedAgain = await ok(await save(restored, [prompt, third], { replaceId: original.id, activity: activity(third) }));
+  const regeneratedAgain = await ok(await save(restored, [prompt, third], { replaceId: second.id, activity: activity(third) }));
   expect(regeneratedAgain.replyVariants).toEqual({ 2: { index: 2, total: 3 } });
   const followUp: ChatMessage = { id: 3, role: 'user', text: 'Захожу.', time: 5 };
   const continued = await ok(await save(regeneratedAgain, [...regeneratedAgain.messages, followUp]));
-  expect((await save(continued, [prompt, third, followUp], { replaceId: original.id })).status).toBe(409);
+  expect((await save(continued, [prompt, third, followUp], { replaceId: second.id })).status).toBe(409);
   const middle = await ok(await select(continued, 1));
   expect(middle.messages).toEqual([prompt, second, followUp]);
   expect(middle.activity).toEqual([activity(second)]);
@@ -1417,7 +1594,7 @@ test('keeps chat reply variants in order and restores their tools and activity',
 
   const orphan = await ok(await save(middle, [second, followUp]));
   const selectedOrphan = await ok(await select(orphan, 0));
-  expect(selectedOrphan.messages).toEqual([original, followUp]);
+  expect(selectedOrphan.messages).toEqual([restoredOriginal, followUp]);
   expect(selectedOrphan.activity).toBeUndefined();
   const deleted = await ok(await save(selectedOrphan, [followUp]));
   expect(deleted.replyVariants).toBeUndefined();

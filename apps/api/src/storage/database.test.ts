@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { openDatabase } from './database';
 import { createProviderKeyStore } from '../connection/providerKeyStore';
 
-test.each([1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19])('upgrades a version %i SQLite database without losing user data', (version) => {
+test.each([1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20])('upgrades a version %i SQLite database without losing user data', (version) => {
   const directory = mkdtempSync(join(tmpdir(), 'kuroko-sqlite-test-'));
   const path = join(directory, 'test.sqlite');
   const vaultKey = randomBytes(32);
@@ -19,7 +19,13 @@ test.each([1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19])('upg
   try {
     const old = openDatabase(path, vaultKey);
     try {
-      old.exec('DROP TRIGGER agents_world_revision; ALTER TABLE agents DROP COLUMN revision');
+      old.exec(`
+        DROP TRIGGER connection_presets_key_revision;
+        DROP TRIGGER instruction_presets_world_revision;
+        ALTER TABLE connection_presets DROP COLUMN revision;
+        ALTER TABLE instruction_presets DROP COLUMN revision;
+      `);
+      if (version < 20) old.exec('DROP TRIGGER agents_world_revision; ALTER TABLE agents DROP COLUMN revision');
       old.run('INSERT INTO users (username, username_key, password_hash) VALUES (?, ?, ?)', ['Лина', 'лина', 'test-hash']);
       if (version < 17) old.exec('DROP TABLE instruction_presets');
       else {
@@ -51,7 +57,7 @@ test.each([1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19])('upg
           specVersion: '0.1.0', id: 'island', title: 'Остров', base: 'Море', author: ' Лина ', tags: ['Туман', 'туман', 'Море'],
         })]);
         if (version >= 9) old.run('UPDATE realms SET author_key = ?, tag_keys_json = ? WHERE id = ?', ['лина', '["туман","море"]', 'old-realm']);
-        if (version === 19) old.exec("UPDATE agents SET world_id = 'old-realm' WHERE id = 'old-agent'");
+        if (version >= 19) old.exec("UPDATE agents SET world_id = 'old-realm' WHERE id = 'old-agent'");
       }
       if (version < 7) old.exec('DROP TABLE chat_private_turns; ALTER TABLE chats DROP COLUMN gm_mode');
       if (version < 6) old.exec('DROP TABLE enabled_tools');
@@ -71,12 +77,12 @@ test.each([1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19])('upg
 
     const migrated = openDatabase(path, vaultKey);
     try {
-      expect(migrated.query('PRAGMA user_version').get()).toEqual({ user_version: 20 });
+      expect(migrated.query('PRAGMA user_version').get()).toEqual({ user_version: 21 });
       expect(migrated.query('SELECT * FROM instruction_presets').all()).toEqual(version < 17 ? [] : [
-        { id: 'old-instruction', user_id: 1, name: 'Стиль', text: '{{ literal }}', active: 1, world_id: null },
+        { id: 'old-instruction', user_id: 1, name: 'Стиль', text: '{{ literal }}', active: 1, world_id: null, revision: 0 },
       ]);
       expect(migrated.query('SELECT * FROM agents').all()).toEqual(version < 15 ? [] : [
-        { ...legacyAgent, world_id: version === 19 ? 'old-realm' : null, revision: 0 },
+        { ...legacyAgent, world_id: version >= 19 ? 'old-realm' : null, revision: version === 20 ? 1 : 0 },
       ]);
       expect(migrated.query('SELECT * FROM temporary_agent_tools').all()).toEqual([]);
       expect(migrated.query('SELECT * FROM chat_reply_variants').all()).toEqual([]);

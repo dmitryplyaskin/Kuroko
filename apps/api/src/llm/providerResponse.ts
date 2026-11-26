@@ -3,7 +3,7 @@ import { parseObject, record } from './json';
 import { LlmError, upstreamError } from './llmErrors';
 
 export type ProviderFrame = { event?: string; data: string };
-const responseByteLimit = 4 * 1024 * 1024;
+export const providerBodyByteLimit = 4 * 1024 * 1024;
 
 async function* readBody(body: NonNullable<Response['body']>, signal: AbortSignal) {
   const reader = body.getReader();
@@ -26,7 +26,7 @@ async function* readBody(body: NonNullable<Response['body']>, signal: AbortSigna
       signal.throwIfAborted();
       if (done) break;
       bytes += value.byteLength;
-      if (bytes > responseByteLimit) throw new LlmError('provider_protocol');
+      if (bytes > providerBodyByteLimit) throw new LlmError('provider_protocol');
       yield decode(value);
     }
     complete = true;

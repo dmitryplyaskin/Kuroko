@@ -1,5 +1,5 @@
 import { once } from 'node:events';
-import { Router } from 'express';
+import { Router, type Response } from 'express';
 import { isAgentId } from '@kuroko/contracts/agents';
 import { errorBody } from '@kuroko/contracts/errors';
 import type { LlmEvent } from '@kuroko/contracts/llm';
@@ -16,6 +16,38 @@ import { readLlmRequest } from './readLlmRequest';
 
 function sse<T extends { type: string }>(event: T) {
   return `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`;
+}
+
+function createEventStream(response: Response) {
+  let heartbeat: ReturnType<typeof setInterval> | undefined;
+  let pending = Promise.resolve();
+  return {
+    start() {
+      response.set({
+        'Content-Type': 'text/event-stream; charset=utf-8',
+        'Cache-Control': 'no-store, no-transform',
+        'X-Accel-Buffering': 'no',
+      });
+      response.flushHeaders();
+      heartbeat = setInterval(() => {
+        if (!response.destroyed && !response.writableNeedDrain) response.write(': keep-alive\n\n');
+      }, 15_000);
+    },
+    emit(event: Exclude<LlmEvent | DelegateTaskEvent, { type: 'error' }>, signal: AbortSignal) {
+      pending = pending.then(async () => {
+        signal.throwIfAborted();
+        if (!response.write(sse(event))) await once(response, 'drain', { signal });
+      });
+      return pending;
+    },
+    fail(error: LlmError) {
+      if (response.writableNeedDrain) response.destroy();
+      else response.end(sse({ type: 'error', ...error.body }));
+    },
+    stop() {
+      clearInterval(heartbeat);
+    },
+  };
 }
 
 function readDelegation(value: unknown): DelegateTaskRequest | undefined {
@@ -59,37 +91,25 @@ export function createLlmRouter(
     const disconnect = () => controller.abort();
     response.once('close', disconnect);
     const streaming = request.get('Accept') === 'text/event-stream';
-    let heartbeat: ReturnType<typeof setInterval> | undefined;
-    function emit(event: DelegateTaskEvent) {
-      if (!controller.signal.aborted) response.write(sse(event));
-    }
+    const output = createEventStream(response);
+    const deadline = streaming ? AbortSignal.timeout(120_000) : undefined;
+    const signal = deadline ? AbortSignal.any([controller.signal, deadline]) : controller.signal;
     try {
-      if (streaming) {
-        response.set({
-          'Content-Type': 'text/event-stream; charset=utf-8',
-          'Cache-Control': 'no-store, no-transform',
-          'X-Accel-Buffering': 'no',
-        });
-        response.flushHeaders();
-        heartbeat = setInterval(() => {
-          if (!response.destroyed && !response.writableNeedDrain) response.write(': keep-alive\n\n');
-        }, 15_000);
-      }
-      const result = await delegateTask(response.locals.user.id, input, controller.signal,
-        streaming ? (entry) => emit({ type: 'activity', entry }) : undefined);
+      if (streaming) output.start();
+      const result = await delegateTask(response.locals.user.id, input, signal,
+        streaming ? (entry, activitySignal) => output.emit({ type: 'activity', entry }, activitySignal) : undefined);
       if (controller.signal.aborted) return;
       if (streaming) {
-        emit({ type: 'done', result });
+        await output.emit({ type: 'done', result }, signal);
         response.end();
       } else response.json(result);
     } catch (error) {
       if (controller.signal.aborted || response.destroyed) return;
       if (!streaming || !response.headersSent) throw error;
-      const failure = error instanceof LlmError ? error : new LlmError('internal_error');
-      emit({ type: 'error', ...failure.body });
-      response.end();
+      const failure = deadline?.aborted ? new LlmError('timeout') : error instanceof LlmError ? error : new LlmError('internal_error');
+      output.fail(failure);
     } finally {
-      clearInterval(heartbeat);
+      output.stop();
       response.off('close', disconnect);
     }
   });
@@ -98,34 +118,15 @@ export function createLlmRouter(
     const controller = new AbortController();
     const disconnect = () => controller.abort();
     response.once('close', disconnect);
-    let heartbeat: ReturnType<typeof setInterval> | undefined;
-
-    function start() {
-      response.set({
-        'Content-Type': 'text/event-stream; charset=utf-8',
-        'Cache-Control': 'no-store, no-transform',
-        'X-Accel-Buffering': 'no',
-      });
-      response.flushHeaders();
-      heartbeat = setInterval(() => {
-        if (!response.destroyed && !response.writableNeedDrain) response.write(': keep-alive\n\n');
-      }, 15_000);
-    }
-
-    async function emit(event: LlmEvent, signal = controller.signal) {
-      signal.throwIfAborted();
-      if (!response.write(sse(event))) {
-        await once(response, 'drain', { signal });
-      }
-    }
+    const output = createEventStream(response);
 
     try {
       const input = readLlmRequest(request.body);
       const userId: number = response.locals.user.id;
       if (input.tools) input.tools = describeTools(userId, input.tools);
-      const completion = await llm.generate(userId, input, controller.signal, input.stream ? { start, emit } : undefined);
+      const completion = await llm.generate(userId, input, controller.signal, input.stream ? output : undefined);
       if (input.stream) {
-        if (!controller.signal.aborted) response.end(sse({ type: 'done', completion }));
+        if (!controller.signal.aborted) response.end();
       } else {
         response.json(completion);
       }
@@ -136,13 +137,10 @@ export function createLlmRouter(
         return;
       }
       const failure = error instanceof LlmError ? error : new LlmError('internal_error');
-      if (response.headersSent) {
-        response.end(sse({ type: 'error', ...failure.body }));
-      } else {
-        response.status(failure.status).json(failure.body);
-      }
+      if (response.headersSent) output.fail(failure);
+      else response.status(failure.status).json(failure.body);
     } finally {
-      clearInterval(heartbeat);
+      output.stop();
       response.off('close', disconnect);
     }
   });

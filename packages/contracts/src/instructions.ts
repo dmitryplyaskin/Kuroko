@@ -3,7 +3,8 @@ import type { LlmMessage } from './llm';
 
 export type ActiveChatInstruction = { text: string | null; messages?: LlmMessage[] };
 export type InstructionDraft = { text: string; worldId?: string | null };
-export type InstructionPreset = Preset & InstructionDraft & { worldTitle?: string };
+export type UpdateInstructionPreset = InstructionDraft & { revision: number };
+export type InstructionPreset = Preset & UpdateInstructionPreset & { worldTitle?: string };
 export type InstructionSettings = { activePresetId: string | null; presets: InstructionPreset[] };
 
 export const instructionTextLimit = 16_000;

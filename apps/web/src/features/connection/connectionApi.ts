@@ -1,4 +1,4 @@
-import type { ConnectionState, OpenRouterEndpoint, Provider, ProviderKey, ProviderModel, SaveConnectionPreset } from '@kuroko/contracts/connectionSettings';
+import type { ConnectionState, OpenRouterEndpoint, Provider, ProviderKey, ProviderModel, SaveConnectionPreset, UpdateConnectionPreset } from '@kuroko/contracts/connectionSettings';
 import type { PresetManagementAction } from '@kuroko/contracts/presets';
 import type { ActiveSession } from '../../platform/session/model';
 import { sessionRequest } from '../../platform/session/request';
@@ -10,11 +10,10 @@ const keysPath = (provider: Provider) => `${path}/keys/${provider}`;
 
 export const connectionApi = {
   load: (session: ActiveSession, signal: AbortSignal) => sessionRequest<ConnectionState>(session, path, { signal }),
-  savePreset: (session: ActiveSession, id: string, preset: SaveConnectionPreset) => sessionRequest<ConnectionState>(
-    session,
-    id ? `${presetsPath}/${encodeURIComponent(id)}` : presetsPath,
-    { method: id ? 'PUT' : 'POST', body: preset },
-  ),
+  createPreset: (session: ActiveSession, preset: SaveConnectionPreset) =>
+    sessionRequest<ConnectionState>(session, presetsPath, { method: 'POST', body: preset }),
+  updatePreset: (session: ActiveSession, id: string, preset: UpdateConnectionPreset) =>
+    sessionRequest<ConnectionState>(session, `${presetsPath}/${encodeURIComponent(id)}`, { method: 'PUT', body: preset }),
   managePreset: (session: ActiveSession, action: PresetManagementAction) =>
     requestPresetAction<ConnectionState>(session, presetsPath, action),
   models: (session: ActiveSession, provider: Provider, keyId: string, baseUrl: string | undefined, signal: AbortSignal) =>

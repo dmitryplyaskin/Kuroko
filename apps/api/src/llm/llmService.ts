@@ -1,16 +1,16 @@
 import { isApiKey } from '@kuroko/contracts/connectionSettings';
-import type { LlmCompletion, LlmEvent, LlmRequest, LlmTextDelta } from '@kuroko/contracts/llm';
+import type { LlmCompletion, LlmEvent, LlmRequest } from '@kuroko/contracts/llm';
 import type { createConnectionStore } from '../connection/connectionStore';
 import type { ProviderConnections } from '../connection/providerConnections';
 import type { ProviderKeyStore } from '../connection/providerKeyStore';
 import { LlmError, upstreamError } from './llmErrors';
 import { providerAdapters } from './providerAdapters';
-import { ProviderOutput, readProviderFrames } from './providerResponse';
+import { ProviderOutput, providerBodyByteLimit, readProviderFrames } from './providerResponse';
 import { validateParameterOverrides } from './readLlmRequest';
 
 type StreamOutput = {
   start: () => void;
-  emit: (event: LlmTextDelta | Extract<LlmEvent, { type: 'tool_call' }>, signal: AbortSignal) => Promise<void>;
+  emit: (event: Exclude<LlmEvent, { type: 'error' }>, signal: AbortSignal) => Promise<void>;
 };
 
 export function createLlmService(
@@ -36,6 +36,7 @@ export function createLlmService(
         settings, messages: request.messages, tools: request.tools ?? [], toolChoice: request.toolChoice, stream,
         includeReasoning: request.includeReasoning,
       }));
+      if (Buffer.byteLength(body) > providerBodyByteLimit) throw new LlmError('payload_too_large');
       const url = connection.generationUrl(model, stream);
       const timeout = AbortSignal.timeout(120_000);
       const signal = AbortSignal.any([clientSignal, timeout]);
@@ -68,19 +69,20 @@ export function createLlmService(
         for await (const delta of adapter.read(frames, output, stream)) {
           if (downstream) await downstream.emit(delta, signal);
         }
+        const completion = complete(output, id, provider, preset.model, settings.contextTokens);
+        if (downstream) {
+          for (const part of completion.message.parts) {
+            if (part.type === 'toolCall') await downstream.emit({ type: 'tool_call', call: part }, signal);
+          }
+          await downstream.emit({ type: 'done', completion }, signal);
+        }
+        return completion;
       } catch (error) {
         if (clientSignal.aborted) throw clientSignal.reason;
         if (timeout.aborted) throw new LlmError('timeout');
         if (error instanceof LlmError) throw error;
         throw new LlmError('provider_unavailable');
       }
-      const completion = complete(output, id, provider, preset.model, settings.contextTokens);
-      if (downstream) {
-        for (const part of completion.message.parts) {
-          if (part.type === 'toolCall') await downstream.emit({ type: 'tool_call', call: part }, clientSignal);
-        }
-      }
-      return completion;
     },
   };
 }

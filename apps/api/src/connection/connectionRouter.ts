@@ -1,6 +1,6 @@
 import { errorBody } from '@kuroko/contracts/errors';
-import { readPresetName } from '@kuroko/contracts/presets';
-import { Router, type RequestHandler } from 'express';
+import { isPresetRevision, readPresetName } from '@kuroko/contracts/presets';
+import { Router, type RequestHandler, type Response } from 'express';
 import {
   isApiKey, isModelId, isProvider, readConnectionName, readConnectionSettings, readCustomBaseUrl,
 } from '@kuroko/contracts/connectionSettings';
@@ -17,12 +17,15 @@ export function createConnectionRouter(
 ) {
   const router = Router();
   const save: RequestHandler<{ id?: string }> = (request, response) => {
-    const provider: unknown = request.body?.provider;
+    const { id } = request.params;
     const name = readPresetName(request.body?.name);
-    if (!name) {
-      response.status(400).json(errorBody('preset_name_invalid', 'name'));
+    const revision: unknown = request.body?.revision;
+    const identity = id ? (isPresetRevision(revision) ? { id, revision } : undefined) : (name ? { name } : undefined);
+    if (!identity) {
+      response.status(400).json(id ? errorBody('preset_settings_invalid', 'revision') : errorBody('preset_name_invalid', 'name'));
       return;
     }
+    const provider: unknown = request.body?.provider;
     if (provider === 'custom' && !readCustomBaseUrl(request.body?.settings?.baseUrl)) {
       response.status(400).json(errorBody('custom_api_url_invalid', 'baseUrl'));
       return;
@@ -35,8 +38,7 @@ export function createConnectionRouter(
     }
 
     const userId: number = response.locals.user.id;
-    const id = request.params.id ?? null;
-    const result = store.save(userId, id, { name, provider, settings, keyId });
+    const result = store.save(userId, { ...identity, provider, settings, keyId });
     if (result === 'missing-key') response.status(404).json(missingKey);
     else respondToPresetWrite(response, result, () => store.read(userId), id ? 200 : 201);
   };
@@ -97,9 +99,12 @@ export function createConnectionRouter(
       return;
     }
 
-    const result = await listProviderModels(provider, apiKey, connections, baseUrl);
-    if ('code' in result) response.status(result.status).json(errorBody(result.code));
-    else response.json({ models: result.models.filter(({ id }) => !apiKey || !id.includes(apiKey)) });
+    await withCatalogClient(response, async (signal) => {
+      const result = await listProviderModels(provider, apiKey, connections, signal, baseUrl);
+      if (signal.aborted) return;
+      if ('code' in result) response.status(result.status).json(errorBody(result.code));
+      else response.json({ models: result.models.filter(({ id }) => !apiKey || !id.includes(apiKey)) });
+    });
   });
 
   router.post('/openrouter/endpoints', async (request, response) => {
@@ -113,12 +118,26 @@ export function createConnectionRouter(
       response.status(404).json(missingKey);
       return;
     }
-    const endpoints = await listOpenRouterEndpoints(model, apiKey, connections.openrouter);
-    if (!endpoints) response.status(424).json(errorBody('openrouter_endpoints_unavailable'));
-    else response.json({ endpoints });
+    await withCatalogClient(response, async (signal) => {
+      const endpoints = await listOpenRouterEndpoints(model, apiKey, connections.openrouter, signal);
+      if (signal.aborted) return;
+      if (!endpoints) response.status(424).json(errorBody('openrouter_endpoints_unavailable'));
+      else response.json({ endpoints });
+    });
   });
 
   return router;
+}
+
+async function withCatalogClient(response: Response, load: (signal: AbortSignal) => Promise<void>) {
+  const controller = new AbortController();
+  const disconnect = () => controller.abort();
+  response.once('close', disconnect);
+  try {
+    await load(controller.signal);
+  } finally {
+    response.off('close', disconnect);
+  }
 }
 
 function isIdentifier(value: unknown): value is string {
