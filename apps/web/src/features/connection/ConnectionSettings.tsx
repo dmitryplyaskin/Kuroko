@@ -12,22 +12,22 @@ import { ProviderKeysDialog } from './ProviderKeysDialog';
 import {
   $connectionLoad, $connectionSelection, $keyManagerOpen, $keyPending, $keySubmission, $presetPending,
   connectionDraftChanged, connectionEndpointsRequested, connectionModelsRequested, connectionTabClosed,
-  connectionPresetChangeFx, connectionProviderChanged, connectionRetryRequested, keyManagerClosed, keyManagerOpened,
+  connectionPresetControls, connectionProviderChanged, connectionRetryRequested, keyManagerClosed, keyManagerOpened,
 } from './model';
 import { $modelCatalog, $openRouterEndpoints } from './modelCatalog';
-import './connectionSettings.css';
+import classes from './ConnectionSettings.module.css';
 
 const providerOptions = Object.entries(providers).map(([value, { label }]) => ({ value, label }));
 
 export default function ConnectionSettings() {
   const { t, number, decimalSeparator } = useI18n();
   const {
-    load, retry, selection, saving, keyPending, catalog, updateDraft, changeProvider, changePreset,
+    load, retry, selection, saving, keyPending, catalog, updateDraft, changeProvider,
     loadModels, endpoints, loadEndpoints, keySubmission, closeTab, keyManagerOpen, openKeyManager, dismissKeyManager,
   } = useUnit({
     load: $connectionLoad, retry: connectionRetryRequested, selection: $connectionSelection, saving: $presetPending,
     keyPending: $keyPending, catalog: $modelCatalog, updateDraft: connectionDraftChanged,
-    changeProvider: connectionProviderChanged, changePreset: connectionPresetChangeFx,
+    changeProvider: connectionProviderChanged,
     loadModels: connectionModelsRequested, keySubmission: $keySubmission,
     endpoints: $openRouterEndpoints, loadEndpoints: connectionEndpointsRequested,
     closeTab: connectionTabClosed, keyManagerOpen: $keyManagerOpen, openKeyManager: keyManagerOpened, dismissKeyManager: keyManagerClosed,
@@ -51,7 +51,7 @@ export default function ConnectionSettings() {
 
   if (load.status === 'error') {
     return (
-      <div className="connection-feedback">
+      <div className={classes['connection-feedback']}>
         <p role="alert">{t(`error.${load.code}`)}</p>
         <Button variant="default" onClick={retry}>{t('common.retryLoad')}</Button>
       </div>
@@ -94,12 +94,12 @@ export default function ConnectionSettings() {
 
   return (
     <>
-      <div className="connection-preset">
+      <div className={classes['connection-preset']}>
         <PresetControls presets={load.data.presets} selectedId={load.data.activePresetId} disabled={saving || keyPending}
-          saveDisabled={loadingModels || loadingEndpoints} onAction={changePreset} />
+          saveDisabled={loadingModels || loadingEndpoints} model={connectionPresetControls} />
       </div>
-      <div className="connection-columns">
-        <fieldset className="field-group connection-group" disabled={saving}>
+      <div className={classes['connection-columns']}>
+        <fieldset className={['field-group', classes['connection-group']].join(' ')} disabled={saving}>
           <legend>{t('connection.providerAndModel')}</legend>
           <NativeSelect label={t('connection.provider')} value={provider}
             data={providerOptions.map((option) => option.value === 'custom' ? { ...option, label: t('connection.custom') } : option)} onChange={(event) => {
@@ -112,7 +112,7 @@ export default function ConnectionSettings() {
               error={draft.baseUrl && !readCustomBaseUrl(draft.baseUrl) ? t('error.custom_api_url_invalid') : undefined}
               onChange={(event) => updateDraft({ baseUrl: event.currentTarget.value })} />
           )}
-          <div className="connection-key-control">
+          <div className={classes['connection-key-control']}>
             <NativeSelect label={t('common.apiKey')} value={keyId} data={keyOptions}
               onChange={(event) => updateDraft({ keyId: event.currentTarget.value })} />
             <Tooltip label={t('connection.providerKeys', { provider: providerLabel })} events={{ hover: true, focus: true, touch: false }}>
@@ -129,13 +129,13 @@ export default function ConnectionSettings() {
             rightSection={models.length ? <ChevronDown size={15} aria-hidden="true" /> : undefined}
             error={Boolean(draft.model.trim()) && !isModelId(draft.model.trim()) ? t('error.model_id_invalid') : undefined}
             onChange={(value) => updateDraft({ model: value })} />
-          {modelLimits && <p className="connection-hint">{t('connection.modelLimits', { limits: modelLimits })}</p>}
-          <div className="connection-catalog">
+          {modelLimits && <p className={classes['connection-hint']}>{t('connection.modelLimits', { limits: modelLimits })}</p>}
+          <div className={classes['connection-catalog']}>
             <Button type="button" variant="default" loading={loadingModels} onClick={loadModels}>
               {models.length ? t('connection.refreshModels') : t('connection.loadModels')}
             </Button>
-            {catalog.status === 'error' && <p className="connection-error" role="alert">{t(`error.${catalog.code}`)}</p>}
-            <output className="connection-hint">
+            {catalog.status === 'error' && <p className={classes['connection-error']} role="alert">{t(`error.${catalog.code}`)}</p>}
+            <output className={classes['connection-hint']}>
               {loadingModels && t('connection.loadingModels')}
               {catalog.status === 'ready' && (models.length
                 ? t('connection.modelsFound', { count: number.format(models.length) })
@@ -143,15 +143,15 @@ export default function ConnectionSettings() {
             </output>
           </div>
           {provider === 'openrouter' && (
-            <div className="connection-group">
+            <div className={classes['connection-group']}>
               <NativeSelect label={t('connection.openrouterProvider')} value={draft.openrouterProvider} data={routeOptions}
                 onChange={(event) => updateDraft({ openrouterProvider: event.currentTarget.value })} />
-              <div className="connection-catalog">
+              <div className={classes['connection-catalog']}>
                 <Button type="button" variant="default" loading={loadingEndpoints} onClick={loadEndpoints}>
                   {t('connection.loadOpenrouterProviders')}
                 </Button>
-                {endpoints.status === 'error' && <p className="connection-error" role="alert">{t(`error.${endpoints.code}`)}</p>}
-                <output className="connection-hint">
+                {endpoints.status === 'error' && <p className={classes['connection-error']} role="alert">{t(`error.${endpoints.code}`)}</p>}
+                <output className={classes['connection-hint']}>
                   {loadingEndpoints && t('common.loading')}
                   {endpoints.status === 'ready' && !routes.length && t('connection.noOpenrouterProviders')}
                 </output>
@@ -160,18 +160,18 @@ export default function ConnectionSettings() {
           )}
         </fieldset>
 
-        <div className="connection-parameters">
-          <fieldset className="field-group connection-group" disabled={saving}>
+        <div>
+          <fieldset className={['field-group', classes['connection-group']].join(' ')} disabled={saving}>
             <legend>{t('connection.tokenLimits')}</legend>
-            <div className="connection-fields">
+            <div className={classes['connection-fields']}>
               {numberField('contextTokens', t('connection.context'), t('connection.contextHint'))}
               {numberField('responseTokens', t('connection.response'), t('connection.responseHint'))}
             </div>
           </fieldset>
-          <fieldset className="field-group connection-group" disabled={saving}>
+          <fieldset className={['field-group', classes['connection-group']].join(' ')} disabled={saving}>
             <legend>{t('connection.generation')}</legend>
-            <p className="connection-hint">{t('connection.generationHint')}</p>
-            <div className="connection-fields">
+            <p className={classes['connection-hint']}>{t('connection.generationHint')}</p>
+            <div className={classes['connection-fields']}>
               {numberField('temperature', t('connection.temperature'), t('connection.temperatureHint'))}
               {numberField('topP', t('connection.topP'), t('connection.topPHint'))}
               {providerConfig.topK && numberField('topK', t('connection.topK'), t('connection.topKHint'))}

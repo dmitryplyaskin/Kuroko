@@ -1,10 +1,10 @@
-import { attach, createEffect, createEvent, createStore, sample } from 'effector';
-import type { AgentToolId, ToolId, ToolPreset, ToolsResponse } from '@kuroko/contracts/tools';
+import { attach, combine, createEffect, createEvent, createStore, sample } from 'effector';
+import { isAgentToolId, type AgentToolId, type ToolId, type ToolPreset, type ToolsResponse } from '@kuroko/contracts/tools';
 import type { PresetAction } from '@kuroko/contracts/presets';
-import { $activeSession, protectedRequestFailed, sessionEnded, sessionStarted, type ActiveSession } from '../../platform/session/model';
-import { inActiveSession, sessionRequest } from '../../platform/session/request';
+import { inActiveSession, $activeSession, protectedRequestFailed, sessionEnded, sessionStarted, type ActiveSession } from '../../platform/session/model';
+import { sessionRequest } from '../../platform/session/request';
 import { errorCode, type ErrorCode } from '../../shared/http/api';
-import { requestPresetAction } from '../../platform/presets';
+import { createPresetControlsModel, requestPresetAction } from '../../platform/presets';
 
 type Toggle = { id: ToolId; enabled: boolean };
 type Change = { kind: 'toggle'; tool: Toggle } | { kind: 'clear' } | { kind: 'subagent'; presetId: string | null }
@@ -26,6 +26,9 @@ export const toolsInitialized = createEvent();
 export const toolManagerOpened = createEvent();
 export const toolSettingsRetried = createEvent();
 export const toolSettingChanged = createEvent<Toggle>();
+export const temporaryAgentToolsChanged = createEvent<AgentToolId[]>();
+export const temporaryAgentToolsSaveRequested = createEvent();
+export const temporaryAgentToolsResetRequested = createEvent();
 
 const $initialized = createStore(false).on(toolsInitialized, () => true);
 export const loadToolSettingsFx = createEffect((session: ActiveSession) => sessionRequest<ToolsResponse>(session, path));
@@ -79,6 +82,46 @@ export const toolSettingsChangeFx = attach({
     const result = await saveToolSettingFx({ session, change, enabled: settings.enabled });
     if (!session.signal.aborted) return result;
   },
+});
+
+export const toolPresetControls = createPresetControlsModel(toolSettingsChangeFx);
+
+const temporaryToolsSaved = saved.filter({ fn: ({ params }) => params.change.kind === 'temporaryAgentTools' });
+const temporaryDraftDiscarded = sample({
+  clock: temporaryAgentToolsResetRequested,
+  filter: $toolSettings.map(({ temporaryAgentTools, status }) => status === 'ready' && temporaryAgentTools === undefined),
+});
+const draftChanged = sample({
+  clock: temporaryAgentToolsChanged,
+  filter: $toolSettings.map(({ status }) => status === 'ready'),
+});
+const $temporaryAgentToolsDraft = createStore<AgentToolId[] | null>(null)
+  .on(draftChanged, (_, draft) => draft)
+  .reset(temporaryDraftDiscarded, temporaryToolsSaved, sessionEnded);
+
+export const $temporaryAgentToolsSelection = combine($toolSettings, $temporaryAgentToolsDraft, (settings, draft) => {
+  const configured = settings.temporaryAgentTools;
+  const applied = configured ?? settings.enabled.filter(isAgentToolId);
+  const dirty = draft !== null && (!configured || draft.length !== applied.length || draft.some((id) => !applied.includes(id)));
+  return { selection: draft ?? applied, dirty, configured: configured !== undefined };
+});
+export const $temporaryAgentToolsDirty = $temporaryAgentToolsSelection.map(({ dirty }) => dirty);
+export const $subagentSetupNeeded = $toolSettings.map(({ status, enabled, subagent }) =>
+  status === 'ready' && (!enabled.includes('subagent') || !subagent?.presetId));
+export const $toolSettingsLoadFailed = $toolSettings.map(({ status }) => status === 'loadError');
+
+sample({
+  clock: temporaryAgentToolsSaveRequested,
+  source: $temporaryAgentToolsSelection,
+  filter: ({ dirty }) => dirty,
+  fn: ({ selection }): Change => ({ kind: 'temporaryAgentTools', tools: selection }),
+  target: toolSettingsChangeFx,
+});
+sample({
+  clock: temporaryAgentToolsResetRequested,
+  filter: $toolSettings.map(({ temporaryAgentTools }) => temporaryAgentTools !== undefined),
+  fn: (): Change => ({ kind: 'temporaryAgentTools', tools: null }),
+  target: toolSettingsChangeFx,
 });
 
 export const $enabledTools = $toolSettings.map(({ enabled }) => enabled);

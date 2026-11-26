@@ -9,6 +9,7 @@ import { notify } from '../../shared/notifications/notifications';
 import { ChatText } from './ChatText';
 import { displayMessageBlocks, type ActiveSubagent, type ChatImage, type Message, type ReplyPhase } from './message';
 import type { MessageAction, MessageActionContext } from './messageActions';
+import chatClasses from './Chat.module.css';
 
 export function ChatMessageFrame({ role, author, time, edited, image, actions, heading: Heading = 'h2', children }: {
   role: Message['role']; author: string; time: number; edited?: boolean; image?: boolean;
@@ -17,17 +18,17 @@ export function ChatMessageFrame({ role, author, time, edited, image, actions, h
   const { locale, t, clock, date } = useI18n();
   const title = useId();
   return (
-    <article className="chat-message" data-author={role} data-image={image || undefined} aria-labelledby={title}>
-      <span className="icon-tile account-avatar chat-avatar" aria-hidden="true">
+    <article className={chatClasses['chat-message']} data-author={role} data-image={image || undefined} aria-labelledby={title}>
+      <span className={['icon-tile', 'account-avatar', chatClasses['chat-avatar']].join(' ')} aria-hidden="true">
         {role === 'assistant' ? <Bot size={19} strokeWidth={1.8} /> : Array.from(author)[0]?.toLocaleUpperCase(locale)}
       </span>
-      <div className="chat-message-body">
-        <header className="chat-message-header">
+      <div className={chatClasses['chat-message-body']}>
+        <header className={chatClasses['chat-message-header']}>
           <Heading id={title}><bdi>{author}</bdi></Heading>
           <time dateTime={new Date(time).toISOString()} title={date.format(time)}>{clock.format(time)}</time>
-          {edited && <span className="chat-edited">{t('chat.edited')}</span>}
+          {edited && <span className={chatClasses['chat-edited']}>{t('chat.edited')}</span>}
         </header>
-        <div className="chat-message-content">{children}</div>
+        <div data-chat-content>{children}</div>
         {actions}
       </div>
     </article>
@@ -48,9 +49,9 @@ export function ChatPicture({ image }: { image: ChatImage }) {
     };
   }, [file]);
 
-  if (failed) return <span className="chat-image-error">{t('error.image_load_failed')}</span>;
+  if (failed) return <span className={chatClasses['chat-image-error']}>{t('error.image_load_failed')}</span>;
   if ('file' in image) {
-    return <img ref={setFileSource} alt={image.file.name} className="chat-file-image" loading="lazy" decoding="async" onError={() => setFailed(true)} />;
+    return <img ref={setFileSource} alt={image.file.name} className={chatClasses['chat-file-image']} loading="lazy" decoding="async" onError={() => setFailed(true)} />;
   }
   return <img src={image.src} alt={image.alt} width={image.width} height={image.height} loading="lazy" decoding="async" onError={() => setFailed(true)} />;
 }
@@ -58,14 +59,14 @@ export function ChatPicture({ image }: { image: ChatImage }) {
 function ToolCalls({ calls }: { calls: ChatToolCall[] }) {
   const { t } = useI18n();
   return (
-    <ul className="chat-tool-calls" aria-label={t('chat.toolCalls')}>
+    <ul className={chatClasses['chat-tool-calls']} aria-label={t('chat.toolCalls')}>
       {calls.map((call) => {
         const name = isSubagentTool(call.name) ? readSubagentResultName(call.result) ?? readSubagentName(call.arguments.name) : undefined;
         return <li key={call.id}>
-          <details className="chat-tool-call">
+          <details className={chatClasses['chat-tool-call']}>
             <summary>
               <code>{call.name}</code>{name && <> <bdi>{name}</bdi></>}{' '}
-              <span className="chat-tool-status" data-error={call.isError || undefined}>
+              <span className={chatClasses['chat-tool-status']} data-error={call.isError || undefined}>
                 {t(call.isError ? 'chat.toolFailed' : 'chat.toolSucceeded')}
               </span>
             </summary>
@@ -92,13 +93,13 @@ function ReplyVariants({ variants: { index, total }, locked, select }: {
   const previous = t('chat.previousReplyVariant');
   const next = t('chat.nextReplyVariant');
   return (
-    <span className="chat-reply-variants">
+    <span className={chatClasses['chat-reply-variants']}>
       <button type="button" className="icon-button" aria-label={previous} title={previous} aria-disabled={previousDisabled}
         onClick={() => { if (!previousDisabled) select(index - 1); }}>
         <ChevronLeft size={16} aria-hidden="true" />
       </button>
       <span aria-hidden="true">{label.current} / {label.total}</span>
-      <output className="chat-sr-only">{t('chat.replyVariantPosition', label)}</output>
+      <output className={chatClasses['chat-sr-only']}>{t('chat.replyVariantPosition', label)}</output>
       <button type="button" className="icon-button" aria-label={next} title={next} aria-disabled={nextDisabled}
         onClick={() => { if (!nextDisabled) select(index + 1); }}>
         <ChevronRight size={16} aria-hidden="true" />
@@ -205,13 +206,13 @@ export const ChatMessage = memo(function ChatMessage({
       const key = afterToolCallId === undefined ? 'reasoning-first' : `reasoning-after-${afterToolCallId}`;
       const bodyId = `${reasoningId}-${key}`;
       content.push(
-        <div key={key} className="chat-reasoning">
-          <button type="button" className="chat-reasoning-toggle" aria-expanded={open} aria-controls={bodyId}
+        <div key={key}>
+          <button type="button" className={chatClasses['chat-reasoning-toggle']} aria-expanded={open} aria-controls={bodyId}
             onClick={(event) => toggleReasoning(event.currentTarget, afterToolCallId, open)}>
             <ChevronRight size={16} aria-hidden="true" />
             {active ? t('chat.reasoningPending') : t('chat.reasoning')}
           </button>
-          <div id={bodyId} className="chat-reasoning-body" hidden={!open}>{open && <ChatText>{block.text}</ChatText>}</div>
+          <div id={bodyId} className={chatClasses['chat-reasoning-body']} hidden={!open}>{open && <ChatText>{block.text}</ChatText>}</div>
         </div>,
       );
       continue;
@@ -224,9 +225,9 @@ export const ChatMessage = memo(function ChatMessage({
     const draft = editor?.texts[index];
     if (!block.text.trim() && !editor) continue;
     content.push(
-      <div key={`text-${index}`} className="chat-message-text" data-draft={draft}>
+      <div key={`text-${index}`} className={chatClasses['chat-message-text']} data-draft={draft}>
         <ChatText user={!assistant}>{block.text}</ChatText>
-        {editor && <textarea ref={index === 0 ? editInput : undefined} form={editFormId} rows={1} className="chat-editor-input"
+        {editor && <textarea ref={index === 0 ? editInput : undefined} form={editFormId} rows={1} className={chatClasses['chat-editor-input']}
           aria-label={editor.texts.length === 1 ? t('chat.messageText') : t('chat.messageTextPart', { number: number.format(index + 1) })}
           value={draft} onChange={(event) => onDraftChange(id, index, event.currentTarget.value)} onKeyDown={(event) => {
             if (event.nativeEvent.isComposing) return;
@@ -247,7 +248,7 @@ export const ChatMessage = memo(function ChatMessage({
   return (
     <ChatMessageFrame role={message.role} author={author} time={time} edited={edited} image={Boolean(image)}
       actions={editor ? (
-        <form id={editFormId} className="chat-editor-actions" onSubmit={(event) => {
+        <form id={editFormId} className={chatClasses['chat-editor-actions']} onSubmit={(event) => {
           event.preventDefault();
           if (!editor.canSave) return;
           moveFocus.current = true;
@@ -258,7 +259,7 @@ export const ChatMessage = memo(function ChatMessage({
         </form>
       ) : !phase && (
         // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- This groups message commands outside the editor form.
-        <div ref={toolbar} className="chat-message-actions" role="group" aria-label={t('chat.actions', { author })} tabIndex={-1}>
+        <div ref={toolbar} className={chatClasses['chat-message-actions']} role="group" aria-label={t('chat.actions', { author })} tabIndex={-1}>
           <button type="button" className="icon-button" aria-label={copyLabel} title={copyLabel} disabled={!copyAction}
             onClick={copyAction && (() => void runAction(copyAction))}>
             <Copy size={16} aria-hidden="true" />
@@ -276,7 +277,7 @@ export const ChatMessage = memo(function ChatMessage({
               <RotateCw size={16} aria-hidden="true" />
             </button>
           )}
-          <button type="button" className="icon-button chat-message-delete" aria-label={t('common.delete')} title={t('common.delete')}
+          <button type="button" className={['icon-button', chatClasses['chat-message-delete']].join(' ')} aria-label={t('common.delete')} title={t('common.delete')}
             disabled={locked} onClick={() => onDelete(message)}>
             <Trash2 size={16} aria-hidden="true" />
           </button>
@@ -294,16 +295,16 @@ export const ChatMessage = memo(function ChatMessage({
             select={(index) => onSelectVariant({ replyId: id, index })} />}
         </div>
       )}>
-      {content.length > 0 && <div className="chat-message-blocks">{content}</div>}
-      {phase === 'answer' && !blocks.some((block) => block.kind !== 'reasoning') && <p className="chat-typing">{t('chat.answering')}</p>}
+      {content.length > 0 && <div className={chatClasses['chat-message-blocks']}>{content}</div>}
+      {phase === 'answer' && !blocks.some((block) => block.kind !== 'reasoning') && <p className={chatClasses['chat-typing']}>{t('chat.answering')}</p>}
       {activeSubagents?.map(({ id, name }) => (
-        <p key={id} className="chat-tool-call chat-subagent-progress">
-          <LoaderCircle size={16} className="chat-subagent-spinner" aria-hidden="true" />
+        <p key={id} className={[chatClasses['chat-tool-call'], chatClasses['chat-subagent-progress']].join(' ')}>
+          <LoaderCircle size={16} className={chatClasses['chat-subagent-spinner']} aria-hidden="true" />
           {name ? t('chat.namedSubagentWorking', { name }) : t('chat.subagentWorking')}
         </p>
       ))}
       {image && (
-        <button type="button" className="chat-picture" aria-label={t('chat.openImage')} onClick={() => onPreview(image)}>
+        <button type="button" className={chatClasses['chat-picture']} aria-label={t('chat.openImage')} onClick={() => onPreview(image)}>
           <ChatPicture image={image} />
         </button>
       )}

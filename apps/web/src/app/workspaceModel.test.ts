@@ -186,3 +186,15 @@ test('workspace keeps its unsaved changes flag when either editor is hidden', as
   await allSettled(realmEditorDraftChanged, { scope, params: { patch: { title: '' } } });
   assert.equal(scope.getState(workspace.$hasUnsavedChanges), false);
 });
+
+test('a failed workspace screen load can be reset and retried', async () => {
+  let attempts = 0;
+  const registry = createModuleRegistry(corePlugin, [notesModule(() => {
+    if (++attempts === 1) throw new Error('Unavailable');
+  })]);
+  const screen = registry.resolveRoute('#notes').screen;
+  await assert.rejects(screen.preload(), /Unavailable/);
+  screen.resetFailedLoad();
+  assert.equal(renderToStaticMarkup(createElement((await screen.preload()).default)), '');
+  assert.equal(attempts, 2);
+});

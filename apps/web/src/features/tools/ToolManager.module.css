@@ -6,7 +6,7 @@
   gap: 8px 12px;
 }
 
-.tool-manager > .preset-controls { margin-block-end: 16px; }
+.tool-manager > :global(.preset-controls) { margin-block-end: 16px; }
 .tool-manager-panel {
   border: 1px solid var(--kr-border);
   border-radius: var(--kr-radius-panel);
@@ -65,8 +65,8 @@
 .tool-manager-row details[open] .tool-manager-chevron { transform: rotate(180deg); }
 .tool-manager-row details[open] .tool-manager-copy > span { white-space: normal; overflow-wrap: anywhere; }
 .tool-manager-switch { position: absolute; inset-block-start: 15px; inset-inline-end: 16px; }
-.tool-manager-switch .mantine-Switch-body { align-items: center; min-block-size: 42px; }
-.tool-manager-switch input:not(:checked, :disabled) + .mantine-Switch-track { border-color: var(--kr-control); }
+.tool-manager-switch :global(.mantine-Switch-body) { align-items: center; min-block-size: 42px; }
+.tool-manager-switch input:not(:checked, :disabled) + :global(.mantine-Switch-track) { border-color: var(--kr-control); }
 .tool-manager-details {
   display: grid;
   gap: 12px;
@@ -119,5 +119,5 @@
 
 @container (max-width: 20rem) {
   .tool-manager-actions { gap: 8px; }
-  .tool-manager-actions .mantine-Button-section { display: none; }
+  .tool-manager-actions :global(.mantine-Button-section) { display: none; }
 }

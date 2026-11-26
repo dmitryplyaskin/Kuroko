@@ -4,6 +4,7 @@ import { Plus, Trash2 } from 'lucide-react';
 import { useI18n } from '../../shared/i18n/i18n';
 import { PromptTextarea } from '../../shared/prompt-templates/TemplateHelp';
 import { newRealmId, type VariableDraft } from './model';
+import classes from './Realms.module.css';
 
 export function RealmVariables({ variables, issue, onChange }: {
   variables: VariableDraft[];
@@ -17,13 +18,13 @@ export function RealmVariables({ variables, issue, onChange }: {
     onChange(variables.map((entry, current) => current === index ? { ...entry, ...change } : entry));
   }
 
-  return <div className="realms-record-fields realms-variables">
-    <div className="realms-variable-help">
+  return <div className={[classes['realms-record-fields'], classes['realms-variables']].join(' ')}>
+    <div className={classes['realms-variable-help']}>
       <p>{t('realms.variables.help')}</p>
       <code dir="ltr">{`{{ vars.${sampleName} }}`}</code>
     </div>
-    {variables.map(({ id, name, source, format }, index) => <div key={id} className="realms-variable">
-      <div className="realms-metadata-fields">
+    {variables.map(({ id, name, source, format }, index) => <div key={id} className={classes['realms-variable']}>
+      <div className={classes['realms-metadata-fields']}>
         <TextInput label={t('realms.variables.name')} placeholder="difficulty" value={name} maxLength={64} dir="ltr" required
           error={issue === `/variables/${index}/name`} onChange={(event) => update(index, { name: event.currentTarget.value })} />
         <Select label={t('realms.variables.format')} value={format} allowDeselect={false}

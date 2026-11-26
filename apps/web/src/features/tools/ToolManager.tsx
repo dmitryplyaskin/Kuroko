@@ -1,15 +1,18 @@
 import { ActionIcon, Button, NativeSelect, Switch, TextInput } from '@mantine/core';
 import { providers } from '@kuroko/contracts/connectionSettings';
-import { isAgentToolId, toolIds, type AgentToolId, type ToolId } from '@kuroko/contracts/tools';
+import { toolIds, type ToolId } from '@kuroko/contracts/tools';
 import { useUnit } from 'effector-react';
 import { ChevronDown, Power, Search, X } from 'lucide-react';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useI18n } from '../../shared/i18n/i18n';
 import { AgentToolPicker } from './AgentToolPicker';
 import { tools } from './catalog';
-import { $toolSettings, toolManagerOpened, toolSettingChanged, toolSettingsChangeFx, toolSettingsRetried } from './model';
+import {
+  $temporaryAgentToolsSelection, $toolSettings, temporaryAgentToolsChanged, temporaryAgentToolsResetRequested,
+  temporaryAgentToolsSaveRequested, toolManagerOpened, toolPresetControls, toolSettingChanged, toolSettingsChangeFx, toolSettingsRetried,
+} from './model';
 import { PresetControls } from '../../shared/presets/PresetControls';
-import './toolManager.css';
+import classes from './ToolManager.module.css';
 
 export default function ToolManager() {
   const { t, locale, number } = useI18n();
@@ -28,7 +31,7 @@ export default function ToolManager() {
   }) : toolIds;
   const disabled = settings.status !== 'ready';
   const subagentOptions = settings.subagent?.presets.map(({ id, name, model, provider }) => ({
-    value: id, label: `${name} · ${providers[provider].label} · ${model}`,
+    value: id, label: `${name} · ${provider === 'custom' ? t('connection.custom') : providers[provider].label} · ${model}`,
   })) ?? [];
 
   function clearSearch() {
@@ -37,37 +40,37 @@ export default function ToolManager() {
   }
 
   return (
-    <section className="tool-manager" aria-labelledby="tools-title">
+    <section className={classes['tool-manager']} aria-labelledby="tools-title">
       <header className="page-heading">
         <h1 id="tools-title" tabIndex={-1}>{t('tools.label')}</h1>
         <p>{t('tools.description')}</p>
       </header>
       <PresetControls presets={settings.presets} selectedId={settings.activePresetId} disabled={disabled}
-        onAction={async (action) => Boolean(await change(action))} />
-      {settings.status === 'loading' && <output className="tool-manager-status">{t('tools.loading')}</output>}
+        model={toolPresetControls} />
+      {settings.status === 'loading' && <output className={classes['tool-manager-status']}>{t('tools.loading')}</output>}
       {settings.error && (
-        <div className="tool-manager-status">
+        <div className={classes['tool-manager-status']}>
           <p role="alert">{t(`error.${settings.error}`)}</p>
           {settings.status === 'loadError' && <Button variant="default" onClick={retry}>{t('common.retryLoad')}</Button>}
         </div>
       )}
-      <div className="tool-manager-panel">
-        <div className="tool-manager-toolbar">
-          <TextInput ref={searchInput} type="search" className="tool-manager-search" value={search} aria-label={t('tools.search')}
+      <div className={classes['tool-manager-panel']}>
+        <div className={classes['tool-manager-toolbar']}>
+          <TextInput ref={searchInput} type="search" className={classes['tool-manager-search']} value={search} aria-label={t('tools.search')}
             placeholder={t('tools.search')} onChange={(event) => setSearch(event.currentTarget.value)}
             leftSection={<Search size={16} aria-hidden="true" />}
             rightSection={search && <ActionIcon variant="subtle" color="gray" aria-label={t('tools.clearSearch')} onClick={clearSearch}>
               <X size={16} aria-hidden="true" />
             </ActionIcon>} />
-          <div className="tool-manager-actions">
-            <output className="tool-manager-count">{t('tools.enabledCount', {
+          <div className={classes['tool-manager-actions']}>
+            <output className={classes['tool-manager-count']}>{t('tools.enabledCount', {
               enabled: number.format(settings.enabled.length), total: number.format(toolIds.length),
             })}</output>
             <Button variant="default" disabled={disabled || !settings.enabled.length} leftSection={<Power size={16} aria-hidden="true" />}
               onClick={() => void change({ kind: 'clear' }).catch(() => {})}>{t('tools.disableAll')}</Button>
           </div>
         </div>
-        {visible.length ? <ul className="tool-manager-list" aria-label={t('tools.label')}>
+        {visible.length ? <ul className={classes['tool-manager-list']} aria-label={t('tools.label')}>
           {visible.map((id) => <ToolRow key={id} id={id} enabled={settings.enabled.includes(id)} disabled={disabled}
             configuration={id === 'subagent' && <>
               <NativeSelect
@@ -78,13 +81,10 @@ export default function ToolManager() {
                 data={[{ value: '', label: t('tools.delegatePresetNone') }, ...subagentOptions]}
                 onChange={({ currentTarget: { value } }) => void change({ kind: 'subagent', presetId: value || null }).catch(() => {})}
               />
-              <TemporaryAgentTools
-                inherited={settings.enabled.filter(isAgentToolId)} configured={settings.temporaryAgentTools} disabled={disabled}
-                onSave={async (tools) => Boolean(await change({ kind: 'temporaryAgentTools', tools }))}
-              />
+              <TemporaryAgentTools disabled={disabled} />
             </>}
             onToggle={(enabled) => toggle({ id, enabled })} />)}
-        </ul> : <div className="tool-manager-empty">
+        </ul> : <div className={classes['tool-manager-empty']}>
           <output>{t('tools.noResults')}</output>
           <Button variant="subtle" onClick={clearSearch}>{t('tools.clearSearch')}</Button>
         </div>}
@@ -93,27 +93,19 @@ export default function ToolManager() {
   );
 }
 
-function TemporaryAgentTools({ inherited, configured, disabled, onSave }: {
-  inherited: AgentToolId[];
-  configured?: AgentToolId[];
-  disabled: boolean;
-  onSave: (tools: AgentToolId[] | null) => Promise<boolean>;
-}) {
+function TemporaryAgentTools({ disabled }: { disabled: boolean }) {
   const { t } = useI18n();
-  const [draft, setDraft] = useState<AgentToolId[]>();
+  const [{ selection, dirty, configured }, change, save, reset] = useUnit([
+    $temporaryAgentToolsSelection, temporaryAgentToolsChanged, temporaryAgentToolsSaveRequested, temporaryAgentToolsResetRequested,
+  ]);
 
-  async function save(tools: AgentToolId[] | null) {
-    if (await onSave(tools)) setDraft(undefined);
-  }
-
-  return <section className="temporary-agent-tools" aria-labelledby="temporary-agent-tools-title">
+  return <section className={classes['temporary-agent-tools']} aria-labelledby="temporary-agent-tools-title">
     <h2 id="temporary-agent-tools-title">{t('tools.temporaryAgentTools')}</h2>
     <p>{t(configured ? 'tools.temporaryToolsCustom' : 'tools.temporaryToolsInherited')}</p>
-    <AgentToolPicker selected={draft ?? configured ?? inherited} disabled={disabled} onChange={setDraft} />
-    <div className="temporary-agent-actions">
-      {configured && <Button variant="default" disabled={disabled}
-        onClick={() => void save(null).catch(() => {})}>{t('tools.temporaryToolsReset')}</Button>}
-      <Button disabled={disabled || !draft} onClick={() => { if (draft) void save(draft).catch(() => {}); }}>
+    <AgentToolPicker selected={selection} disabled={disabled} onChange={change} />
+    <div className={classes['temporary-agent-actions']}>
+      {(configured || dirty) && <Button variant="default" disabled={disabled} onClick={reset}>{t('tools.temporaryToolsReset')}</Button>}
+      <Button disabled={disabled || !dirty} onClick={save}>
         {t('tools.temporaryToolsSave')}
       </Button>
     </div>
@@ -131,19 +123,19 @@ function ToolRow({ id, enabled, disabled, configuration, onToggle }: {
   const { icon: Icon, label, description, parameters, example } = tools[id];
   const name = t(label);
 
-  return <li className="tool-manager-row" data-enabled={enabled || undefined}>
+  return <li className={classes['tool-manager-row']} data-enabled={enabled || undefined}>
     <details>
-      <summary className="tool-manager-summary" aria-label={t('tools.detailsFor', { name })}>
-        <span className="tool-manager-icon" aria-hidden="true"><Icon size={18} /></span>
-        <span className="tool-manager-copy">
+      <summary className={classes['tool-manager-summary']} aria-label={t('tools.detailsFor', { name })}>
+        <span className={classes['tool-manager-icon']} aria-hidden="true"><Icon size={18} /></span>
+        <span className={classes['tool-manager-copy']}>
           <strong>{name}</strong>
           <span>{t(description)}</span>
         </span>
-        <ChevronDown size={16} className="tool-manager-chevron" aria-hidden="true" />
+        <ChevronDown size={16} className={classes['tool-manager-chevron']} aria-hidden="true" />
       </summary>
-      <div className="tool-manager-details">
+      <div className={classes['tool-manager-details']}>
         {configuration}
-        <div className="tool-manager-details-heading">
+        <div className={classes['tool-manager-details-heading']}>
           <h2>{t('tools.parameters')}</h2>
           <code>{id}</code>
         </div>
@@ -158,7 +150,7 @@ function ToolRow({ id, enabled, disabled, configuration, onToggle }: {
         <pre aria-label={t('tools.example')}>{JSON.stringify(example, null, 2)}</pre>
       </div>
     </details>
-    <Switch className="tool-manager-switch" aria-label={t('tools.toggle', { name })} checked={enabled}
+    <Switch className={classes['tool-manager-switch']} aria-label={t('tools.toggle', { name })} checked={enabled}
       disabled={disabled} onChange={(event) => onToggle(event.currentTarget.checked)} />
   </li>;
 }

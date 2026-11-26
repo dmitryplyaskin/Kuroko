@@ -6,6 +6,7 @@ import { ActivityStatus, AgentName, useAgentName, type ActivityEntry, type Agent
 import { ChatMessageFrame } from './ChatMessage';
 import { ChatText } from './ChatText';
 import type { LogRow, LogTurn } from './chatLogActivity';
+import chatClasses from './Chat.module.css';
 
 type ConversationRow = { row: LogRow; tools: ActivityEntry[] };
 
@@ -24,10 +25,10 @@ function conversationRows(rows: LogRow[]) {
 function AgentToolCalls({ calls, onOpen }: { calls: ActivityEntry[]; onOpen: (key: string) => void }) {
   const { t } = useI18n();
   return (
-    <ul className="chat-tool-calls" aria-label={t('chat.toolCalls')}>
+    <ul className={chatClasses['chat-tool-calls']} aria-label={t('chat.toolCalls')}>
       {calls.map(({ key, name, status, details, targetAgentKey }) => (
         <li key={key}>
-          <details className="chat-tool-call">
+          <details className={chatClasses['chat-tool-call']}>
             <summary><code>{name}</code> <ActivityStatus status={status} /></summary>
             <dl>
               {details.arguments !== undefined && <><dt>{t('chat.toolArguments')}</dt><dd><pre>{JSON.stringify(details.arguments, null, 2)}</pre></dd></>}
@@ -51,8 +52,8 @@ export function AgentToolbar({ agent, heading, onBack }: {
   const { t } = useI18n();
   const backLabel = t(agent.parentKey ? 'chat.backToParentAgent' : 'chat.backToMainChat');
   return (
-    <div className="chat-agent-context">
-      <button type="button" className="icon-button chat-agent-back" aria-label={backLabel} title={backLabel} onClick={onBack}>
+    <div className={chatClasses['chat-agent-context']}>
+      <button type="button" className={['icon-button', chatClasses['chat-agent-back']].join(' ')} aria-label={backLabel} title={backLabel} onClick={onBack}>
         <ArrowLeft size={17} aria-hidden="true" />
       </button>
       <h2 id="chat-agent-title" ref={heading} tabIndex={-1}><AgentName agent={agent.identity} /></h2>
@@ -74,14 +75,14 @@ export const AgentConversation = memo(function AgentConversation({ agent, turns,
 
   return (
     // oxlint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- The agent transcript scrolls independently.
-    <section className="chat-history chat-agent-conversation" ref={history} aria-label={t('chat.agentHistory')} tabIndex={0}
+    <section className={[chatClasses['chat-history'], chatClasses['chat-agent-conversation']].join(' ')} ref={history} aria-label={t('chat.agentHistory')} tabIndex={0}
       onScroll={(event) => {
         const viewport = event.currentTarget;
         if (viewport.clientHeight) atEnd.current = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 8;
       }}>
-      <div className="chat-timeline">
+      <div className={chatClasses['chat-timeline']}>
         {turns.map(({ id, rows }) => (
-          <div key={id} className="chat-agent-exchange">
+          <div key={id} className={chatClasses['chat-agent-exchange']}>
             {conversationRows(rows).map(({ row, tools }) => {
               const user = row.kind === 'user';
               const pending = row.pending || row.event?.status === 'running';
@@ -91,12 +92,12 @@ export const AgentConversation = memo(function AgentConversation({ agent, turns,
               return (
                 <ChatMessageFrame key={row.key} role={user ? 'user' : 'assistant'} heading="h3"
                   author={user ? t('chat.agentTask') : name} time={row.time}>
-                  <div className="chat-message-blocks">
+                  <div className={chatClasses['chat-message-blocks']}>
                     {row.text?.trim() && <ChatText user={user}>{row.text}</ChatText>}
                     {tools.length > 0 && <AgentToolCalls calls={tools} onOpen={onSelect} />}
-                    {pending && !tools.length && !row.text && <p className="chat-typing">{t('chat.answering')}</p>}
+                    {pending && !tools.length && !row.text && <p className={chatClasses['chat-typing']}>{t('chat.answering')}</p>}
                     {failed && row.event && <ActivityStatus status={row.event.status} />}
-                    {typeof error === 'string' && <p className="chat-agent-error">{error}</p>}
+                    {typeof error === 'string' && <p className={chatClasses['chat-agent-error']}>{error}</p>}
                   </div>
                 </ChatMessageFrame>
               );
@@ -113,14 +114,14 @@ export const ChatAgents = memo(function ChatAgents({ agents, onSelect }: {
 }) {
   const { t } = useI18n();
   return (
-    <section className="chat-agent-directory">
-      <div className="chat-column">
+    <section className={chatClasses['chat-agent-directory']}>
+      <div className={chatClasses['chat-column']}>
         <h2>{t('chat.agents')}</h2>
-        <ul className="chat-agent-list">
+        <ul className={chatClasses['chat-agent-list']}>
           {agents.filter(({ parentKey }) => !parentKey).map((agent) => (
             <li key={agent.key}>
-              <button type="button" className="chat-agent-button" onClick={() => onSelect(agent.key)}>
-                <span className="icon-tile account-avatar chat-avatar" aria-hidden="true"><Bot size={18} /></span>
+              <button type="button" className={chatClasses['chat-agent-button']} onClick={() => onSelect(agent.key)}>
+                <span className={['icon-tile', 'account-avatar', chatClasses['chat-avatar']].join(' ')} aria-hidden="true"><Bot size={18} /></span>
                 <strong><AgentName agent={agent.identity} /></strong>
                 <ActivityStatus status={agent.tasks.at(-1)!.entry.status} />
                 <ChevronRight size={16} aria-hidden="true" />

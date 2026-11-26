@@ -11,6 +11,7 @@ import { useI18n } from '../../shared/i18n/i18n';
 import { newRealmId } from './model';
 import { AvatarEditor } from './RealmAvatar';
 import { RecordLabel, RecordSearch, recordMatches, type RealmRecord } from './RealmRecords';
+import classes from './Realms.module.css';
 
 type ChangeRecords<T> = (items: T[], removed?: boolean) => void;
 
@@ -75,16 +76,16 @@ export function RecordEditor<T extends RealmRecord>({ items, addLabel, emptyLabe
   }
 
   return (
-    <div className="realms-record-editor">
-      <div className="realms-record-toolbar">
+    <div className={classes['realms-record-editor']}>
+      <div className={classes['realms-record-toolbar']}>
         {items.length > 0 && <RecordSearch value={query} onChange={changeSearch} />}
-        <div className="realms-actions">
+        <div className={classes['realms-actions']}>
           <Button type="button" variant="default" onClick={add} leftSection={<Plus size={16} aria-hidden="true" />}>{addLabel}</Button>
         </div>
       </div>
-      {search && visible.length > 0 && items.length > 1 && <p className="realms-muted">{t('realms.clearSearchToMove')}</p>}
-      {visible.length === 0 ? <p className="realms-muted">{items.length ? t('realms.noSectionResults') : emptyLabel}</p> : (
-        <Accordion multiple className="realms-records" value={open} onChange={setOpen} transitionDuration={0}>
+      {search && visible.length > 0 && items.length > 1 && <p className={classes['realms-muted']}>{t('realms.clearSearchToMove')}</p>}
+      {visible.length === 0 ? <p className={classes['realms-muted']}>{items.length ? t('realms.noSectionResults') : emptyLabel}</p> : (
+        <Accordion multiple className={classes['realms-records']} value={open} onChange={setOpen} transitionDuration={0}>
           {visible.map(({ record: item, order, index }) => {
             const expanded = openIds.has(item.id);
             const title = item.title.trim() || t('realms.untitled');
@@ -92,14 +93,14 @@ export function RecordEditor<T extends RealmRecord>({ items, addLabel, emptyLabe
             const change = (patch: Partial<T>) => onChange(items.map((record) => record.id === item.id ? { ...record, ...patch } : record));
             return (
             <Accordion.Item key={item.id} value={item.id}>
-              <div className="realms-record-summary" data-open={expanded || undefined}>
+              <div className={classes['realms-record-summary']} data-open={expanded || undefined}>
                 <Accordion.Control>
-                  <span className="realms-ordered-label">
-                    <span className="realms-order-number" title={orderLabel} aria-hidden="true">{number.format(order)}</span>
+                  <span className={classes['realms-ordered-label']}>
+                    <span className={classes['realms-order-number']} title={orderLabel} aria-hidden="true">{number.format(order)}</span>
                     <RecordLabel record={item} portrait={portrait} />
                   </span>
                 </Accordion.Control>
-                {items.length > 1 && <div className="realms-move-actions">
+                {items.length > 1 && <div className={classes['realms-move-actions']}>
                   <ActionIcon type="button" variant="default" size={36} disabled={Boolean(search) || index === 0}
                     aria-label={t('realms.moveUp', { title })} onClick={() => move(index, -1)}>
                     <ArrowUp size={16} aria-hidden="true" />
@@ -111,8 +112,8 @@ export function RecordEditor<T extends RealmRecord>({ items, addLabel, emptyLabe
                 </div>}
               </div>
               <Accordion.Panel>
-                {expanded && <div className="realms-record-fields" id={`${group}-${item.id}`}>
-                  <TextInput key={order} className="realms-order-field" type="number" min={1} max={realmMaxOrder} step={1}
+                {expanded && <div className={classes['realms-record-fields']} id={`${group}-${item.id}`}>
+                  <TextInput key={order} className={classes['realms-order-field']} type="number" min={1} max={realmMaxOrder} step={1}
                     label={orderLabel} description={t('realms.orderHelp')} defaultValue={order}
                     onBlur={({ currentTarget }) => {
                       const next = currentTarget.valueAsNumber;
@@ -122,7 +123,7 @@ export function RecordEditor<T extends RealmRecord>({ items, addLabel, emptyLabe
                       if (event.key === 'Enter') { event.preventDefault(); event.currentTarget.blur(); }
                     }} />
                   {fields(item, change)}
-                  <Button type="button" variant="subtle" color="red" className="realms-remove-record"
+                  <Button type="button" variant="subtle" color="red" className={classes['realms-remove-record']}
                     leftSection={<Trash2 size={16} aria-hidden="true" />}
                     onClick={() => { onChange(items.filter(({ id }) => id !== item.id), true); setOpen(open.filter((id) => id !== item.id)); }}>{t('common.delete')}</Button>
                 </div>}
@@ -136,12 +137,11 @@ export function RecordEditor<T extends RealmRecord>({ items, addLabel, emptyLabe
   );
 }
 
-export function EntriesEditor({ entries, kind, invalidIndex, onChange, onAvatarPending }: {
+export function EntriesEditor({ entries, kind, invalidIndex, onChange }: {
   entries: RealmCharacter[];
   kind: 'character' | 'entry';
   invalidIndex?: number;
   onChange: ChangeRecords<RealmCharacter>;
-  onAvatarPending?: (pending: boolean) => void;
 }) {
   const { t } = useI18n();
   return (
@@ -151,8 +151,8 @@ export function EntriesEditor({ entries, kind, invalidIndex, onChange, onAvatarP
         <>
           <TextInput label={t(`realms.title.${kind}`)} required value={entry.title}
             onChange={(event) => change({ title: event.currentTarget.value })} />
-          {kind === 'character' && onAvatarPending && <>
-            <AvatarEditor value={entry.avatar} kind="character" onPending={onAvatarPending} onChange={(avatar) => change({ avatar })} />
+          {kind === 'character' && <>
+            <AvatarEditor value={entry.avatar} characterId={entry.id} />
             <PromptTextarea scope="world" label={t('realms.characterSummary')} autosize minRows={5} maxRows={16} value={entry.summary ?? ''}
               onChange={(event) => change({ summary: event.currentTarget.value || undefined })} />
           </>}
@@ -179,14 +179,14 @@ function ReferencePicker({ label, entries, ids, onChange }: {
   const selected = new Set(ids);
   const search = realmSearchKey(query.trim());
   const visible = orderedRealmRecords(entries).map(({ record }) => record).filter((entry) => recordMatches(entry, search));
-  return entries.length > 0 && <fieldset className="realms-reference-group">
+  return entries.length > 0 && <fieldset className={classes['realms-reference-group']}>
     <legend>{label}</legend>
     {entries.length > 6 && <RecordSearch value={query} onChange={setQuery} label={t('realms.findInPart', { title: label })} />}
-    <div className="realms-reference-options">
+    <div className={classes['realms-reference-options']}>
       {visible.map((entry) => <Checkbox key={entry.id} label={entry.title.trim() || t('realms.untitled')}
         color="var(--kr-accent)" iconColor="var(--kr-accent-text)"
         checked={selected.has(entry.id)} onChange={(event) => onChange(toggleId(ids, entry.id, event.currentTarget.checked))} />)}
-      {!visible.length && <p className="realms-muted">{t('realms.noSectionResults')}</p>}
+      {!visible.length && <p className={classes['realms-muted']}>{t('realms.noSectionResults')}</p>}
     </div>
   </fieldset>;
 }
@@ -216,22 +216,22 @@ export function StartFields({ realm, start, onChange }: {
         value={start.scenario ?? ''} onChange={(event) => onChange({ scenario: event.currentTarget.value || undefined })} />
       <PromptTextarea scope="world" label={t('realms.greeting')} description={t('realms.greetingHelp')} autosize minRows={3} maxRows={12}
         value={start.greeting ?? ''} onChange={(event) => onChange({ greeting: event.currentTarget.value || undefined })} />
-      <div className="realms-reference-picker">
+      <div className={classes['realms-reference-picker']}>
         <h3>{t('realms.startContext')}</h3>
-        {context.entries.length > 0 && <div className="realms-context-order">
+        {context.entries.length > 0 && <div className={classes['realms-context-order']}>
           <h4>{t('realms.contextQueue')}</h4>
           <ol aria-label={t('realms.contextQueue')}>
             {context.entries.map((entry) => (
               <li key={JSON.stringify([entry.source, entry.source === 'section' ? entry.sectionId : null, entry.id])}>
-                <span className="realms-order-number">{number.format(entry.order)}</span>
+                <span className={classes['realms-order-number']}>{number.format(entry.order)}</span>
                 <span>{entry.title || t('realms.untitled')}</span>
-                <span className="realms-muted">{entry.source === 'section' ? entry.sectionTitle
+                <span className={classes['realms-muted']}>{entry.source === 'section' ? entry.sectionTitle
                   : t(entry.source === 'character' ? 'realms.part.characters' : 'realms.part.lorebook')}</span>
               </li>
             ))}
           </ol>
         </div>}
-        {characters.length === 0 && lorebook.length === 0 && sections.length === 0 && <p className="realms-muted">{t('realms.empty.context')}</p>}
+        {characters.length === 0 && lorebook.length === 0 && sections.length === 0 && <p className={classes['realms-muted']}>{t('realms.empty.context')}</p>}
         <ReferencePicker label={t('realms.part.characters')} entries={characters} ids={start.characterIds ?? []}
           onChange={(characterIds) => onChange({ characterIds })} />
         <ReferencePicker label={t('realms.part.lorebook')} entries={lorebook} ids={start.loreEntryIds ?? []}

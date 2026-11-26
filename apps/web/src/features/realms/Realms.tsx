@@ -8,7 +8,7 @@ import { useI18n } from '../../shared/i18n/i18n';
 import { $realmEditor, realmEditorClosed, realmEditorCreated, realmEditorOpened, realmLoadRetried } from './model';
 import { RealmEditor } from './RealmEditor';
 import { RealmLibrary, type LibraryCriteria } from './RealmLibrary';
-import './realms.css';
+import classes from './Realms.module.css';
 
 export default function Realms() {
   const { t } = useI18n();
@@ -26,17 +26,17 @@ export default function Realms() {
 
   if (!session) return null;
   return (
-    <div className="realms-page" ref={container}>
+    <div className={classes['realms-page']} ref={container}>
       {!view ? <RealmLibrary session={session} criteria={criteria} onCriteria={setCriteria}
-        onCreate={() => create(undefined)} onOpen={open} onImport={create} />
-        : view.status === 'ready' ? <RealmEditor session={session} editor={view} />
+        onCreate={() => create(undefined)} onOpen={open} />
+        : view.status === 'ready' ? <RealmEditor editor={view} />
         : <>
-          <button type="button" className="realms-back" onClick={close}><ArrowLeft size={16} aria-hidden="true" />{t('realms.back')}</button>
-          <header className="page-heading realms-heading"><h1 tabIndex={-1}>{t('realms.label')}</h1></header>
-          {view.status === 'error' ? <div className="realms-state">
+          <button type="button" className={classes['realms-back']} onClick={close}><ArrowLeft size={16} aria-hidden="true" />{t('realms.back')}</button>
+          <header className={['page-heading', classes['realms-heading']].join(' ')}><h1 tabIndex={-1}>{t('realms.label')}</h1></header>
+          {view.status === 'error' ? <div className={classes['realms-state']}>
             <p role="alert">{t(`error.${view.code}`)}</p>
             <Button variant="default" onClick={retry}>{t('common.retryLoad')}</Button>
-          </div> : <output className="realms-muted">{t('realms.loadingDetail')}</output>}
+          </div> : <output className={classes['realms-muted']}>{t('realms.loadingDetail')}</output>}
         </>}
     </div>
   );

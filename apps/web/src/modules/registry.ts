@@ -1,15 +1,17 @@
 import { CodedError } from '@kuroko/contracts/errors';
-import { createElement, lazy, use, type ComponentType } from 'react';
+import { createElement, use, type ComponentType } from 'react';
 import { scopeBind, type Scope } from 'effector';
 import type { ExtensionContribution, ExtensionKind, ModuleBundle, SettingsTab, ViewLoader, WebModule, WorkspaceScreen } from './contracts';
 
 type RegisteredView<T> = Readonly<T & {
   moduleId: string;
   View: ComponentType;
+  preload: ViewLoader;
+  resetFailedLoad: () => void;
 }>;
 
 export type RegisteredScreen = RegisteredView<WorkspaceScreen>;
-export type RegisteredTab = RegisteredView<SettingsTab> & { preload: ViewLoader; resetFailedLoad: () => void };
+export type RegisteredTab = RegisteredView<SettingsTab>;
 
 type WorkspaceRoute = Readonly<{ screen: RegisteredScreen; settingsTab?: string }>;
 
@@ -20,6 +22,26 @@ function addUnique<T>(entries: Map<string, T>, key: string, entry: T, kind: stri
 
 function displayOrder(a: { id: string; order: number }, b: { id: string; order: number }) {
   return a.order - b.order || a.id.localeCompare(b.id, 'en');
+}
+
+function createRetryableView(load: ViewLoader) {
+  let loading: ReturnType<ViewLoader> | undefined;
+  let loaded: Awaited<ReturnType<ViewLoader>> | undefined;
+  let failed = false;
+  const preload = () => loading ??= Promise.resolve().then(load).then((view) => loaded = view, (error: unknown) => {
+    failed = true;
+    throw error;
+  });
+  function resetFailedLoad() {
+    if (!failed) return;
+    failed = false;
+    loading = undefined;
+  }
+  function View() {
+    const { default: Component } = loaded ?? use(preload());
+    return createElement(Component);
+  }
+  return { View, preload, resetFailedLoad };
 }
 
 export function createModuleRegistry(bundle: ModuleBundle, additionalModules: readonly WebModule[] = []) {
@@ -52,28 +74,13 @@ export function createModuleRegistry(bundle: ModuleBundle, additionalModules: re
 
       const load = module.views && Object.hasOwn(module.views, id) ? module.views[id] : undefined;
       if (!load) throw new CodedError('module_view_loader_missing', { id, moduleId: module.id });
+      const view = createRetryableView(load);
       if (contribution.kind === 'workspace.screen') {
-        const screen = { ...contribution, moduleId: module.id, View: lazy(load) };
+        const screen = { ...contribution, moduleId: module.id, ...view };
         screens.set(id, screen);
         addUnique(routes, screen.route, { screen }, 'workspace_route');
       } else {
-        let loading: ReturnType<ViewLoader> | undefined;
-        let loaded: Awaited<ReturnType<ViewLoader>> | undefined;
-        let failed = false;
-        const preload = () => loading ??= Promise.resolve().then(load).then((view) => loaded = view, (error: unknown) => {
-          failed = true;
-          throw error;
-        });
-        const resetFailedLoad = () => {
-          if (!failed) return;
-          failed = false;
-          loading = undefined;
-        };
-        function View() {
-          const { default: Tab } = loaded ?? use(preload());
-          return createElement(Tab);
-        }
-        addUnique(tabs, contribution.key, { ...contribution, moduleId: module.id, View, preload, resetFailedLoad }, 'settings_tab_key');
+        addUnique(tabs, contribution.key, { ...contribution, moduleId: module.id, ...view }, 'settings_tab_key');
       }
     }
   }

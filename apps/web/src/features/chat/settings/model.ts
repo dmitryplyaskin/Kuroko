@@ -3,8 +3,8 @@ import {
   defaultChatSettings, readChatSettings, sameChatSettings, type ChatColor, type ChatColorScheme,
   type ChatSettings, type ChatSettingsResponse,
 } from '@kuroko/contracts/chatSettings';
-import { $activeSession, protectedRequestFailed, sessionEnded, sessionStarted, type ActiveSession } from '../../../platform/session/model';
-import { inActiveSession, sessionRequest } from '../../../platform/session/request';
+import { inActiveSession, $activeSession, protectedRequestFailed, sessionEnded, sessionStarted, type ActiveSession } from '../../../platform/session/model';
+import { sessionRequest } from '../../../platform/session/request';
 import { readBrowserStorage } from '../../../shared/browser/storage';
 import { ApiError, errorCode, type ErrorCode } from '../../../shared/http/api';
 import { notify } from '../../../shared/notifications/notifications';

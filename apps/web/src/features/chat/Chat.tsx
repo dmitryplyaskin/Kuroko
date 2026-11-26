@@ -23,7 +23,8 @@ import {
   messageEditChanged, messageEditRequested, messageEditSubmitted, messageRegenerateRequested, messageSent, reasoningToggled, replyVariantRequested,
 } from './model';
 import { $appliedChatSettings } from './settings/model';
-import './chat.css';
+import chatClasses from './Chat.module.css';
+import logClasses from './ChatLog.module.css';
 
 type Preview = { kind: 'preview'; image: ChatImage };
 type Delete = { kind: 'delete'; message: Message };
@@ -134,27 +135,27 @@ export default function Chat() {
   }
 
   return (
-    <Tabs className="chat-panel" data-user-side={settings.userSide} value={activeTab} onChange={setTab}
+    <Tabs className={chatClasses['chat-panel']} data-user-side={settings.userSide} value={activeTab} onChange={setTab}
       keepMountedMode="display-none" variant="unstyled" style={chatDisplayStyle(settings, scheme)}>
-      <h1 className="chat-sr-only" id="chat-title" ref={title} tabIndex={-1}>{t('chat.title')}</h1>
-      <header className="chat-workspace-header">
+      <h1 className={chatClasses['chat-sr-only']} id="chat-title" ref={title} tabIndex={-1}>{t('chat.title')}</h1>
+      <header className={chatClasses['chat-workspace-header']}>
         {agent && <AgentToolbar agent={agent} heading={agentHeading} onBack={backFromAgent} />}
-        <Tabs.List className="chat-tabs" aria-labelledby={agent ? 'chat-agent-title' : 'chat-title'}>
-          <Tabs.Tab ref={chatTab} className="chat-tab" value="chat" leftSection={<MessageSquare size={15} aria-hidden="true" />}>
+        <Tabs.List className={chatClasses['chat-tabs']} aria-labelledby={agent ? 'chat-agent-title' : 'chat-title'}>
+          <Tabs.Tab ref={chatTab} className={chatClasses['chat-tab']} value="chat" leftSection={<MessageSquare size={15} aria-hidden="true" />}>
             {t('chat.title')}
           </Tabs.Tab>
-          <Tabs.Tab ref={logTab} className="chat-tab" value="log" leftSection={<List size={16} aria-hidden="true" />}>
+          <Tabs.Tab ref={logTab} className={chatClasses['chat-tab']} value="log" leftSection={<List size={16} aria-hidden="true" />}>
             {t('chat.log')}
           </Tabs.Tab>
           {!agent && agents.length > 0 && (
-            <Tabs.Tab className="chat-tab" value="agents" leftSection={<Bot size={16} aria-hidden="true" />}>
+            <Tabs.Tab className={chatClasses['chat-tab']} value="agents" leftSection={<Bot size={16} aria-hidden="true" />}>
               {t('chat.agents')}
             </Tabs.Tab>
           )}
         </Tabs.List>
       </header>
       {(missing || loadError || saveError) && (
-        <div className="chat-status">
+        <div className={chatClasses['chat-status']}>
           {missing && <p role="alert">{t('chat.deletedElsewhere')}</p>}
           {(loadError || saveError) && <>
             <p role="alert">{t(`error.${loadError ?? saveError!}`)}</p>
@@ -164,29 +165,29 @@ export default function Chat() {
           </>}
         </div>
       )}
-      <Tabs.Panel className="chat-conversation-pane" value="chat">
-        <div className="chat-conversation" hidden={Boolean(agent)}>
+      <Tabs.Panel className={chatClasses['chat-conversation-pane']} value="chat">
+        <div className={chatClasses['chat-conversation']} hidden={Boolean(agent)}>
           {rows.length ? (
             <ChatHistory key={chatId} ref={history} messages={rows} renderMessage={renderMessage} />
-          ) : <p className="chat-empty">{loading ? t('chat.loading') : chatId && t('chat.empty')}</p>}
+          ) : <p className={chatClasses['chat-empty']}>{loading ? t('chat.loading') : chatId && t('chat.empty')}</p>}
           <ChatComposer menu={<ChatMenu hasMessages={Boolean(rows.length)} scrollToStart={() => history.current?.scrollToStart()}
             scrollToEnd={() => history.current?.scrollToEnd()} />} />
         </div>
         {agent && <AgentConversation key={agent.key} agent={agent} turns={agentTurns} visible={activeTab === 'chat'} onSelect={selectAgent} />}
       </Tabs.Panel>
-      <Tabs.Panel className="chat-log-pane" value="log">
-        <div className="chat-primary-log" hidden={Boolean(agent)}>
+      <Tabs.Panel className={logClasses['chat-log-pane']} value="log">
+        <div className={chatClasses['chat-primary-log']} hidden={Boolean(agent)}>
           <ChatLog key={chatId} visible={logVisible && !agent} entries={entries} messages={messages} gmMode={gmMode} onOpenAgent={selectAgent}
             liveReply={logVisible && !agent && replyId !== null ? rows.at(-1) : undefined} />
         </div>
         {agent && <ChatLogView key={agent.key} visible={logVisible} turns={logVisible ? agentTurns : []} emptyMessage={t('chat.logEmpty')} onOpenAgent={selectAgent} />}
       </Tabs.Panel>
       {!agent && agents.length > 0 && (
-        <Tabs.Panel className="chat-agents-pane" value="agents">
+        <Tabs.Panel className={chatClasses['chat-agents-pane']} value="agents">
           <ChatAgents agents={agents} onSelect={selectAgent} />
         </Tabs.Panel>
       )}
-      <output className="chat-sr-only">{announcement && t(announcement)}</output>
+      <output className={chatClasses['chat-sr-only']}>{announcement && t(announcement)}</output>
 
       <Modal opened={Boolean(dialog)} onClose={() => setDialog(undefined)} onExitTransitionEnd={() => {
         if (!focusAfterDelete.current) return;
@@ -196,7 +197,7 @@ export default function Chat() {
       }}
         title={dialog?.kind === 'delete' ? t('chat.deleteMessage') : t('chat.image')}
         size={dialog?.kind === 'preview' ? 'xl' : 'md'} centered closeButtonProps={{ 'aria-label': t('common.close') }}>
-        {dialog?.kind === 'preview' && <div className="chat-preview"><ChatPicture image={dialog.image} /></div>}
+        {dialog?.kind === 'preview' && <div data-chat-preview><ChatPicture image={dialog.image} /></div>}
         {dialog?.kind === 'delete' && (
           <>
             <p>{t('chat.deleteWarning')}</p>

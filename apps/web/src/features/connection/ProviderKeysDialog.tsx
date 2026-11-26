@@ -6,6 +6,7 @@ import { connectionNameLimit, providers, type Provider, type ProviderKey } from 
 import {
   $keyBeingDeleted, $keyPending, $keySubmission, connectionActionRequested, keyDeleteClosed, keyDeleteOpened, keyErrorCleared,
 } from './model';
+import classes from './ConnectionSettings.module.css';
 
 export function ProviderKeysDialog({ provider, keys, onClose }: {
   provider: Provider;
@@ -41,7 +42,7 @@ export function ProviderKeysDialog({ provider, keys, onClose }: {
       closeButtonProps={{ 'aria-label': t('common.close'), disabled: pending }} closeOnEscape={!pending} closeOnClickOutside={!pending}>
       <Stack gap="lg">
         {keys.length > 0 && (
-          <ul className="provider-key-list" aria-label={t('connection.savedKeys')}>
+          <ul className={classes['provider-key-list']} aria-label={t('connection.savedKeys')}>
             {keys.map((key) => (
               <li key={key.id}>
                 <span>{key.name}</span>
@@ -56,7 +57,7 @@ export function ProviderKeysDialog({ provider, keys, onClose }: {
         )}
         {deleting ? (
           <Stack gap="sm">
-            <p className="connection-modal-copy">{t('connection.keyDeleteWarning', { name: deleting.name })}</p>
+            <p className={classes['connection-modal-copy']}>{t('connection.keyDeleteWarning', { name: deleting.name })}</p>
             <Group justify="flex-end">
               <Button ref={cancel} variant="default" disabled={pending} onClick={() => {
                 dismissDelete();
@@ -67,7 +68,7 @@ export function ProviderKeysDialog({ provider, keys, onClose }: {
             </Group>
           </Stack>
         ) : (
-          <form className="provider-key-form" method="post" onSubmit={add}>
+          <form className={classes['provider-key-form']} method="post" onSubmit={add}>
             <TextInput ref={nameInput} data-autofocus label={t('connection.keyName')} name="name" required maxLength={connectionNameLimit}
               autoComplete="off" readOnly={pending} onChange={clearError} />
             <TextInput type="password" label={t('common.apiKey')} name="apiKey" required description={t('connection.keyHint')}
@@ -75,8 +76,8 @@ export function ProviderKeysDialog({ provider, keys, onClose }: {
             <Group justify="flex-end"><Button type="submit" loading={pending}>{t('connection.addKey')}</Button></Group>
           </form>
         )}
-        {feedback.status === 'error' && <p role="alert" className="connection-error">{t(`error.${feedback.code}`)}</p>}
-        <output className="connection-hint">{feedback.status === 'removed' && t('connection.keyRemoved')}</output>
+        {feedback.status === 'error' && <p role="alert" className={classes['connection-error']}>{t(`error.${feedback.code}`)}</p>}
+        <output className={classes['connection-hint']}>{feedback.status === 'removed' && t('connection.keyRemoved')}</output>
       </Stack>
     </Modal>
   );

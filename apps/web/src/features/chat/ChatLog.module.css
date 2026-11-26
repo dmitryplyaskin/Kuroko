@@ -135,8 +135,8 @@
 .chat-log-turn-number { color: var(--kr-muted); font-size: .75rem; }
 .chat-log-inspector-header h2 { margin-block: 2px 3px; font-size: 1.15rem; overflow-wrap: anywhere; }
 .chat-log-close { flex: none; }
-.chat-log-detail-tabs .mantine-Tabs-list { padding-inline: 12px; }
-.chat-log-detail-tabs .mantine-Tabs-tab { min-block-size: 38px; padding: 6px 9px; }
+.chat-log-detail-tabs :global(.mantine-Tabs-list) { padding-inline: 12px; }
+.chat-log-detail-tabs :global(.mantine-Tabs-tab) { min-block-size: 38px; padding: 6px 9px; }
 .chat-log-detail-panel { display: grid; min-inline-size: 0; gap: 14px; padding: 14px 16px 24px; overflow-wrap: anywhere; }
 .chat-log-transcript { font-size: .9rem; }
 .chat-log-inspector-section h3 { margin-block-end: 5px; color: var(--kr-muted); font-size: .8125rem; }

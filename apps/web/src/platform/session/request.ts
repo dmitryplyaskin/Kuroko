@@ -1,6 +1,5 @@
-import { sample, type Event } from 'effector';
 import { api, apiResponse } from '../../shared/http/api';
-import { $activeSession, type ActiveSession } from './model';
+import type { ActiveSession } from './model';
 
 type RequestOptions = Omit<NonNullable<Parameters<typeof apiResponse>[1]>, 'account'>;
 
@@ -18,16 +17,4 @@ export function sessionRequest<T>(session: ActiveSession, path: string, options?
 
 export function sessionResponse(session: ActiveSession, path: string, options?: RequestOptions) {
   return apiResponse(path, forSession(session, options));
-}
-
-export function inActiveSession<Completion extends { params: unknown }>(
-  completion: Event<Completion>,
-  sessionOf: (params: Completion['params']) => ActiveSession,
-) {
-  return sample({
-    clock: completion,
-    source: $activeSession,
-    filter: (current, { params }) => current === sessionOf(params),
-    fn: (_, result) => result,
-  });
 }

@@ -2,8 +2,7 @@ import { createEffect, createEvent, createStore, sample } from 'effector';
 import { isModelId, readCustomBaseUrl, type Provider } from '@kuroko/contracts/connectionSettings';
 import { abortFx } from '../../shared/async/abort';
 import { errorCode, type ErrorCode } from '../../shared/http/api';
-import { protectedRequestFailed, type ActiveSession } from '../../platform/session/model';
-import { inActiveSession } from '../../platform/session/request';
+import { inActiveSession, protectedRequestFailed, type ActiveSession } from '../../platform/session/model';
 import { connectionApi } from './connectionApi';
 
 type Catalog<Result> = { status: 'idle' | 'loading' } | { status: 'error'; code: ErrorCode } | ({ status: 'ready' } & Result);

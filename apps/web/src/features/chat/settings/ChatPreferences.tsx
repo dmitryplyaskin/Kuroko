@@ -15,7 +15,7 @@ import {
   $chatSettingsDraft, $chatSettingsDirty, $chatSettingsLoad, $chatSettingsSubmission, chatSettingsChanged,
   chatSettingsColorChanged, chatSettingsResetRequested, chatSettingsRetryRequested, chatSettingsSaveRequested,
 } from './model';
-import './chatPreferences.css';
+import classes from './ChatPreferences.module.css';
 
 const actionButtonStyles: ButtonProps['styles'] = {
   root: { maxInlineSize: '100%' },
@@ -39,7 +39,7 @@ function SizeSlider({ label, value, bounds, onChange }: {
   const id = useId();
   const count = number.format(value);
   return (
-    <div className="chat-setting-slider">
+    <div className={classes['chat-setting-slider']}>
       <label htmlFor={id}>{label}</label>
       <span aria-hidden="true">{t('chatSettings.pixelsShort', { count })}</span>
       <input id={id} type="range" {...bounds} value={value} aria-valuetext={t('chatSettings.pixels', { count })}
@@ -103,7 +103,7 @@ export default function ChatPreferences() {
   if (load.status === 'loading') return <output>{t('chatSettings.loading')}</output>;
   if (load.status === 'error') {
     return (
-      <div className="chat-preferences-feedback">
+      <div className={classes['chat-preferences-feedback']}>
         <p role="alert">{t(`error.${load.code}`)}</p>
         <Button type="button" variant="default" onClick={retry}>{t('common.retryLoad')}</Button>
       </div>
@@ -114,16 +114,16 @@ export default function ChatPreferences() {
   const status = { saving: t('chatSettings.saving'), idle: dirty ? unsaved : '', error: '' }[submission.status];
 
   return (
-    <div className="chat-preferences">
+    <div className={classes['chat-preferences']}>
       <form onSubmit={(event) => { event.preventDefault(); save(); }}>
-        <div className="chat-preferences-controls">
-          <fieldset className="field-group chat-size-controls" disabled={saving}>
+        <div className={classes['chat-preferences-controls']}>
+          <fieldset className={['field-group', classes['chat-size-controls']].join(' ')} disabled={saving}>
             <legend>{t('chatSettings.layout')}</legend>
             <SizeSlider label={t('chatSettings.fontSize')} bounds={chatFontSize} value={settings.fontSize}
               onChange={(fontSize) => change({ fontSize })} />
             <SizeSlider label={t('chatSettings.width')} bounds={chatWidth} value={settings.width}
               onChange={(width) => change({ width })} />
-            <fieldset className="chat-side-options">
+            <fieldset className={classes['chat-side-options']}>
               <legend>{t('chatSettings.userMessages')}</legend>
               <div>
                 {(['left', 'right'] as const).map((side) => (
@@ -142,40 +142,40 @@ export default function ChatPreferences() {
             <SegmentedControl fullWidth aria-label={t('chatSettings.colorScheme')} value={scheme}
               onChange={(value) => setSelectedScheme(value === 'dark' ? 'dark' : 'light')}
               data={[{ label: t('chatSettings.light'), value: 'light' }, { label: t('chatSettings.dark'), value: 'dark' }]} />
-            <div className="chat-color-controls">
+            <div className={classes['chat-color-controls']}>
               {chatColorRoles.map((role) => (
                 <ChatColorInput key={`${scheme}-${role}`} role={role} value={settings.colors[scheme][role] ?? themeColors[role]}
                   onChange={(color) => changeColor({ scheme, role, color })} />
               ))}
             </div>
-            <p className="chat-color-hint">
+            <p className={classes['chat-color-hint']}>
               <LocalizedText id="chatSettings.formattingHint" values={{
                 action: <code>{t('chatSettings.actionExample')}</code>, quote: <code>{t('chatSettings.quoteExample')}</code>,
               }} />
             </p>
           </fieldset>
         </div>
-        <div className="chat-preferences-actions">
+        <div className={classes['chat-preferences-actions']}>
           <Button type="button" variant="subtle" styles={actionButtonStyles} disabled={saving || sameChatSettings(settings, defaultChatSettings)}
             onClick={reset}>{t('chatSettings.reset')}</Button>
           <Button type="submit" styles={actionButtonStyles} loading={saving} disabled={!dirty}>{t('chatSettings.save')}</Button>
         </div>
         {submission.status === 'error'
-          ? <p className="chat-preferences-error" role="alert">{t(`error.${submission.code}`)}</p>
-          : <output className="chat-preferences-status">{status}</output>}
+          ? <p className={classes['chat-preferences-error']} role="alert">{t(`error.${submission.code}`)}</p>
+          : <output className={classes['chat-preferences-status']}>{status}</output>}
       </form>
 
-      <section className="chat-preferences-preview" aria-labelledby="chat-preview-heading">
+      <section className={classes['chat-preferences-preview']} aria-labelledby="chat-preview-heading">
         <h2 id="chat-preview-heading">{t('chatSettings.preview')}</h2>
-        <div className="chat-settings-demo" style={previewStyle} data-user-side={settings.userSide}>
+        <div className={classes['chat-settings-demo']} style={previewStyle} data-user-side={settings.userSide}>
           {previewMessages.map(({ role, text }) => {
             const user = role === 'user';
             return (
-              <article className="chat-demo-turn" data-author={role} key={text}>
+              <article className={classes['chat-demo-turn']} data-author={role} key={text}>
                 <span className="icon-tile account-avatar" aria-hidden="true">{user ? <UserRound size={18} /> : <Bot size={18} />}</span>
-                <div className="chat-demo-message">
+                <div className={classes['chat-demo-message']}>
                   <h3>{user ? t('chatSettings.you') : t('common.model')}</h3>
-                  <div className="chat-message-content"><ChatText user={user}>{t(text)}</ChatText></div>
+                  <div data-chat-content><ChatText user={user}>{t(text)}</ChatText></div>
                 </div>
               </article>
             );

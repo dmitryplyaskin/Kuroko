@@ -51,13 +51,13 @@
 .agent-editor-heading .agent-back { min-block-size: 28px; padding-inline: 12px; }
 .agent-editor-heading h1 { font-size: clamp(1.5rem, 4vw, 2.25rem); }
 .agent-editor-actions { display: flex; align-items: center; gap: 12px; }
-.agent-editor :is(h1, input, textarea, .agent-editor-tabs button, .agent-confirmation button) { scroll-margin-block-start: 116px; }
+.agent-editor :is(h1, input, textarea, .agent-editor-tabs button) { scroll-margin-block-start: 116px; }
 .agent-save-status { color: var(--kr-muted); font-size: .875rem; }
 .agent-save-status:empty { position: absolute; }
 .agent-editor-error { margin-block: 0 16px; }
-.agent-editor-tabs .mantine-Tabs-list { border-color: var(--kr-border); }
-.agent-editor-tabs .mantine-Tabs-tab { min-block-size: 44px; color: var(--kr-muted); font-weight: 600; }
-.agent-editor-tabs .mantine-Tabs-tab[data-active] { color: var(--kr-text); border-color: var(--kr-accent); }
+.agent-editor-tabs :global(.mantine-Tabs-list) { border-color: var(--kr-border); }
+.agent-editor-tabs :global(.mantine-Tabs-tab) { min-block-size: 44px; color: var(--kr-muted); font-weight: 600; }
+.agent-editor-tabs :global(.mantine-Tabs-tab)[data-active] { color: var(--kr-text); border-color: var(--kr-accent); }
 .agent-definition, .agent-tools-panel { padding-block-start: 24px; }
 .agent-writing-fields { display: grid; gap: 20px; }
 .agent-name-field { max-inline-size: 28rem; }
@@ -78,17 +78,6 @@
   padding-block-start: 8px;
   border-block-start: 1px solid var(--kr-border);
 }
-.agent-confirmation {
-  display: grid;
-  gap: 12px;
-  max-inline-size: 42rem;
-  padding: 20px;
-  border: 1px solid var(--kr-border);
-  border-radius: var(--kr-radius-panel);
-  background: var(--kr-surface);
-}
-.agent-confirmation h2 { font-size: 1.125rem; font-weight: 600; }
-.agent-confirmation p { overflow-wrap: anywhere; }
 .agent-confirm-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .agent-delete-dialog { display: grid; gap: 16px; overflow-wrap: anywhere; }
 .agent-delete-dialog .agent-confirm-actions { justify-content: flex-end; }

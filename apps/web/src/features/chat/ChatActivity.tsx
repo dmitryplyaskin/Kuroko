@@ -3,6 +3,7 @@ import { isSubagentTool, readDelegatedTask, readSubagentName, readSubagentResult
 import type { ChatActivityEntry, ChatActivityTurn, ChatMessage, ChatToolCall } from '@kuroko/contracts/chat';
 import type { JsonValue } from '@kuroko/contracts/llm';
 import { useI18n } from '../../shared/i18n/i18n';
+import chatClasses from './Chat.module.css';
 
 export function activityObject(value: JsonValue | undefined) {
   return typeof value === 'object' && value !== null && !Array.isArray(value) ? value : undefined;
@@ -114,7 +115,7 @@ export function chatActivityView(turns: ChatActivityTurn[], messages: ChatMessag
 
 export function ActivityStatus({ status }: { status: ChatActivityEntry['status'] }) {
   const { t } = useI18n();
-  return <span className="chat-event-status" data-status={status}>{t(`chat.activity.${status}`)}</span>;
+  return <span className={chatClasses['chat-event-status']} data-status={status}>{t(`chat.activity.${status}`)}</span>;
 }
 
 export function useAgentName(agent: AgentIdentity) {

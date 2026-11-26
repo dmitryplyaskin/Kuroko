@@ -7,7 +7,8 @@ import { useI18n } from '../../shared/i18n/i18n';
 import { activityObject, ActivityStatus, type ActivityEntry } from './ChatActivity';
 import { chatLogTurns, logRowPreview, withLiveLogReply, type LogRow, type LogTurn } from './chatLogActivity';
 import { ChatText } from './ChatText';
-import './chatLog.css';
+import logClasses from './ChatLog.module.css';
+import chatClasses from './Chat.module.css';
 
 const rowLabels = {
   user: 'chat.logUser', assistant: 'chat.logAssistant', instruction: 'chat.logInstruction',
@@ -28,7 +29,7 @@ const detailTabs = {
 function LogLabel({ row }: { row: LogRow }) {
   const { t } = useI18n();
   const Icon = rowIcons[row.kind];
-  return <span className="chat-log-label" data-kind={row.kind}><Icon size={14} aria-hidden="true" />{t(rowLabels[row.kind])}</span>;
+  return <span className={logClasses['chat-log-label']} data-kind={row.kind}><Icon size={14} aria-hidden="true" />{t(rowLabels[row.kind])}</span>;
 }
 
 function LogStatus({ row }: { row: LogRow }) {
@@ -39,7 +40,7 @@ function LogStatus({ row }: { row: LogRow }) {
 
 function RawDetail({ value, limit }: { value: JsonValue; limit?: number }) {
   const text = typeof value === 'string' ? value : JSON.stringify(value, null, 2);
-  return <pre className="chat-log-raw">{limit && text.length > limit ? `${text.slice(0, limit)}…` : text}</pre>;
+  return <pre className={logClasses['chat-log-raw']}>{limit && text.length > limit ? `${text.slice(0, limit)}…` : text}</pre>;
 }
 
 function LogInspector({ row, turn, source, heading, id, onClose, onSource, onOpenAgent }: {
@@ -67,32 +68,32 @@ function LogInspector({ row, turn, source, heading, id, onClose, onSource, onOpe
   ];
   const overview = (
     <>
-      {text?.trim() && <div className="chat-log-transcript chat-message-content">
+      {text?.trim() && <div className={logClasses['chat-log-transcript']} data-chat-content>
         <ChatText user={row.kind === 'user'}>{text}</ChatText>
       </div>}
       {row.kind === 'tool' && (['arguments', 'result'] as const).map((key) => details[key] !== undefined && (
-        <section className="chat-log-inspector-section" key={key}>
+        <section className={logClasses['chat-log-inspector-section']} key={key}>
           <h3>{t(detailLabels[key])}</h3>
           <RawDetail value={details[key]} limit={350} />
         </section>
       ))}
       {Object.entries(details).filter(([key]) => !tabs.some(([, keys]) => keys.some((item) => item === key)))
         .map(([key, value]) => (
-          <section className="chat-log-inspector-section" key={key}>
+          <section className={logClasses['chat-log-inspector-section']} key={key}>
             <h3>{Object.hasOwn(detailLabels, key) ? t(detailLabels[key as keyof typeof detailLabels]) : key}</h3>
             <RawDetail value={value} />
           </section>
         ))}
-      <dl className="chat-log-metadata">
+      <dl className={logClasses['chat-log-metadata']}>
         {metadata.map(([label, value]) => value && <div key={label}><dt>{label}</dt><dd><bdi>{value}</bdi></dd></div>)}
       </dl>
       {(source || targetAgentKey) && (
-        <div className="chat-log-related">
+        <div className={logClasses['chat-log-related']}>
           {targetAgentKey && <Button variant="light" size="compact-sm"
             onClick={() => onOpenAgent(targetAgentKey)} leftSection={<Bot size={15} aria-hidden="true" />}>
             {t('chat.logOpenAgent')}
           </Button>}
-          {source && <Button variant="subtle" size="compact-sm" className="chat-log-source" onClick={onSource}
+          {source && <Button variant="subtle" size="compact-sm" className={logClasses['chat-log-source']} onClick={onSource}
             leftSection={<ArrowDownRight size={15} aria-hidden="true" />}>{t('chat.logOpenModel')}</Button>}
         </div>
       )}
@@ -100,41 +101,41 @@ function LogInspector({ row, turn, source, heading, id, onClose, onSource, onOpe
   );
   return (
     // oxlint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- Escape dismisses details from any of its controls.
-    <aside className="chat-log-inspector" id={id} aria-labelledby={titleId}
+    <aside className={logClasses['chat-log-inspector']} id={id} aria-labelledby={titleId}
       onKeyDown={(event) => {
         if (event.key === 'Escape' && !event.defaultPrevented) {
           event.stopPropagation();
           onClose();
         }
       }}>
-      <header className="chat-log-inspector-header">
+      <header className={logClasses['chat-log-inspector-header']}>
         <div>
-          <span className="chat-log-turn-number">{t('chat.logTurn', { number: number.format(turn) })}</span>
+          <span className={logClasses['chat-log-turn-number']}>{t('chat.logTurn', { number: number.format(turn) })}</span>
           <h2 id={titleId} ref={heading} tabIndex={-1}>
             {event?.name ? <bdi>{event.name}</bdi> : t(rowLabels[row.kind])}
           </h2>
           <LogStatus row={row} />
         </div>
-        <button type="button" className="icon-button chat-log-close" aria-label={t('chat.logCloseDetails')}
+        <button type="button" className={['icon-button', logClasses['chat-log-close']].join(' ')} aria-label={t('chat.logCloseDetails')}
           title={t('chat.logCloseDetails')} onClick={onClose}><X size={18} aria-hidden="true" /></button>
       </header>
       {tabs.length ? (
-        <Tabs className="chat-log-detail-tabs" defaultValue="overview" keepMounted={false} color="var(--kr-accent)">
+        <Tabs className={logClasses['chat-log-detail-tabs']} defaultValue="overview" keepMounted={false} color="var(--kr-accent)">
           <Tabs.List aria-label={t('chat.logDetails')}>
             <Tabs.Tab value="overview">{t('chat.logOverview')}</Tabs.Tab>
             {tabs.map(([key]) => <Tabs.Tab key={key} value={key}>{t(detailLabels[key as keyof typeof detailTabs])}</Tabs.Tab>)}
           </Tabs.List>
-          <Tabs.Panel value="overview" className="chat-log-detail-panel">{overview}</Tabs.Panel>
+          <Tabs.Panel value="overview" className={logClasses['chat-log-detail-panel']}>{overview}</Tabs.Panel>
           {tabs.map(([tab, keys]) => (
-            <Tabs.Panel key={tab} value={tab} className="chat-log-detail-panel">
-              {keys.map((key) => details[key] !== undefined && <section className="chat-log-inspector-section" key={key}>
+            <Tabs.Panel key={tab} value={tab} className={logClasses['chat-log-detail-panel']}>
+              {keys.map((key) => details[key] !== undefined && <section className={logClasses['chat-log-inspector-section']} key={key}>
                 <h3>{t(detailLabels[key])}</h3>
                 <RawDetail value={details[key]} />
               </section>)}
             </Tabs.Panel>
           ))}
         </Tabs>
-      ) : <div className="chat-log-detail-panel">{overview}</div>}
+      ) : <div className={logClasses['chat-log-detail-panel']}>{overview}</div>}
     </aside>
   );
 }
@@ -146,16 +147,16 @@ function LogEventRow({ row, current, inspectorId, select }: {
   const { event } = row;
   const preview = logRowPreview(row);
   return (
-    <li className="chat-log-row">
-      <button type="button" className="chat-log-row-button" aria-current={current || undefined}
+    <li className={logClasses['chat-log-row']}>
+      <button type="button" className={logClasses['chat-log-row-button']} aria-current={current || undefined}
         aria-controls={current ? inspectorId : undefined} onClick={(event) => select(row.key, event.currentTarget)}>
         <LogLabel row={row} />
-        <span className="chat-log-preview">
+        <span className={logClasses['chat-log-preview']}>
           {row.kind !== 'assistant' && event?.name && <strong><bdi>{event.name}</bdi></strong>}
           {preview && <bdi>{preview}</bdi>}
           {!preview && !event?.name && (event?.status === 'running' || row.pending) && <span>{t('chat.answering')}</span>}
         </span>
-        <span className="chat-log-row-meta">
+        <span className={logClasses['chat-log-row-meta']}>
           <LogStatus row={row} />
           {row.kind !== 'instruction' && <time dateTime={new Date(row.time).toISOString()} title={date.format(row.time)}>
             {clockWithSeconds.format(row.time)}
@@ -180,13 +181,13 @@ function rowGroups(rows: LogRow[], collapse: boolean) {
 function TurnOverview({ turns, current, jump }: { turns: LogTurn[]; current?: number; jump: (id: number) => void }) {
   const { t, number } = useI18n();
   return (
-    <nav className="chat-log-overview" aria-label={t('chat.logTurns')}>
+    <nav className={logClasses['chat-log-overview']} aria-label={t('chat.logTurns')}>
       <ol>
         {turns.map((turn) => (
           <li key={turn.id}>
             <button type="button" aria-current={turn.id === current || undefined} onClick={() => jump(turn.id)}>
               <span>{t('chat.logTurn', { number: number.format(turn.number) })}</span>
-              <span className="chat-log-track" aria-hidden="true">
+              <span className={logClasses['chat-log-track']} aria-hidden="true">
                 {turn.rows.map((row) => <span key={row.key} data-kind={row.kind} />)}
               </span>
             </button>
@@ -255,13 +256,13 @@ export function ChatLogView({ turns, emptyMessage, visible, onOpenAgent }: {
   }
 
   if (!visible) return null;
-  if (!turns.length) return <p className="chat-section-empty chat-log-empty">{emptyMessage}</p>;
+  if (!turns.length) return <p className={[chatClasses['chat-section-empty'], logClasses['chat-log-empty']].join(' ')}>{emptyMessage}</p>;
 
   const related = selected?.row.sourceKey ? byKey.get(selected.row.sourceKey) : undefined;
   return (
-    <div className="chat-log" data-inspecting={Boolean(selected) || undefined}>
-      <div className="chat-log-controls">
-        <TextInput ref={search} name="log-query" type="search" size="sm" className="chat-log-search"
+    <div className={logClasses['chat-log']} data-inspecting={Boolean(selected) || undefined}>
+      <div className={logClasses['chat-log-controls']}>
+        <TextInput ref={search} name="log-query" type="search" size="sm" className={logClasses['chat-log-search']}
           aria-label={t('chat.logSearch')} placeholder={t('chat.logSearch')} value={query}
           onChange={(event) => setQuery(event.currentTarget.value)}
           leftSection={<Search size={16} aria-hidden="true" />} />
@@ -269,28 +270,28 @@ export function ChatLogView({ turns, emptyMessage, visible, onOpenAgent }: {
           leftSection={<Layers size={15} aria-hidden="true" />} onClick={() => setCollapse((value) => !value)}>
           {t('chat.logCollapseCalls')}
         </Button>
-        <output className="chat-sr-only">{needle && t('chat.logMatches', { count: number.format(matches) })}</output>
+        <output className={chatClasses['chat-sr-only']}>{needle && t('chat.logMatches', { count: number.format(matches) })}</output>
       </div>
       {!needle && turns.length > 1 && <TurnOverview turns={turns} current={selected?.turn.id} jump={jump} />}
-      <div className="chat-log-body">
+      <div className={logClasses['chat-log-body']}>
         {/* oxlint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- The list scrolls independently via keyboard. */}
-        <section className="chat-log-list" aria-label={t('chat.logTrajectory')} tabIndex={0}>
-          {!visibleTurns.length && <p className="chat-section-empty">{t('chat.logNoMatches')}</p>}
+        <section className={logClasses['chat-log-list']} aria-label={t('chat.logTrajectory')} tabIndex={0}>
+          {!visibleTurns.length && <p className={chatClasses['chat-section-empty']}>{t('chat.logNoMatches')}</p>}
           {visibleTurns.map((turn) => (
-            <section className="chat-log-turn" key={turn.id}>
+            <section className={logClasses['chat-log-turn']} key={turn.id}>
               <h2 id={`${id}-turn-${turn.id}`} tabIndex={-1}>{t('chat.logTurn', { number: number.format(turn.number) })}</h2>
-              <ol className="chat-log-rows">
+              <ol className={logClasses['chat-log-rows']}>
                 {rowGroups(turn.rows, collapse && !needle).map(({ rows, folded }) => {
                   const renderRow = (row: LogRow) => <LogEventRow row={row} key={row.key} inspectorId={inspectorId}
                     current={row.key === selectedKey} select={openRow} />;
                   if (!folded) return renderRow(rows[0]!);
                   const names = [...new Set(rows.flatMap(({ event }) => event?.name ? [event.name] : []))];
                   return (
-                    <li className="chat-log-fold" key={rows[0]!.key}>
+                    <li className={logClasses['chat-log-fold']} key={rows[0]!.key}>
                       <details>
                         <summary><span>{t('chat.logCallGroup', { count: number.format(rows.length) })}</span>
                           {names.length > 0 && <bdi>{names.join(', ')}</bdi>}</summary>
-                        <ol className="chat-log-rows">{rows.map(renderRow)}</ol>
+                        <ol className={logClasses['chat-log-rows']}>{rows.map(renderRow)}</ol>
                       </details>
                     </li>
                   );

@@ -1,5 +1,7 @@
 import { isAuthField, type User } from '@kuroko/contracts/auth';
 import { api, ApiError, errorCode } from '../../shared/http/api';
+import type { ActiveSession } from './model';
+import { sessionRequest } from './request';
 
 export const authApi = {
   session: (signal?: AbortSignal) => api<User>('/auth/session', { signal }),
@@ -7,11 +9,11 @@ export const authApi = {
     api<User>('/auth/register', { method: 'POST', body: { username, password } }),
   login: (username: string, password: FormDataEntryValue | null, remember: boolean) =>
     api<User>('/auth/login', { method: 'POST', body: { username, password, remember } }),
-  logout: (account: number, signal: AbortSignal) => api<void>('/auth/logout', { method: 'POST', account, signal }),
-  changePassword: (account: number, currentPassword: FormDataEntryValue | null, newPassword: FormDataEntryValue | null, signal: AbortSignal) =>
-    api<void>('/auth/password', { method: 'PUT', account, signal, body: { currentPassword, newPassword } }),
-  deleteAccount: (account: number, username: string, currentPassword: FormDataEntryValue | null, signal: AbortSignal) =>
-    api<void>('/auth/account', { method: 'DELETE', account, signal, body: { username, currentPassword } }),
+  logout: (session: ActiveSession) => sessionRequest<void>(session, '/auth/logout', { method: 'POST' }),
+  changePassword: (session: ActiveSession, currentPassword: FormDataEntryValue | null, newPassword: FormDataEntryValue | null) =>
+    sessionRequest<void>(session, '/auth/password', { method: 'PUT', body: { currentPassword, newPassword } }),
+  deleteAccount: (session: ActiveSession, username: string, currentPassword: FormDataEntryValue | null) =>
+    sessionRequest<void>(session, '/auth/account', { method: 'DELETE', body: { username, currentPassword } }),
 };
 
 export function authError(failure: unknown) {

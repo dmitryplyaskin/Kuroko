@@ -3,6 +3,7 @@ import { realmSearchKey, realmSearchMaxLength, type RealmCharacter, type RealmSt
 import { Search } from 'lucide-react';
 import { useI18n } from '../../shared/i18n/i18n';
 import { RealmAvatar } from './RealmAvatar';
+import classes from './Realms.module.css';
 
 export type RealmRecord = RealmCharacter | RealmStart;
 
@@ -24,9 +25,9 @@ export function RecordLabel({ record, portrait }: { record: RealmRecord; portrai
   const { t } = useI18n();
   const excerpt = 'content' in record ? record.summary || record.content : record.greeting || record.scenario;
   return (
-    <span className="realms-record-label">
+    <span className={classes['realms-record-label']}>
       {portrait && <RealmAvatar src={'content' in record ? record.avatar : undefined} kind="character" />}
-      <span className="realms-record-label-text">
+      <span className={classes['realms-record-label-text']}>
         <strong>{record.title.trim() || t('realms.untitled')}</strong>
         {excerpt?.trim() && <span aria-hidden="true">{excerpt.trim()}</span>}
       </span>

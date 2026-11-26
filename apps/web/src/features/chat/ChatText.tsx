@@ -4,7 +4,7 @@ import type { Element, Root } from 'hast';
 import Markdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { rehypeChatSpeech } from './chatSpeech';
-import './chatText.css';
+import textClasses from './ChatText.module.css';
 
 const markdownPlugins = [remarkGfm];
 const htmlPlugins = [rehypeChatSpeech];
@@ -32,7 +32,7 @@ const markdownComponents: Components = {
     const { t } = useI18n();
     return (
       // oxlint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- Make overflowing tables keyboard-scrollable.
-      <section className="chat-table" tabIndex={0} aria-label={t('chat.table')}>
+      <section className={textClasses['chat-table']} tabIndex={0} aria-label={t('chat.table')}>
         <table>{children}</table>
       </section>
     );
@@ -59,7 +59,7 @@ export const ChatText = memo(function ChatText({ children, user = false }: { chi
   const { t, number } = useI18n();
   const footnotePrefix = `chat-${useId()}-footnote-`;
   return (
-    <div className={user ? 'chat-markdown chat-user-text' : 'chat-markdown'}>
+    <div data-chat-markdown={user ? "user" : "assistant"}>
       <Markdown remarkPlugins={markdownPlugins} rehypePlugins={[...htmlPlugins, [scopeFootnotes, footnotePrefix]]} components={markdownComponents} skipHtml={!user}
         remarkRehypeOptions={{
           clobberPrefix: footnotePrefix,

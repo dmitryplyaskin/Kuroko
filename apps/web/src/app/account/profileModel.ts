@@ -1,6 +1,6 @@
 import { combine, createEffect, createEvent, createStore, sample } from 'effector';
 import { authApi, authError } from '../../platform/session/authApi';
-import { $activeSession, protectedRequestFailed, sessionEnded, sessionEndRequested, type ActiveSession } from '../../platform/session/model';
+import { $activeSession, inActiveSession, protectedRequestFailed, sessionEnded, sessionEndRequested, type ActiveSession } from '../../platform/session/model';
 
 type ProfileAction = { kind: 'logout' }
   | { kind: 'password'; currentPassword: FormDataEntryValue | null; newPassword: FormDataEntryValue | null; confirmation: FormDataEntryValue | null }
@@ -10,23 +10,22 @@ type FormError = ReturnType<typeof authError> | { code: 'password_confirmation_m
 export const profileActionRequested = createEvent<ProfileAction>();
 export const profileErrorCleared = createEvent();
 const performProfileActionFx = createEffect(async ({ action, session }: { action: ProfileAction; session: ActiveSession }) => {
-  const { id, username } = session.user;
-  const signal = session.signal;
+  const { username } = session.user;
   switch (action.kind) {
     case 'logout':
-      await authApi.logout(id, signal);
+      await authApi.logout(session);
       return {};
     case 'password':
       if (action.newPassword !== action.confirmation) {
         return { error: { code: 'password_confirmation_mismatch', field: 'confirmPassword' } as const };
       }
-      await authApi.changePassword(id, action.currentPassword, action.newPassword, signal);
+      await authApi.changePassword(session, action.currentPassword, action.newPassword);
       return { notice: 'profile.passwordChanged' as const };
     case 'delete':
       if (action.username !== username) {
         return { error: { code: 'account_name_mismatch', field: 'username' } as const };
       }
-      await authApi.deleteAccount(id, username, action.currentPassword, signal);
+      await authApi.deleteAccount(session, username, action.currentPassword);
       return { notice: 'profile.accountDeleted' as const };
   }
 });
@@ -45,18 +44,9 @@ sample({
   target: performProfileActionFx,
 });
 
-const profileActionDone = sample({
-  clock: performProfileActionFx.done,
-  source: $activeSession,
-  filter: (current, { params }) => current === params.session,
-  fn: (_, done) => done,
-});
-const profileActionFailed = sample({
-  clock: performProfileActionFx.fail,
-  source: $activeSession,
-  filter: (current, { params }) => current === params.session,
-  fn: (_, { params, error }) => ({ session: params.session, error }),
-});
+const profileActionDone = inActiveSession(performProfileActionFx.done, ({ session }) => session);
+const profileActionFailed = inActiveSession(performProfileActionFx.fail, ({ session }) => session)
+  .map(({ params, error }) => ({ session: params.session, error }));
 
 export const $profileError = createStore<FormError | null>(null)
   .on(profileActionDone, (_, { result }) => result.error ?? null)

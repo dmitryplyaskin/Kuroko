@@ -6,9 +6,9 @@ import { ChatText } from './ChatText';
 test('colors direct speech across inline Markdown without removing the markup', () => {
   const html = renderToStaticMarkup(<ChatText>{'«Начало **реплики** и конец».\n\n— Другая реплика, — сказала Лина.'}</ChatText>);
 
-  assert.match(html, /<strong><span class="chat-speech">реплики<\/span><\/strong>/);
-  assert.match(html, /<span class="chat-speech"> и конец»<\/span>\./);
-  assert.match(html, /<span class="chat-speech">— Другая реплика,<\/span> — сказала Лина\./);
+  assert.match(html, /<strong><span data-chat-speech="">реплики<\/span><\/strong>/);
+  assert.match(html, /<span data-chat-speech=""> и конец»<\/span>\./);
+  assert.match(html, /<span data-chat-speech="">— Другая реплика,<\/span> — сказала Лина\./);
 });
 
 test('keeps code and literal user HTML out of speech highlighting', () => {
@@ -17,7 +17,7 @@ test('keeps code and literal user HTML out of speech highlighting', () => {
   assert.match(html, /<code>&quot;Код&quot;<\/code> и &lt;custom&gt;\./);
   assert.match(html, /<em>Действие\.<\/em>/);
   assert.match(html, /<blockquote>\s*<p>Цитата<\/p>/);
-  assert.doesNotMatch(html, /class="chat-speech"|<custom>/);
+  assert.doesNotMatch(html, /data-chat-speech=""|<custom>/);
 });
 
 test('sets unique and local targets for footnotes and back references', () => {
@@ -26,7 +26,7 @@ test('sets unique and local targets for footnotes and back references', () => {
   const ids = Array.from(html.matchAll(/\bid="([^"]+)"/g), (match) => match[1]);
   assert.equal(ids.length, 8);
   assert.equal(new Set(ids).size, 8);
-  for (const message of html.split('<div class="chat-markdown">').slice(1)) {
+  for (const message of html.split('<div data-chat-markdown="assistant">').slice(1)) {
     const localIds = Array.from(message.matchAll(/\bid="([^"]+)"/g), (match) => match[1]);
     const footnoteLinks = [...message.matchAll(/<a [^>]*href="#([^"]+)"[^>]*>/g)];
     assert.equal(footnoteLinks.length, 4);

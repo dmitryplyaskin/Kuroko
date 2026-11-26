@@ -1,9 +1,9 @@
 import { readInstructionText, type InstructionDraft, type InstructionSettings } from '@kuroko/contracts/instructions';
 import type { PresetAction } from '@kuroko/contracts/presets';
 import { attach, createEffect, createEvent, createStore, sample } from 'effector';
-import { requestPresetAction } from '../../platform/presets';
-import { $activeSession, protectedRequestFailed, sessionEnded, type ActiveSession } from '../../platform/session/model';
-import { inActiveSession, sessionRequest } from '../../platform/session/request';
+import { createPresetControlsModel, requestPresetAction } from '../../platform/presets';
+import { inActiveSession, $activeSession, protectedRequestFailed, sessionEnded, type ActiveSession } from '../../platform/session/model';
+import { sessionRequest } from '../../platform/session/request';
 import { errorCode, type ErrorCode } from '../../shared/http/api';
 
 type Change = PresetAction | { kind: 'clear' };
@@ -70,6 +70,8 @@ export const changeInstructionFx = attach({
     return !session.signal.aborted;
   },
 });
+
+export const instructionPresetControls = createPresetControlsModel(changeInstructionFx);
 
 sample({
   clock: instructionsOpened,

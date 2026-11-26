@@ -1,9 +1,10 @@
 import type { WebModule } from '../../modules/contracts';
-import { toolsInitialized } from './model';
+import { $temporaryAgentToolsDirty, toolsInitialized } from './model';
 
 export const toolsModule = {
   id: 'kuroko.tools',
   initialize: toolsInitialized,
+  hasUnsavedChanges: $temporaryAgentToolsDirty,
   contributions: [{
     kind: 'workspace.screen',
     id: 'kuroko.tools.index',

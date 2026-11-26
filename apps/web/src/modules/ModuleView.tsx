@@ -35,14 +35,18 @@ export function ModuleView({ entry, onReady }: {
   const [attempt, setAttempt] = useState(0);
   const { View, loadingLabel = 'common.loading' } = entry;
   function retry() {
-    if (!('resetFailedLoad' in entry)) return;
     entry.resetFailedLoad();
     setAttempt((value) => value + 1);
   }
 
+  function reload() {
+    if (entry.kind === 'settings.tab') reloadSettingsTab(entry.key);
+    else window.location.reload();
+  }
+
   return (
-    <ViewErrorBoundary key={`${entry.id}:${attempt}`} actions={'resetFailedLoad' in entry &&
-      <Button variant="default" onClick={attempt ? () => reloadSettingsTab(entry.key) : retry}>
+    <ViewErrorBoundary key={`${entry.id}:${attempt}`} actions={
+      <Button variant="default" mt="xs" onClick={attempt ? reload : retry}>
         {t(attempt ? 'common.reloadPage' : 'common.retryLoad')}
       </Button>}>
       <Suspense fallback={<output className="module-view-status">{t(loadingLabel)}</output>}>

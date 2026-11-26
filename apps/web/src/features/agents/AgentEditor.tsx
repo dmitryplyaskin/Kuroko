@@ -4,7 +4,7 @@ import { subagentNameLimit } from '@kuroko/contracts/tools';
 import { useUnit } from 'effector-react';
 import { ArrowLeft } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
-import type { ActiveSession } from '../../platform/session/model';
+import { DiscardChangesDialog } from '../../shared/dialogs/DiscardChangesDialog';
 import { useI18n, type MessageKey } from '../../shared/i18n/i18n';
 import { PromptTextarea } from '../../shared/prompt-templates/TemplateHelp';
 import { insertPromptCode, PromptTemplateControls } from '../instructions/PromptTemplateControls';
@@ -14,8 +14,9 @@ import {
   agentDeleteErrorCleared, agentDeleteRequested, agentDraftChanged, agentEditorClosed, agentFieldChanged,
   agentIssueCleared, agentSaveRequested, type AgentEditorDraft,
 } from './model';
+import classes from './Agents.module.css';
 
-export function AgentEditor({ session }: { session: ActiveSession }) {
+export function AgentEditor() {
   const { t, number } = useI18n();
   const { editor, dirty, change, save, remove, close, clearIssue, clearDeleteError, compare, resolve } = useUnit({
     editor: $agentEditor, dirty: $agentEditorDirty, change: agentDraftChanged, save: agentSaveRequested,
@@ -28,8 +29,6 @@ export function AgentEditor({ session }: { session: ActiveSession }) {
   const [comparisonOpen, setComparisonOpen] = useState(false);
   const fields = useRef<Partial<Record<AgentField, HTMLElement | null>>>({});
   const instructionInput = useRef<HTMLTextAreaElement>(null);
-  const backButton = useRef<HTMLButtonElement>(null);
-  const keepButton = useRef<HTMLButtonElement>(null);
   const issue = editor?.issue;
 
   useEffect(() => {
@@ -49,113 +48,92 @@ export function AgentEditor({ session }: { session: ActiveSession }) {
   const issueText = issue && t(issue.key, issue.line ? { line: issue.line } : undefined);
   const editorTab = issue?.field ? issue.field === 'tools' ? 'tools' : 'definition' : tab;
 
-  function showLeaveConfirmation() {
-    setConfirmLeave(true);
-    clearIssue();
-    requestAnimationFrame(() => keepButton.current?.focus());
-  }
-
-  function resumeEditing() {
-    setConfirmLeave(false);
-    clearIssue();
-    requestAnimationFrame(() => backButton.current?.focus());
-  }
-
   function textCount(value: string, limit: number) {
     return t('agents.textCount', { count: number.format(value.length), limit: number.format(limit) });
   }
 
-  return <form className="agent-editor" noValidate onSubmit={(event) => {
+  return <form className={classes['agent-editor']} noValidate onSubmit={(event) => {
     event.preventDefault();
     if (!confirmLeave && !confirmDelete) save();
   }}>
-    <div className="agent-editor-bar">
-      <header className="page-heading agent-editor-heading">
-        <Button className="agent-back" ref={backButton} type="button" variant="subtle" disabled={busy || confirmLeave}
+    <div className={classes['agent-editor-bar']}>
+      <header className={['page-heading', classes['agent-editor-heading']].join(' ')}>
+        <Button className={classes['agent-back']} type="button" variant="subtle" disabled={busy}
           leftSection={<ArrowLeft size={16} strokeWidth={1.5} aria-hidden="true" />}
-          onClick={() => dirty ? showLeaveConfirmation() : close()}>{t('agents.back')}</Button>
+          onClick={() => dirty ? setConfirmLeave(true) : close()}>{t('agents.back')}</Button>
         <h1 id="agents-title" tabIndex={-1}>{agent ? <bdi>{agent.name}</bdi> : t('agents.create')}</h1>
       </header>
-      <div className="agent-editor-actions">
-        <output className="agent-save-status">{saved && t('agents.saved')}</output>
+      <div className={classes['agent-editor-actions']}>
+        <output className={classes['agent-save-status']}>{saved && t('agents.saved')}</output>
         <Button type="submit" loading={status === 'saving'} disabled={confirmLeave || Boolean(conflict) || removing}>{t('common.save')}</Button>
       </div>
     </div>
-    {issue && !issue.field && <p className="agents-error agent-editor-error" role="alert">{issueText}</p>}
-    {conflict && !confirmLeave && <div className="agents-load-error">
-      <p className="agents-error" role="alert">{t('error.agent_conflict')}</p>
+    {issue && !issue.field && <p className={[classes['agents-error'], classes['agent-editor-error']].join(' ')} role="alert">{issueText}</p>}
+    {conflict && !confirmLeave && <div className={classes['agents-load-error']}>
+      <p className={classes['agents-error']} role="alert">{t('error.agent_conflict')}</p>
       <Button type="button" variant="default" onClick={() => {
         setComparisonOpen(true);
         if (!conflict.latest) compare();
       }}>{t('agents.compareVersions')}</Button>
     </div>}
-    {confirmLeave && <section className="agent-confirmation" aria-labelledby="agent-confirm-title">
-      <h2 id="agent-confirm-title">{t('agents.discardTitle')}</h2>
-      <p>{t('agents.discardBody')}</p>
-      <div className="agent-confirm-actions">
-        <Button ref={keepButton} type="button" variant="default" disabled={busy} onClick={resumeEditing}>{t('agents.keepEditing')}</Button>
-        <Button type="button" color="red" onClick={close}>{t('agents.discard')}</Button>
-      </div>
-    </section>}
-    <div hidden={confirmLeave}>
-      <Tabs className="agent-editor-tabs" value={editorTab} onChange={(value) => {
-        if (!value) return;
-        setTab(value);
-        if (value !== editorTab) clearIssue();
-      }}>
-        <Tabs.List aria-label={t('agents.editorSections')}>
-          <Tabs.Tab value="definition">{t('agents.definition')}</Tabs.Tab>
-          <Tabs.Tab value="tools">{t('agents.tools')}</Tabs.Tab>
-        </Tabs.List>
-        <Tabs.Panel value="definition" className="agent-definition">
-          <div className="agent-writing-fields">
-            <TextInput name="name" label={t('agents.name')} placeholder={t('agents.nameExample')} required value={draft.name} disabled={busy} dir="auto"
-              className="agent-name-field" ref={(input) => { fields.current.name = input; }} maxLength={subagentNameLimit * 2}
-              error={issue?.field === 'name' && issueText} onChange={(event) => change({ name: event.currentTarget.value })} />
-            <PromptTextarea scope="agent" name="description" label={t('agents.capabilities')} placeholder={t('agents.capabilitiesExample')}
-              required value={draft.description} disabled={busy} dir="auto"
-              classNames={{ input: 'agent-writing-input', description: 'agent-text-count' }}
-              ref={(input) => { fields.current.description = input; }} maxLength={agentDescriptionLimit} minRows={4} autosize
-              inputWrapperOrder={['label', 'input', 'description', 'error']} description={textCount(draft.description, agentDescriptionLimit)}
-              error={issue?.field === 'description' && issueText} onChange={(event) => change({ description: event.currentTarget.value })} />
-            <div>
-              <PromptTemplateControls session={session} text={draft.instructions} disabled={busy} worldId={draft.worldId} worldTitle={draft.worldTitle}
-                agentName={draft.name} onWorld={(world, code) => {
-                  const next = code ? insertPromptCode(instructionInput.current, draft.instructions, code, agentInstructionsLimit) : draft.instructions;
-                  if (next === undefined) return false;
-                  change({ instructions: next, worldId: world?.id ?? null, worldTitle: world?.title });
-                  return true;
-                }} />
-              <PromptTextarea scope="agent" name="instructions" label={t('agents.instructions')} placeholder={t('agents.instructionsExample')}
-                required value={draft.instructions} disabled={busy} dir="auto"
-                classNames={{ input: 'agent-writing-input', description: 'agent-text-count' }}
-                ref={(input) => { fields.current.instructions = input; instructionInput.current = input; }}
-                maxLength={agentInstructionsLimit} minRows={12} autosize
-                inputWrapperOrder={['label', 'input', 'description', 'error']} description={textCount(draft.instructions, agentInstructionsLimit)}
-                error={issue?.field === 'instructions' && issueText} onChange={(event) => change({ instructions: event.currentTarget.value })} />
-            </div>
+    <Tabs className={classes['agent-editor-tabs']} value={editorTab} onChange={(value) => {
+      if (!value) return;
+      setTab(value);
+      if (value !== editorTab) clearIssue();
+    }}>
+      <Tabs.List aria-label={t('agents.editorSections')}>
+        <Tabs.Tab value="definition">{t('agents.definition')}</Tabs.Tab>
+        <Tabs.Tab value="tools">{t('agents.tools')}</Tabs.Tab>
+      </Tabs.List>
+      <Tabs.Panel value="definition" className={classes['agent-definition']}>
+        <div className={classes['agent-writing-fields']}>
+          <TextInput name="name" label={t('agents.name')} placeholder={t('agents.nameExample')} required value={draft.name} disabled={busy} dir="auto"
+            className={classes['agent-name-field']} ref={(input) => { fields.current.name = input; }} maxLength={subagentNameLimit * 2}
+            error={issue?.field === 'name' && issueText} onChange={(event) => change({ name: event.currentTarget.value })} />
+          <PromptTextarea scope="agent" name="description" label={t('agents.capabilities')} placeholder={t('agents.capabilitiesExample')}
+            required value={draft.description} disabled={busy} dir="auto"
+            classNames={{ input: classes['agent-writing-input'], description: classes['agent-text-count'] }}
+            ref={(input) => { fields.current.description = input; }} maxLength={agentDescriptionLimit} minRows={4} autosize
+            inputWrapperOrder={['label', 'input', 'description', 'error']} description={textCount(draft.description, agentDescriptionLimit)}
+            error={issue?.field === 'description' && issueText} onChange={(event) => change({ description: event.currentTarget.value })} />
+          <div>
+            <PromptTemplateControls text={draft.instructions} disabled={busy} worldId={draft.worldId} worldTitle={draft.worldTitle}
+              agentName={draft.name} onWorld={(world, code) => {
+                const next = code ? insertPromptCode(instructionInput.current, draft.instructions, code, agentInstructionsLimit) : draft.instructions;
+                if (next === undefined) return false;
+                change({ instructions: next, worldId: world?.id ?? null, worldTitle: world?.title });
+                return true;
+              }} />
+            <PromptTextarea scope="agent" name="instructions" label={t('agents.instructions')} placeholder={t('agents.instructionsExample')}
+              required value={draft.instructions} disabled={busy} dir="auto"
+              classNames={{ input: classes['agent-writing-input'], description: classes['agent-text-count'] }}
+              ref={(input) => { fields.current.instructions = input; instructionInput.current = input; }}
+              maxLength={agentInstructionsLimit} minRows={12} autosize
+              inputWrapperOrder={['label', 'input', 'description', 'error']} description={textCount(draft.instructions, agentInstructionsLimit)}
+              error={issue?.field === 'instructions' && issueText} onChange={(event) => change({ instructions: event.currentTarget.value })} />
           </div>
-        </Tabs.Panel>
-        <Tabs.Panel value="tools" className="agent-tools-panel">
-          <AgentToolPicker selected={draft.tools} disabled={busy} issue={issue?.field === 'tools' ? issueText : undefined}
-            searchRef={(input) => { fields.current.tools = input; }} onChange={(tools) => change({ tools })} />
-        </Tabs.Panel>
-      </Tabs>
-      {agent && <footer className="agent-editor-footer">
-        <Button type="button" variant="subtle" color="red" disabled={busy} onClick={() => {
-          clearDeleteError();
-          setConfirmDelete(true);
-        }}>
-          {t('agents.deleteAction')}
-        </Button>
-      </footer>}
-    </div>
+        </div>
+      </Tabs.Panel>
+      <Tabs.Panel value="tools" className={classes['agent-tools-panel']}>
+        <AgentToolPicker selected={draft.tools} disabled={busy} issue={issue?.field === 'tools' ? issueText : undefined}
+          searchRef={(input) => { fields.current.tools = input; }} onChange={(tools) => change({ tools })} />
+      </Tabs.Panel>
+    </Tabs>
+    {agent && <footer className={classes['agent-editor-footer']}>
+      <Button type="button" variant="subtle" color="red" disabled={busy} onClick={() => {
+        clearDeleteError();
+        setConfirmDelete(true);
+      }}>
+        {t('agents.deleteAction')}
+      </Button>
+    </footer>}
+    <DiscardChangesDialog opened={confirmLeave} onClose={() => setConfirmLeave(false)} onDiscard={close} />
     {agent && <Modal opened={confirmDelete} onClose={() => setConfirmDelete(false)} title={t('agents.deleteTitle')}
-      classNames={{ body: 'agent-delete-dialog' }} closeButtonProps={{ 'aria-label': t('common.close') }}
+      classNames={{ body: classes['agent-delete-dialog'] }} closeButtonProps={{ 'aria-label': t('common.close') }}
       closeOnEscape={!removing} closeOnClickOutside={!removing} withCloseButton={!removing}>
       <p>{t('agents.deleteBody', { name: agent.name })}</p>
-      {deleteError && <p className="agents-error" role="alert">{t(`error.${deleteError}`)}</p>}
-      <div className="agent-confirm-actions">
+      {deleteError && <p className={classes['agents-error']} role="alert">{t(`error.${deleteError}`)}</p>}
+      <div className={classes['agent-confirm-actions']}>
         <Button type="button" variant="default" disabled={removing} data-autofocus onClick={() => setConfirmDelete(false)}>
           {t('common.cancel')}
         </Button>
@@ -167,7 +145,7 @@ export function AgentEditor({ session }: { session: ActiveSession }) {
       {conflict.latest ? <>
         <p>{t('agents.compareHelp')}</p>
         <AgentComparison draft={draft} latest={conflict.latest} />
-        <div className="agent-confirm-actions">
+        <div className={classes['agent-confirm-actions']}>
           <Button type="button" variant="default" onClick={() => { resolve('useLatest'); setComparisonOpen(false); }}>{t('agents.useLatest')}</Button>
           <Button type="button" onClick={() => { resolve('keepEdits'); setComparisonOpen(false); }}>{t('agents.keepEdits')}</Button>
         </div>

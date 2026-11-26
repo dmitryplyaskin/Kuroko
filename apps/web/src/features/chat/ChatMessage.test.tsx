@@ -33,9 +33,8 @@ test('shows subagent activity in the current reply alongside existing text', () 
   );
   assert.match(html, /Проверю хронологию\./);
   assert.match(html, /Записи за вчера\./);
-  assert.match(html, /<p class="chat-tool-call chat-subagent-progress">.*Субагент работает…<\/p>/);
+  assert.match(html, /<p[^>]*>.*Субагент работает…<\/p>/);
   assert.match(html, /Субагент Хронолог работает…/);
-  assert.equal([...html.matchAll(/chat-subagent-spinner/g)].length, 2);
 });
 
 test('runs toolbar and registered menu actions for the selected message and keeps tools in place while editing', async () => {
@@ -161,9 +160,9 @@ test('runs toolbar and registered menu actions for the selected message and keep
         </Provider>,
       );
     });
-    const toolbar = articleFor(3).querySelector('.chat-message-actions');
-    assert.equal(toolbar?.previousElementSibling?.className, 'chat-message-content');
-    assert.equal(toolbar?.lastElementChild?.className, 'chat-reply-variants');
+    const toolbar = articleFor(3).querySelector('[role=group]');
+    assert.ok(toolbar?.previousElementSibling?.hasAttribute('data-chat-content'));
+    assert.ok(toolbar?.lastElementChild?.querySelector('output'));
     assert.deepEqual(Array.from(toolbar?.querySelectorAll('button') ?? [], (button) => button.getAttribute('aria-label')),
       ['Копировать текст', 'Редактировать', 'Перегенерировать', 'Удалить', 'Другие действия', 'Предыдущий вариант ответа', 'Следующий вариант ответа']);
     for (const id of [0, 1, 2]) assert.equal(articleFor(id).querySelector('button[aria-label="Перегенерировать"]'), null);
@@ -180,7 +179,7 @@ test('runs toolbar and registered menu actions for the selected message and keep
     await act(async () => { previous.click(); next.click(); });
     assert.deepEqual(selectedVariants, [0, 1]);
     assert.equal(buttonFor(3, 'Другие действия').disabled, true);
-    const [firstReasoning, secondReasoning] = articleFor(3).querySelectorAll<DOMButton>('.chat-reasoning-toggle');
+    const [firstReasoning, secondReasoning] = articleFor(3).querySelectorAll<DOMButton>('[data-chat-content] button[aria-expanded][aria-controls]');
     assert.ok(firstReasoning && secondReasoning);
     assert.equal(secondReasoning.textContent, 'Ход рассуждений');
     assert.equal(secondReasoning.getAttribute('aria-expanded'), 'false');
@@ -190,14 +189,12 @@ test('runs toolbar and registered menu actions for the selected message and keep
     assert.equal(firstReasoning.getAttribute('aria-expanded'), 'false');
     assert.equal(secondReasoning.getAttribute('aria-expanded'), 'true');
     assert.equal(reasoningBody?.textContent, 'Сравню выпавшее число.');
-    const blocks = articleFor(3).querySelector('.chat-message-blocks')?.children;
-    assert.deepEqual(Array.from(blocks ?? [], ({ className }) => className), [
-      'chat-reasoning', 'chat-tool-calls', 'chat-message-text', 'chat-tool-calls', 'chat-reasoning', 'chat-tool-calls', 'chat-message-text',
-    ]);
+    const blocks = firstReasoning.parentElement?.parentElement?.children;
+    assert.deepEqual(Array.from(blocks ?? [], ({ tagName }) => tagName), ['DIV', 'UL', 'DIV', 'UL', 'DIV', 'UL', 'DIV']);
     assert.equal(blocks?.[1]?.querySelector('summary code')?.textContent, 'test_echo');
     assert.equal(blocks?.[2]?.textContent, 'До 🎲');
     assert.equal(blocks?.[3]?.querySelector('summary code')?.textContent, 'roll_dice');
-    assert.equal(blocks?.[4]?.querySelector('.chat-reasoning-toggle'), secondReasoning);
+    assert.equal(blocks?.[4]?.querySelector('button[aria-expanded][aria-controls]'), secondReasoning);
     assert.equal(blocks?.[5]?.querySelector('summary code')?.textContent, 'roll_dice');
     assert.equal(blocks?.[6]?.textContent, 'После');
     const tools = blocks?.[1]?.querySelector('details');

@@ -2,6 +2,7 @@ import type { Realm } from '@kuroko/contracts/realms';
 import { useEffect, useId, useRef, type ReactNode } from 'react';
 import { Plus } from 'lucide-react';
 import { useI18n } from '../../shared/i18n/i18n';
+import classes from './Realms.module.css';
 
 export const realmParts = ['base', 'characters', 'lorebook', 'starts', 'variables'] as const;
 type StandardPart = typeof realmParts[number];
@@ -43,30 +44,30 @@ export function RealmContents({ realm, variableCount, part, onPart, onCreateSect
   }, [part]);
 
   function sectionButton(id: RealmPart, title: string, count?: number) {
-    return <button type="button" key={id} className="realms-index-choice" aria-current={part === id ? 'true' : undefined}
+    return <button type="button" key={id} className={classes['realms-index-choice']} aria-current={part === id ? 'true' : undefined}
       aria-controls={panel} onClick={() => onPart(id)}>
       <span>{title}</span>
-      {count !== undefined && <span className="realms-index-count">{number.format(count)}</span>}
+      {count !== undefined && <span className={classes['realms-index-count']}>{number.format(count)}</span>}
     </button>;
   }
   return (
-    <div className="realms-workbench">
-      <div className="realms-index-area">
-        <nav className="realms-index" aria-label={t('realms.index')} ref={index}>
-          <div className="realms-index-group">
+    <div className={classes['realms-workbench']}>
+      <div className={classes['realms-index-area']}>
+        <nav className={classes['realms-index']} aria-label={t('realms.index')} ref={index}>
+          <div className={classes['realms-index-group']}>
             {realmParts.map((section) => sectionButton(section, t(`realms.part.${section}`),
               section === 'base' ? undefined : section === 'variables' ? variableCount : realm[section]?.length ?? 0))}
           </div>
-          {Boolean(realm.sections?.length) && <div className="realms-index-group realms-index-custom">
+          {Boolean(realm.sections?.length) && <div className={[classes['realms-index-group'], classes['realms-index-custom']].join(' ')}>
             {realm.sections?.map((section) => sectionButton(sectionPart(section.id), section.title.trim() || untitledSection, section.entries.length))}
           </div>}
         </nav>
-        <button type="button" className="realms-index-choice realms-create-section" onClick={onCreateSection}>
+        <button type="button" className={[classes['realms-index-choice'], classes['realms-create-section']].join(' ')} onClick={onCreateSection}>
           <Plus size={16} aria-hidden="true" /><span>{t('realms.createSection')}</span>
         </button>
       </div>
-      <section id={panel} className="realms-paper" aria-label={partTitle}>
-        <h2 className="realms-part-title">{partTitle}</h2>
+      <section id={panel} className={classes['realms-paper']} aria-label={partTitle}>
+        <h2 className={classes['realms-part-title']}>{partTitle}</h2>
         {children}
       </section>
     </div>

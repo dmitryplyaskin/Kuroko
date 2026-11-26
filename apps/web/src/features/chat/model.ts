@@ -8,8 +8,7 @@ import type { ToolId } from '@kuroko/contracts/tools';
 import { createChatActivity } from '@kuroko/tool-runtime/chatActivity';
 import { abortFx } from '../../shared/async/abort';
 import { ApiError, errorCode, type ErrorCode } from '../../shared/http/api';
-import { $activeSession, protectedRequestFailed, sessionEnded, type ActiveSession } from '../../platform/session/model';
-import { inActiveSession } from '../../platform/session/request';
+import { inActiveSession, $activeSession, protectedRequestFailed, sessionEnded, type ActiveSession } from '../../platform/session/model';
 import { $enabledTools, $toolSettingsReady } from '../tools/model';
 import { chatApi, streamChatReply, type ChatReplyDelta } from './chatApi';
 import { editMessageText, hasMessageContent, messageDraftTexts, type ActiveSubagent, type Message, type ReplyPhase } from './message';
@@ -37,8 +36,13 @@ export const chatSendRequested = createEvent();
 export const chatStopRequested = createEvent();
 export const chatCreateRequested = createEvent();
 export const chatOpenRequested = createEvent<string>();
-export const chatManagementRequested = createEvent<ChatManagement>();
-export const chatManagementErrorCleared = createEvent();
+type ManagementDialog = { kind: 'list' } | { kind: 'rename' | 'delete'; chat: ChatSummary };
+const chatManagementRequested = createEvent<ChatManagement>();
+export const chatManagementDialogOpened = createEvent<ManagementDialog>();
+export const chatManagementDialogClosed = createEvent();
+export const chatRenameChanged = createEvent<string>();
+export const chatRenameSubmitted = createEvent();
+export const chatDeleteConfirmed = createEvent();
 export const chatLoadRetryRequested = createEvent();
 export const chatSaveRetryRequested = createEvent();
 export const chatGmModeChanged = createEvent<boolean>();
@@ -87,7 +91,7 @@ sample({
   fn: ({ params }) => ({ id: params.id, draft: 'draftToRecover' in params ? params.draftToRecover : undefined }),
   target: chatMissing,
 });
-export const chatManagementSucceeded = inActiveSession(manageChatFx.done, ({ session }) => session);
+const chatManagementSucceeded = inActiveSession(manageChatFx.done, ({ session }) => session);
 const managementFailed = inActiveSession(manageChatFx.fail, ({ session }) => session);
 const chatDeleted = chatManagementSucceeded.filterMap(({ result }) => result.deleted);
 const activeChatDeleted = chatManagementSucceeded.filter({ fn: ({ params, result }) => result.deleted === params.current });
@@ -96,7 +100,7 @@ export const $chatManaging = createStore(false).on(manageChatFx, () => true)
   .reset(chatManagementSucceeded, managementFailed, sessionEnded);
 export const $chatManagementError = createStore<ErrorCode | null>(null)
   .on(managementFailed, (_, { error }) => errorCode(error))
-  .reset(manageChatFx, chatManagementErrorCleared, sessionEnded);
+  .reset(manageChatFx, chatManagementDialogOpened, chatManagementDialogClosed, chatRenameChanged, sessionEnded);
 
 const $saved = createStore<SavedChat | null>(null)
   .on(chatOpened, (_, { result }) => result.chat)
@@ -211,12 +215,43 @@ sample({
 });
 
 const $chatNavigation = combine($navigation, $chatLocked, (navigation, locked) => ({ ...navigation, locked }));
+const initialManager = { dialog: undefined, draft: '', invalid: false };
+export const $chatManager = createStore<{ dialog?: ManagementDialog; draft: string; invalid: boolean }>(initialManager)
+  .on(chatManagementDialogOpened, (_, dialog) => ({ dialog, draft: dialog.kind === 'rename' ? dialog.chat.title : '', invalid: false }))
+  .on(chatRenameChanged, (state, draft) => state.dialog?.kind === 'rename' ? { ...state, draft, invalid: false } : state)
+  .on(chatManagementSucceeded, (state) => state.dialog
+    ? { ...initialManager, dialog: { kind: 'list' } } : state)
+  .reset(chatManagementDialogClosed, sessionEnded);
+
+const rename = sample({
+  clock: chatRenameSubmitted,
+  source: { manager: $chatManager, locked: $chatLocked },
+  filter: ({ manager, locked }) => !locked && manager.dialog?.kind === 'rename',
+  fn: ({ manager }) => {
+    const title = manager.draft.trim();
+    return { id: (manager.dialog as { chat: ChatSummary }).chat.id, title, valid: Boolean(title && Array.from(title).length <= chatTitleLimit) };
+  },
+});
+$chatManager.on(rename, (state, { valid }) => ({ ...state, invalid: !valid }));
+sample({
+  clock: rename,
+  filter: ({ valid }) => valid,
+  fn: ({ id, title }): ChatManagement => ({ id, title, action: 'rename' }),
+  target: chatManagementRequested,
+});
+sample({
+  clock: chatDeleteConfirmed,
+  source: $chatManager,
+  filter: ({ dialog }) => dialog?.kind === 'delete',
+  fn: ({ dialog }): ChatManagement => ({ id: (dialog as { chat: ChatSummary }).chat.id, action: 'delete' }),
+  target: chatManagementRequested,
+});
+
 sample({
   clock: chatManagementRequested,
   source: { navigation: $chatNavigation, chats: $chats },
   filter: ({ navigation, chats }, change) => navigation.session !== null && !navigation.locked &&
-    chats.some(({ id }) => id === change.id) &&
-    (change.action === 'delete' || Boolean(change.title.trim() && Array.from(change.title.trim()).length <= chatTitleLimit)),
+    chats.some(({ id }) => id === change.id),
   fn: ({ navigation }, change) => ({ session: navigation.session!, current: navigation.current, change }),
   target: manageChatFx,
 });

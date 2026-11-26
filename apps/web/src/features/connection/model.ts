@@ -5,8 +5,8 @@ import {
 import { readPresetName, type PresetAction, type PresetManagementAction } from '@kuroko/contracts/presets';
 import { abortFx } from '../../shared/async/abort';
 import { ApiError, errorCode, type ErrorCode } from '../../shared/http/api';
-import { $activeSession, protectedRequestFailed, sessionEnded, type ActiveSession } from '../../platform/session/model';
-import { inActiveSession } from '../../platform/session/request';
+import { createPresetControlsModel } from '../../platform/presets';
+import { inActiveSession, $activeSession, protectedRequestFailed, sessionEnded, type ActiveSession } from '../../platform/session/model';
 import { connectionApi } from './connectionApi';
 import { createDraft, validateDraft, type ConnectionDraft } from './connectionDraft';
 import { $modelCatalog, $openRouterEndpoints, catalogInvalidated, catalogRequested, endpointsInvalidated, endpointsRequested } from './modelCatalog';
@@ -243,6 +243,8 @@ export const connectionPresetChangeFx = attach({
     return !page.controller.signal.aborted;
   },
 });
+
+export const connectionPresetControls = createPresetControlsModel(connectionPresetChangeFx, connectionClosed);
 
 sample({
   clock: connectionModelsRequested,

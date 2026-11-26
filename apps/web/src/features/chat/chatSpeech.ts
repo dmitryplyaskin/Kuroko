@@ -34,7 +34,7 @@ function collectSpeech(parent: Root | Element, replacements: Replacements) {
         const quotedEnd = Math.min(end, range.end);
         if (quotedStart > cursor) chunks.push({ type: 'text', value: text.slice(cursor, quotedStart) });
         chunks.push({
-          type: 'element', tagName: 'span', properties: { className: ['chat-speech'] },
+          type: 'element', tagName: 'span', properties: { 'data-chat-speech': '' },
           children: [{ type: 'text', value: text.slice(quotedStart, quotedEnd) }],
         });
         cursor = quotedEnd;

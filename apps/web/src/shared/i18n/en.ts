@@ -2,6 +2,10 @@ import type { MessageKey } from './ru';
 
 export const en = {
   'common.cancel': "Cancel",
+  'common.discardTitle': "Discard changes?",
+  'common.discardBody': "Your unsaved changes will be lost.",
+  'common.keepEditing': "Keep editing",
+  'common.discardChanges': "Discard changes",
   'common.close': "Close",
   'common.delete': "Delete",
   'common.save': "Save",
@@ -209,10 +213,6 @@ export const en = {
   'realms.required.entry': "Enter a title and text for the entry",
   'realms.deleteTitle': "Delete this realm?",
   'realms.deleteBody': "“{title}” and all its entries will be deleted.",
-  'realms.discardTitle': "Discard changes?",
-  'realms.discardBody': "Unsaved changes will be lost.",
-  'realms.keepEditing': "Keep editing",
-  'realms.discard': "Discard changes",
 
   'chat.label': "Chat",
   'chat.title': "Chat",
@@ -439,10 +439,6 @@ export const en = {
   'agents.deleteTitle': "Delete agent?",
   'agents.deleteBody': "Once deleted, {name} will no longer be available for new tasks.",
   'agents.deleteAction': "Delete agent",
-  'agents.discardTitle': "Discard changes?",
-  'agents.discardBody': "Returning to the list will discard your unsaved changes.",
-  'agents.keepEditing': "Keep editing",
-  'agents.discard': "Discard changes",
   'chat.loading': "Loading chat…",
   'chat.history': "Message history",
   'chat.historyStart': "Go to start of history",

@@ -63,8 +63,8 @@ html:has(.workspace) { scrollbar-gutter: stable; }
 }
 
 .workspace-screen:not([hidden]) { display: contents; }
-.module-view-status, .chat-loading { display: block; color: var(--kr-muted); }
-.workspace-content[data-layout='viewport'] .module-view-status, .chat-loading { padding: 24px; }
+.module-view-status { display: block; color: var(--kr-muted); }
+.workspace-content[data-layout='viewport'] .module-view-status { padding: 24px; }
 
 .skip-link {
   position: fixed;

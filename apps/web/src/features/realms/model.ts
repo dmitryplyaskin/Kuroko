@@ -3,12 +3,13 @@ import {
   type RealmList, type RealmListQuery, type RealmVariable, type SavedRealm,
 } from '@kuroko/contracts/realms';
 import { attach, createEffect, createEvent, createStore, sample, type Effect } from 'effector';
-import { $activeSession, protectedRequestFailed, sessionEnded, type ActiveSession } from '../../platform/session/model';
-import { inActiveSession, sessionRequest } from '../../platform/session/request';
+import { inActiveSession, $activeSession, protectedRequestFailed, sessionEnded, type ActiveSession } from '../../platform/session/model';
+import { sessionRequest } from '../../platform/session/request';
 import { ApiError, errorCode, type ErrorCode } from '../../shared/http/api';
 
 import { abortFx } from '../../shared/async/abort';
 import { downloadRealmFile, type ImportedRealm } from './realmFile';
+import { toRealmAvatar } from './realmAvatarFile';
 
 type Request = { session: ActiveSession; signal: AbortSignal };
 type ListRequest = Request & { query: RealmListQuery };
@@ -61,10 +62,38 @@ export const listRealmsFx = realmEffect(requestRealmList);
 
 const realmPath = (id: string) => `/realms/${encodeURIComponent(id)}`;
 
-export const loadRealmFiltersFx = realmEffect(({ session, signal }: Request) =>
-  sessionRequest<RealmFilterOptions>(session, '/realms/filters', { signal }));
+type FilterLoad = { session: ActiveSession; controller: AbortController };
+const loadRealmFiltersFx = realmEffect(({ session, controller }: FilterLoad) =>
+  sessionRequest<RealmFilterOptions>(session, '/realms/filters', { signal: controller.signal }));
 
-export const setRealmFavoriteFx = realmEffect(({ session, id, favorite }: RealmFavorite & { session: ActiveSession }) =>
+export const realmFiltersOpened = createEvent();
+export const realmFiltersClosed = createEvent();
+export const realmFiltersRetried = createEvent();
+export const $realmFilterOptions = createStore<QueryState<FilterLoad, RealmFilterOptions> | null>(null)
+  .on(loadRealmFiltersFx, (_, params) => ({ status: 'loading', params }))
+  .on(inActiveSession(loadRealmFiltersFx.done, ({ session }) => session), (current, { params, result }) =>
+    current?.params === params ? { status: 'ready', params, data: result } : current)
+  .on(inActiveSession(loadRealmFiltersFx.fail, ({ session }) => session), (current, { params, error }) =>
+    current?.params === params ? { status: 'error', params, code: errorCode(error) } : current)
+  .reset(sessionEnded);
+
+sample({
+  clock: [realmFiltersOpened, realmFiltersRetried],
+  source: { session: $activeSession, filters: $realmFilterOptions },
+  filter: ({ session, filters }) => session !== null && (!filters || filters.status === 'error'),
+  fn: ({ session }): FilterLoad => ({ session: session!, controller: new AbortController() }),
+  target: loadRealmFiltersFx,
+});
+
+const filtersClosed = sample({
+  clock: realmFiltersClosed,
+  source: $realmFilterOptions,
+  fn: (filters) => filters?.params.controller,
+});
+$realmFilterOptions.reset(filtersClosed);
+sample({ clock: filtersClosed.filterMap((controller) => controller), target: abortFx });
+
+const setRealmFavoriteFx = realmEffect(({ session, id, favorite }: RealmFavorite & { session: ActiveSession }) =>
   sessionRequest<RealmFavorite>(session, `${realmPath(id)}/favorite`, { method: 'PUT', body: { favorite } }));
 
 type EditorLoad = { session: ActiveSession; controller: AbortController; id: string };
@@ -78,7 +107,29 @@ export const saveRealmFx = realmEffect(({ session, realm, saved }: { session: Ac
 const deleteRealmFx = realmEffect(({ session, id, revision }: { session: ActiveSession; id: string; revision: number }) =>
   sessionRequest<void>(session, `${realmPath(id)}?revision=${revision}`, { method: 'DELETE' }));
 
+export const realmFavoriteRequested = createEvent<RealmFavorite>();
 const favoriteChanged = inActiveSession(setRealmFavoriteFx.done, ({ session }) => session);
+const favoriteFailed = inActiveSession(setRealmFavoriteFx.fail, ({ session }) => session);
+
+export const $realmFavoritesPending = createStore<ReadonlySet<string>>(new Set())
+  .on(setRealmFavoriteFx, (pending, { id }) => new Set([...pending, id]))
+  .on([favoriteChanged, favoriteFailed], (pending, { params }) => {
+    const next = new Set(pending);
+    next.delete(params.id);
+    return next;
+  })
+  .reset(sessionEnded);
+export const $realmFavoriteError = createStore<{ id: string; code: ErrorCode } | null>(null)
+  .on(favoriteFailed, (_, { params, error }) => ({ id: params.id, code: errorCode(error) }))
+  .reset(setRealmFavoriteFx, sessionEnded);
+
+sample({
+  clock: realmFavoriteRequested,
+  source: { session: $activeSession, pending: $realmFavoritesPending },
+  filter: ({ session, pending }, { id }) => session !== null && !pending.has(id),
+  fn: ({ session }, selection) => ({ ...selection, session: session! }),
+  target: setRealmFavoriteFx,
+});
 export const $realmList = trackQuery(listRealmsFx).on(favoriteChanged, (current, { params, result }) => {
   if (!current || current.params.session !== params.session || current.status === 'error' || !current.data ||
       current.params.query.filters.favorites) return current;
@@ -100,6 +151,10 @@ sample({
 
 export type VariableDraft = { id: string; name: string; source: string; format: 'text' | 'json' };
 export type RealmSaveIssue = { code: ErrorCode; field?: string };
+type AvatarSelection = { characterId?: string; file: File };
+type AvatarRequest = AvatarSelection & { session: ActiveSession; baseline: Realm };
+type AvatarOperation = { status: 'processing'; request: AvatarRequest } | { status: 'error'; characterId?: string };
+
 export type RealmEditorState = {
   status: 'ready';
   saving: boolean;
@@ -113,6 +168,7 @@ export type RealmEditorState = {
   issue?: RealmSaveIssue;
   deleteError?: ErrorCode;
   saveNotice: boolean;
+  avatarOperation?: AvatarOperation;
 };
 type RealmEditorView = RealmEditorState | { status: 'loading'; request: EditorLoad } | { status: 'error'; id: string; code: ErrorCode };
 
@@ -141,7 +197,18 @@ function editorDirty(editor: RealmEditorState) {
 }
 
 function canEdit(view: RealmEditorView | null): view is RealmEditorState {
-  return view?.status === 'ready' && !view.saving && !view.deleting;
+  return view?.status === 'ready' && !view.saving && !view.deleting && view.avatarOperation?.status !== 'processing';
+}
+
+function updateAvatar(view: RealmEditorState, characterId: string | undefined, avatar?: string): RealmEditorState {
+  const draft = characterId === undefined ? { ...view.draft, avatar } : {
+    ...view.draft, characters: view.draft.characters?.map((character) => character.id === characterId ? { ...character, avatar } : character),
+  };
+  return { ...view, draft, avatarOperation: undefined, issue: undefined, saveNotice: false };
+}
+
+function hasAvatarTarget(view: RealmEditorState, characterId?: string) {
+  return characterId === undefined || Boolean(view.draft.characters?.some(({ id }) => id === characterId));
 }
 
 function validateEditor({ draft, variables }: RealmEditorState): { realm: Realm } | RealmSaveIssue {
@@ -184,6 +251,17 @@ export const realmEditorDraftDiscarded = createEvent();
 export const realmEditorDeleteErrorCleared = createEvent();
 export const realmEditorActionRequested = createEvent<'save' | 'export'>();
 export const realmEditorDeleteRequested = createEvent();
+export const realmAvatarSelected = createEvent<AvatarSelection>();
+export const realmAvatarRemoved = createEvent<string | undefined>();
+
+export const processRealmAvatarFx = createEffect(({ file }: AvatarRequest) => toRealmAvatar(file));
+const avatarProcessed = inActiveSession(processRealmAvatarFx.done, ({ session }) => session);
+const avatarFailed = inActiveSession(processRealmAvatarFx.fail, ({ session }) => session);
+
+function ownsAvatarRequest(view: RealmEditorView | null, request: AvatarRequest): view is RealmEditorState {
+  return view?.status === 'ready' && view.baseline === request.baseline &&
+    view.avatarOperation?.status === 'processing' && view.avatarOperation.request === request;
+}
 
 const writeRealmFx = attach({ effect: saveRealmFx });
 const exportRealmFx = createEffect(({ realm }: { session: ActiveSession; realm: Realm }) => downloadRealmFile(realm));
@@ -211,15 +289,25 @@ export const $realmEditor = createStore<RealmEditorView | null>(null)
     const next = { ...view.draft, ...patch };
     return { ...view, draft: removed ? pruneReferences(next) : next, issue: undefined, saveNotice: false };
   })
+  .on(processRealmAvatarFx, (view, request) => canEdit(view)
+    ? { ...view, avatarOperation: { status: 'processing', request } } : view)
+  .on(avatarProcessed, (view, { params, result }) => ownsAvatarRequest(view, params)
+    ? updateAvatar(view, params.characterId, result) : view)
+  .on(avatarFailed, (view, { params }) => ownsAvatarRequest(view, params)
+    ? { ...view, avatarOperation: { status: 'error', characterId: params.characterId } } : view)
+  .on(realmAvatarRemoved, (view, characterId) => canEdit(view) && hasAvatarTarget(view, characterId)
+    ? updateAvatar(view, characterId) : view)
   .on(realmEditorVariablesChanged, (view, variables) => canEdit(view) ? { ...view, variables, issue: undefined, saveNotice: false } : view)
   .on(realmEditorDraftDiscarded, (view) => canEdit(view) ? {
-    ...view, draft: view.baseline, variables: view.baselineVariables, issue: undefined, saveNotice: false,
+    ...view, draft: view.baseline, variables: view.baselineVariables, issue: undefined, avatarOperation: undefined, saveNotice: false,
   } : view)
   .on(realmEditorDeleteErrorCleared, (view) => canEdit(view) ? { ...view, deleteError: undefined } : view)
   .on(writeRealmFx, (view) => canEdit(view) ? { ...view, saving: true } : view)
-  .on(savedRealm, (view, { result }) => view?.status === 'ready' && view.saving ? {
-    ...prepareEditor(result), saveNotice: true,
+  .on(savedRealm, (view, { params, result }) => view?.status === 'ready' && view.saving ? {
+    ...prepareEditor(view.saved && view.saved !== params.saved ? { ...result, favorite: view.saved.favorite } : result), saveNotice: true,
   } : view)
+  .on(favoriteChanged, (view, { result }) => view?.status === 'ready' && view.saved?.id === result.id
+    ? { ...view, saved: { ...view.saved, favorite: result.favorite ? true : undefined } } : view)
   .on(realmSaveFailed, (view, { error }) => view?.status === 'ready' && view.saving
     ? { ...view, saving: false, issue: saveIssue(error) } : view)
   .on(realmExportFailed, (view, { error }) => canEdit(view) ? { ...view, issue: saveIssue(error, 'realm_file_download_failed') } : view)
@@ -227,6 +315,15 @@ export const $realmEditor = createStore<RealmEditorView | null>(null)
   .on(realmDeleteFailed, (view, { error }) => view?.status === 'ready' && view.deleting
     ? { ...view, deleting: false, deleteError: errorCode(error) } : view)
   .reset(sessionEnded, deletedRealm, deletedElsewhere);
+
+export const $realmAvatarOperation = $realmEditor.map((view) => view?.status === 'ready' ? view.avatarOperation ?? null : null);
+sample({
+  clock: realmAvatarSelected,
+  source: { session: $activeSession, editor: $realmEditor },
+  filter: ({ session, editor }, { characterId }) => session !== null && canEdit(editor) && hasAvatarTarget(editor, characterId),
+  fn: ({ session, editor }, selection): AvatarRequest => ({ ...selection, session: session!, baseline: (editor as RealmEditorState).baseline }),
+  target: processRealmAvatarFx,
+});
 
 export const $realmEditorDirty = $realmEditor.map((view) => view?.status === 'ready' && editorDirty(view));
 export const $realmEditorHasUnsavedChanges = $realmEditor.map((view) =>

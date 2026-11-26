@@ -1,8 +1,8 @@
 import type { MessageKey } from '../../shared/i18n/i18n';
 import { readAgent, type AgentDraft, type AgentField, type SavedAgent } from '@kuroko/contracts/agents';
 import { createEffect, createEvent, createStore, sample } from 'effector';
-import { $activeSession, protectedRequestFailed, sessionEnded, type ActiveSession } from '../../platform/session/model';
-import { inActiveSession, sessionRequest } from '../../platform/session/request';
+import { inActiveSession, $activeSession, protectedRequestFailed, sessionEnded, type ActiveSession } from '../../platform/session/model';
+import { sessionRequest } from '../../platform/session/request';
 import { ApiError, errorCode, type ErrorCode } from '../../shared/http/api';
 
 type Library = { status: 'idle' | 'loading' | 'ready' | 'error'; agents: SavedAgent[]; error?: ErrorCode };

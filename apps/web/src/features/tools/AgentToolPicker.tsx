@@ -4,7 +4,7 @@ import { Search, X } from 'lucide-react';
 import { useRef, useState } from 'react';
 import { useI18n } from '../../shared/i18n/i18n';
 import { tools } from './catalog';
-import './agentToolPicker.css';
+import pickerClasses from './AgentToolPicker.module.css';
 
 export function AgentToolPicker({ selected, disabled, issue, searchRef, onChange }: {
   selected: AgentToolId[];
@@ -45,8 +45,8 @@ export function AgentToolPicker({ selected, disabled, issue, searchRef, onChange
     }
   }
 
-  return <fieldset className="tools-agent-picker" disabled={disabled} aria-label={t('agents.allowedTools')}>
-    <div className="tools-agent-filters">
+  return <fieldset className={pickerClasses['tools-agent-picker']} disabled={disabled} aria-label={t('agents.allowedTools')}>
+    <div className={pickerClasses['tools-agent-filters']}>
       <TextInput type="search" value={query} aria-label={t('agents.searchTools')} placeholder={t('agents.searchTools')} disabled={disabled}
         ref={(input) => { searchInput.current = input; searchRef?.(input); }}
         leftSection={<Search size={16} strokeWidth={1.5} aria-hidden="true" />}
@@ -58,17 +58,17 @@ export function AgentToolPicker({ selected, disabled, issue, searchRef, onChange
       <Checkbox ref={selectedFilter} label={t('agents.selectedOnly')} checked={selectedOnly} color="var(--kr-accent)"
         onChange={(event) => { setSelectedOnly(event.currentTarget.checked); if (list.current) list.current.scrollTop = 0; }} />
     </div>
-    <output className="tools-agent-count">
+    <output className={pickerClasses['tools-agent-count']}>
       {t('agents.toolCount', { count: number.format(selected.length), total: number.format(agentToolIds.length) })}
       {terms.length > 0 && <span>{t('agents.toolMatches', { count: number.format(matches.length) })}</span>}
     </output>
-    {issue && <p className="tools-agent-picker-error" role="alert">{issue}</p>}
-    {matches.length ? <ul ref={list} className="tools-agent-results">
+    {issue && <p className={pickerClasses['tools-agent-picker-error']} role="alert">{issue}</p>}
+    {matches.length ? <ul ref={list} className={pickerClasses['tools-agent-results']}>
       {matches.map(({ id, name, description }, index) => <li key={id}>
         <Checkbox name="tools" value={id} checked={chosen.has(id)} color="var(--kr-accent)"
-          label={<span className="tools-agent-name">{name}<code>{id}</code></span>} description={description}
+          label={<span className={pickerClasses['tools-agent-name']}>{name}<code>{id}</code></span>} description={description}
           onChange={({ currentTarget }) => toggle(id, currentTarget.checked, currentTarget, index)} />
       </li>)}
-    </ul> : <p className="tools-agent-empty">{t(terms.length ? 'tools.noResults' : 'agents.noSelectedTools')}</p>}
+    </ul> : <p className={pickerClasses['tools-agent-empty']}>{t(terms.length ? 'tools.noResults' : 'agents.noSelectedTools')}</p>}
   </fieldset>;
 }

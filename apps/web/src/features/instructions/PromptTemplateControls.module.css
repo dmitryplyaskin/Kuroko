@@ -35,6 +35,6 @@
   overflow: auto;
 }
 
-.prompt-world-list .mantine-Button-inner {
+.prompt-world-list :global(.mantine-Button-inner) {
   justify-content: flex-start;
 }

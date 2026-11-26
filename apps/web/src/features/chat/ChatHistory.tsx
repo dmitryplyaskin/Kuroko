@@ -2,6 +2,7 @@ import { useI18n } from '../../shared/i18n/i18n';
 import { observeElementRect, useVirtualizer, type VirtualizerOptions } from '@tanstack/react-virtual';
 import { memo, useCallback, useImperativeHandle, useLayoutEffect, useRef, type ReactNode, type Ref } from 'react';
 import type { Message } from './message';
+import chatClasses from './Chat.module.css';
 
 export type ChatHistoryHandle = {
   scrollToStart: () => void;
@@ -76,10 +77,10 @@ export const ChatHistory = memo(function ChatHistory({ messages, renderMessage, 
 
   return (
     // oxlint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- The message history scrolls independently via keyboard.
-    <section ref={viewport} className="chat-history" aria-label={t('chat.history')} tabIndex={0}>
-      <div ref={list.containerRef} className="chat-timeline">
+    <section ref={viewport} className={chatClasses['chat-history']} aria-label={t('chat.history')} tabIndex={0}>
+      <div ref={list.containerRef} className={chatClasses['chat-timeline']}>
         {list.getVirtualItems().map((item) => (
-          <div key={item.key} ref={list.measureElement} className="chat-virtual-row" data-index={item.index}>
+          <div key={item.key} ref={list.measureElement} className={chatClasses['chat-virtual-row']} data-index={item.index}>
             {renderMessage(messages[item.index]!)}
           </div>
         ))}

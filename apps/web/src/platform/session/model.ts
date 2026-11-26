@@ -1,5 +1,5 @@
 import type { MessageKey } from '../../shared/i18n/i18n';
-import { createEffect, createEvent, createStore, sample } from 'effector';
+import { createEffect, createEvent, createStore, sample, type Event } from 'effector';
 import type { User } from '@kuroko/contracts/auth';
 import { appStarted } from '../lifecycle';
 import { abortFx } from '../../shared/async/abort';
@@ -66,3 +66,15 @@ $state
   }))
   .on(sessionActivated, (_, state) => state)
   .on(sessionEnded, (_, { notice }) => ({ status: 'guest', notice }));
+
+export function inActiveSession<Completion extends { params: unknown }>(
+  completion: Event<Completion>,
+  sessionOf: (params: Completion['params']) => ActiveSession,
+) {
+  return sample({
+    clock: completion,
+    source: $activeSession,
+    filter: (current, { params }) => current === sessionOf(params),
+    fn: (_, result) => result,
+  });
+}

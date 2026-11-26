@@ -24,8 +24,15 @@ import {
 import { $modelCatalog, loadModelCatalogFx } from '../features/connection/modelCatalog';
 import { $agentEditor, $agentLibrary, agentDraftChanged, agentEditorOpened, agentSaveRequested, agentsOpened } from '../features/agents/model';
 import { $instructions, instructionDraftChanged, instructionsOpened } from '../features/instructions/model';
-import { $realmEditor, realmEditorActionRequested, realmEditorDraftChanged, realmEditorOpened } from '../features/realms/model';
-import { $enabledTools, toolsInitialized, toolSettingChanged, toolSettingsRetried } from '../features/tools/model';
+import { templatePreview } from '../features/instructions/templateQueries';
+import {
+  $realmAvatarOperation, $realmEditor, processRealmAvatarFx, realmAvatarSelected,
+  realmEditorActionRequested, realmEditorCreated, realmEditorDraftChanged, realmEditorOpened,
+} from '../features/realms/model';
+import {
+  $enabledTools, $temporaryAgentToolsSelection, loadToolSettingsFx, temporaryAgentToolsChanged,
+  temporaryAgentToolsResetRequested, toolManagerOpened, toolsInitialized, toolSettingChanged, toolSettingsRetried,
+} from '../features/tools/model';
 import {
   $activeSubagents, $chatActivity, $chatAnnouncement, $chatDraft, $chatError, $chatGmMode, $chatId, $chatRegenerateId, $chatReplyVariants,
   $chatCanSend, $chatLocked, $chatMissing, $chatRows, $chats, $replyId, $replyPhase,
@@ -1162,6 +1169,69 @@ test('late saves in either editor leave a new session for the same account intac
     assert.partialDeepStrictEqual(scope.getState($agentEditor), { status: 'idle', draft: { name: 'Новый черновик агента' } });
     assert.deepEqual(scope.getState($agentLibrary).agents, []);
     assert.partialDeepStrictEqual(scope.getState($realmEditor), { status: 'ready', saving: false, draft: { title: 'Новый черновик мира' } });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('processing an avatar cannot apply a result to an editor in a later session', async () => {
+  const oldAvatar = Promise.withResolvers<string>();
+  const newAvatar = Promise.withResolvers<string>();
+  const scope = fork({ handlers: [[processRealmAvatarFx, ({ file }: { file: File }) => file.name === 'old.png' ? oldAvatar.promise : newAvatar.promise]] });
+  await allSettled(sessionUserReceived, { scope, params: user });
+  await allSettled(realmEditorCreated, { scope, params: undefined });
+  scopeBind(realmAvatarSelected, { scope })({ file: new File([], 'old.png') });
+  assert.equal(scope.getState($realmAvatarOperation)?.status, 'processing');
+  scopeBind(sessionEndRequested, { scope })({ session: scope.getState($activeSession)! });
+  scopeBind(sessionUserReceived, { scope })({ id: 2, username: 'Сэм' });
+  scopeBind(realmEditorCreated, { scope })(undefined);
+  assert.equal(scope.getState($realmAvatarOperation), null);
+  scopeBind(realmEditorDraftChanged, { scope })({ patch: { characters: [{ id: 'hero', title: 'Герой', content: 'Текст' }] } });
+  scopeBind(realmAvatarSelected, { scope })({ file: new File([], 'new.png'), characterId: 'hero' });
+  oldAvatar.resolve('old-avatar');
+  newAvatar.resolve('new-avatar');
+  await allSettled(scope);
+  const editor = scope.getState($realmEditor);
+  assert.ok(editor?.status === 'ready');
+  assert.equal(editor.draft.avatar, undefined);
+  assert.equal(editor.draft.characters?.[0]?.avatar, 'new-avatar');
+  assert.equal(scope.getState($realmAvatarOperation), null);
+});
+
+test('temporary agent tool drafts survive a settings refresh and reset to inherited tools', async () => {
+  const scope = fork({ handlers: [[loadToolSettingsFx, () => ({ enabled: ['roll_dice'] })]] });
+  await allSettled(toolsInitialized, { scope });
+  await allSettled(sessionUserReceived, { scope, params: user });
+  await allSettled(temporaryAgentToolsChanged, { scope, params: ['test_echo'] });
+  await allSettled(toolManagerOpened, { scope });
+  assert.deepEqual(scope.getState($temporaryAgentToolsSelection), { configured: false, dirty: true, selection: ['test_echo'] });
+  await allSettled(temporaryAgentToolsResetRequested, { scope });
+  assert.deepEqual(scope.getState($temporaryAgentToolsSelection), { configured: false, dirty: false, selection: ['roll_dice'] });
+});
+
+test('a template preview retries a failed query and aborts when its dialog closes', async () => {
+  const originalFetch = globalThis.fetch;
+  const pending = Promise.withResolvers<Response>();
+  let calls = 0;
+  let signal: AbortSignal | null | undefined;
+  globalThis.fetch = (async (path, init) => {
+    assert.equal(path, '/api/settings/instructions/preview');
+    signal = init?.signal;
+    if (++calls === 1) return Response.json({ code: 'server_error' }, { status: 503 });
+    return pending.promise;
+  }) as typeof fetch;
+  try {
+    const scope = fork();
+    await allSettled(sessionUserReceived, { scope, params: user });
+    await allSettled(templatePreview.requested, { scope, params: { dialog: 'preview', input: { text: 'Черновик', chatTitle: 'Сцена', gmMode: false } } });
+    assert.partialDeepStrictEqual(scope.getState(templatePreview.$state), { status: 'error', code: 'server_error' });
+    scopeBind(templatePreview.retried, { scope })('preview');
+    assert.equal(calls, 2);
+    scopeBind(templatePreview.closed, { scope })('preview');
+    assert.ok(signal?.aborted);
+    pending.resolve(Response.json({ text: 'Поздний результат' }));
+    await allSettled(scope);
+    assert.equal(scope.getState(templatePreview.$state), null);
   } finally {
     globalThis.fetch = originalFetch;
   }
