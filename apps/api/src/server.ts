@@ -1,4 +1,5 @@
 import { CodedError } from '@kuroko/contracts/errors';
+import { spawn } from 'node:child_process';
 import { mkdirSync, realpathSync } from 'node:fs';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { createApp } from './app';
@@ -37,4 +38,17 @@ createApp({ db, vaultKey, secureCookie, trustProxy: process.env.TRUST_PROXY, web
 
   const displayHost = host.includes(':') ? `[${host}]` : host;
   console.log('server_listening', { mode: webDir ? 'app' : 'api', url: `http://${displayHost}:${port}` });
+
+  if (webDir && process.argv.includes('--open') && process.env.BROWSER !== 'none') {
+    const browserHost = host === '0.0.0.0' ? '127.0.0.1' : host === '::' ? '[::1]' : displayHost;
+    const url = `http://${browserHost}:${port}`;
+    const command = process.platform === 'win32' ? 'rundll32.exe' : process.platform === 'darwin' ? 'open' : 'xdg-open';
+    const args = process.platform === 'win32' ? ['url.dll,FileProtocolHandler', url] : [url];
+    const opener = spawn(command, args, { stdio: 'ignore', windowsHide: true });
+    opener.once('error', (error) => console.warn('browser_open_failed', { url, error }));
+    opener.once('exit', (code) => {
+      if (code) console.warn('browser_open_failed', { url, code });
+    });
+    opener.unref();
+  }
 });

@@ -6,4 +6,4 @@ case "$0" in
   *) script_dir=. ;;
 esac
 CDPATH='' cd -- "$script_dir/.."
-exec bun run start
+exec bun run start --open
