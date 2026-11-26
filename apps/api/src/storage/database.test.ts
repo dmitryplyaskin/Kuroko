@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { openDatabase } from './database';
 import { createProviderKeyStore } from '../connection/providerKeyStore';
 
-test.each([1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18])('upgrades a version %i SQLite database without losing user data', (version) => {
+test.each([1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19])('upgrades a version %i SQLite database without losing user data', (version) => {
   const directory = mkdtempSync(join(tmpdir(), 'kuroko-sqlite-test-'));
   const path = join(directory, 'test.sqlite');
   const vaultKey = randomBytes(32);
@@ -19,17 +19,18 @@ test.each([1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18])('upgrade
   try {
     const old = openDatabase(path, vaultKey);
     try {
+      old.exec('DROP TRIGGER agents_world_revision; ALTER TABLE agents DROP COLUMN revision');
       old.run('INSERT INTO users (username, username_key, password_hash) VALUES (?, ?, ?)', ['Лина', 'лина', 'test-hash']);
       if (version < 17) old.exec('DROP TABLE instruction_presets');
-      else old.exec(`
-        ALTER TABLE instruction_presets DROP COLUMN world_id;
-        INSERT INTO instruction_presets (id, user_id, name, text, active) VALUES ('old-instruction', 1, 'Стиль', '{{ literal }}', 1);
-      `);
+      else {
+        if (version < 19) old.exec('ALTER TABLE instruction_presets DROP COLUMN world_id');
+        old.exec("INSERT INTO instruction_presets (id, user_id, name, text, active) VALUES ('old-instruction', 1, 'Стиль', '{{ literal }}', 1)");
+      }
       if (version === 18) old.exec('ALTER TABLE instruction_presets ADD COLUMN template INTEGER NOT NULL DEFAULT 0');
       if (version < 16) old.exec('DROP TABLE temporary_agent_tools');
       if (version < 15) old.exec('DROP TABLE agents');
       else {
-        old.exec('ALTER TABLE agents DROP COLUMN world_id');
+        if (version < 19) old.exec('ALTER TABLE agents DROP COLUMN world_id');
         if (version === 18) old.exec('ALTER TABLE agents ADD COLUMN template INTEGER NOT NULL DEFAULT 0');
         if (version < 16) old.exec('CREATE UNIQUE INDEX agents_v15_name ON agents (user_id, name_key)');
         old.run('INSERT INTO agents (id, user_id, name, name_key, description, instructions, tools_json) VALUES (?, ?, ?, ?, ?, ?, ?)',
@@ -50,6 +51,7 @@ test.each([1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18])('upgrade
           specVersion: '0.1.0', id: 'island', title: 'Остров', base: 'Море', author: ' Лина ', tags: ['Туман', 'туман', 'Море'],
         })]);
         if (version >= 9) old.run('UPDATE realms SET author_key = ?, tag_keys_json = ? WHERE id = ?', ['лина', '["туман","море"]', 'old-realm']);
+        if (version === 19) old.exec("UPDATE agents SET world_id = 'old-realm' WHERE id = 'old-agent'");
       }
       if (version < 7) old.exec('DROP TABLE chat_private_turns; ALTER TABLE chats DROP COLUMN gm_mode');
       if (version < 6) old.exec('DROP TABLE enabled_tools');
@@ -69,11 +71,13 @@ test.each([1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18])('upgrade
 
     const migrated = openDatabase(path, vaultKey);
     try {
-      expect(migrated.query('PRAGMA user_version').get()).toEqual({ user_version: 19 });
+      expect(migrated.query('PRAGMA user_version').get()).toEqual({ user_version: 20 });
       expect(migrated.query('SELECT * FROM instruction_presets').all()).toEqual(version < 17 ? [] : [
         { id: 'old-instruction', user_id: 1, name: 'Стиль', text: '{{ literal }}', active: 1, world_id: null },
       ]);
-      expect(migrated.query('SELECT * FROM agents').all()).toEqual(version < 15 ? [] : [{ ...legacyAgent, world_id: null }]);
+      expect(migrated.query('SELECT * FROM agents').all()).toEqual(version < 15 ? [] : [
+        { ...legacyAgent, world_id: version === 19 ? 'old-realm' : null, revision: 0 },
+      ]);
       expect(migrated.query('SELECT * FROM temporary_agent_tools').all()).toEqual([]);
       expect(migrated.query('SELECT * FROM chat_reply_variants').all()).toEqual([]);
       expect(migrated.query('SELECT * FROM subagent_settings').all()).toEqual([]);
@@ -92,6 +96,10 @@ test.each([1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18])('upgrade
       expect(migrated.query('SELECT id, author_key, tag_keys_json, favorite, updated_at, revision FROM realms').all()).toEqual(version < 8 ? [] : [
         { id: 'old-realm', author_key: 'лина', tag_keys_json: '["туман","море"]', favorite: 0, updated_at: 20, revision: 1 },
       ]);
+      if (version === 19) {
+        migrated.exec("DELETE FROM realms WHERE id = 'old-realm'");
+        expect(migrated.query("SELECT world_id, revision FROM agents WHERE id = 'old-agent'").get()).toEqual({ world_id: null, revision: 1 });
+      }
     } finally {
       migrated.close();
     }

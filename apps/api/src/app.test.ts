@@ -71,6 +71,7 @@ test('validates, searches, sorts and edits private realms without overwriting ne
   const realm: Realm = {
     specVersion: '0.1.0', id: 'последний поезд / night', title: 'Последний поезд', base: 'Ночная станция',
     characters: [{ id: 'lina', title: 'Лина', content: 'Пассажирка' }],
+    variables: [{ name: 'weather', value: { fog: true, winds: ['north', 'west'] } }],
     lorebook: [{ id: 'delay', title: 'Задержка', content: 'Сигнал пропал на 100%' }],
     sections: [{ id: 'locations', title: 'Локации', entries: [{ id: 'pier', title: 'Причал', content: 'Старая пристань' }] }],
     starts: [{ id: 'platform', title: 'На платформе', greeting: 'Вы ждёте поезд?', characterIds: ['lina'],
@@ -96,6 +97,10 @@ test('validates, searches, sorts and edits private realms without overwriting ne
   expect(created.headers.get('location')).toBe(`/api${itemPath}`);
   expect(saved.realm).toEqual(realm);
   expect(await (await create(realm)).json()).toEqual(saved);
+  const reordered = await create({ ...realm, variables: [{ value: { winds: ['north', 'west'], fog: true }, name: 'weather' }] });
+  expect(reordered.status).toBe(200);
+  expect(await reordered.json()).toEqual(saved);
+  expect((await create({ ...realm, variables: [{ name: 'weather', value: { fog: true, winds: ['west', 'north'] } }] })).status).toBe(409);
   expect((await create({ ...realm, title: 'Повтор' })).status).toBe(409);
   expect((await create({ specVersion: '0.1.0', id: 'archive', title: 'архив', base: 'Подземелье' })).status).toBe(201);
 
@@ -877,7 +882,7 @@ test('discovers account-owned agents and runs saved instructions with only the s
   const created = await create(draft);
   expect(created.status).toBe(201);
   const agent = await created.json() as SavedAgent;
-  expect(agent).toEqual({ ...draft, id: expect.any(String) });
+  expect(agent).toEqual({ ...draft, id: expect.any(String), revision: 0 });
   const defense = await create({ ...draft, description: 'Бросает кубики защиты.', instructions: 'Отвечай результатом защиты.' });
   expect(defense.status).toBe(201);
   const secondAgent = await defense.json() as SavedAgent;
@@ -885,7 +890,7 @@ test('discovers account-owned agents and runs saved instructions with only the s
   expect(secondAgent.id).not.toBe(agent.id);
   expect(await (await create({ ...draft, tools: ['subagent'] })).json()).toEqual({ code: 'agent_invalid', field: 'tools' });
   const path = `/agents/${agent.id}`;
-  const rename = (actor: string) => request(path, { method: 'PUT', cookie: actor, body: { ...draft, name: 'Летописец' } });
+  const rename = (actor: string) => request(path, { method: 'PUT', cookie: actor, body: { ...draft, name: 'Летописец', revision: agent.revision } });
   expect((await rename(other)).status).toBe(404);
   expect((await request(path, { method: 'DELETE', cookie: other })).status).toBe(404);
   expect(await (await request('/agents', { cookie: other })).json()).toEqual([]);
@@ -925,7 +930,16 @@ test('discovers account-owned agents and runs saved instructions with only the s
     expect(upstream[1]!.messages[0]!.content).toContain(draft.instructions);
     expect(upstream[1]!.tools.map(({ function: tool }) => tool.name)).toEqual(['roll_dice']);
 
-    expect((await rename(cookie)).status).toBe(200);
+    const renamed = await rename(cookie);
+    expect(renamed.status).toBe(200);
+    const latest = await renamed.json() as SavedAgent;
+    expect(latest.revision).toBe(agent.revision + 1);
+    expect(await (await rename(cookie)).json()).toEqual(latest);
+    const stale = await request(path, { method: 'PUT', cookie, body: { ...draft, revision: agent.revision, description: 'Другая правка' } });
+    expect(stale.status).toBe(409);
+    expect(await stale.json()).toEqual({ code: 'agent_conflict' });
+    expect(await (await request(path, { cookie })).json()).toEqual(latest);
+    expect((await request(path, { cookie: other })).status).toBe(404);
     const batch = createSubagentBatch([entry], execute);
     const followUp = 'Проверь ещё раз.';
     const result = await runToolCall(call('second', followUp), ['subagent'], { signal, id: 'second', history: [entry], delegateTask: batch });

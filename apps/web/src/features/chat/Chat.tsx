@@ -16,8 +16,8 @@ import { $activeSession } from '../../platform/session/model';
 import { chatDisplayStyle } from './chatDisplayStyle';
 import type { ChatImage, Message } from './message';
 import {
-  $activeSubagents, $chatAnnouncement, $chatRows, $expandedReasoning, $messageEditor, $replyId, $replyPhase,
-  $chatActivity, $chatGmMode, $chatId, $chatLoadError, $chatLoading, $chatLocked, $chatMessages, $chatRegenerateId, $chatReplyVariants, $chatSaveError,
+  $activeSubagents, $chatAnnouncement, $chatRows, $chatVisible, $expandedReasoning, $messageEditor, $replyId, $replyPhase,
+  $chatActivity, $chatGmMode, $chatId, $chatLoadError, $chatLoading, $chatLocked, $chatMissing, $chatMessages, $chatRegenerateId, $chatReplyVariants, $chatSaveError,
   chatLoadRetryRequested, chatSaveRetryRequested,
   chatHidden, chatShown, keepHistoryAtEndRequested, messageDeleteRequested, messageEditCancelled,
   messageEditChanged, messageEditRequested, messageEditSubmitted, messageRegenerateRequested, messageSent, reasoningToggled, replyVariantRequested,
@@ -38,7 +38,7 @@ export default function Chat() {
   const {
     session, settings, rows, replyId, replyPhase, activeSubagents, announcement, editor, expandedReasoning, show, hide, openEditor,
     changeDraft, closeEditor, saveEdit, remove, regenerateId, requestRegeneration, variants, selectVariant, toggleReasoning,
-    activity, messages, chatId, gmMode, loading, locked, loadError, saveError, retryLoad, retrySave,
+    activity, messages, chatId, gmMode, loading, locked, loadError, saveError, missing, visible, retryLoad, retrySave,
   } = useUnit({
     session: $activeSession, settings: $appliedChatSettings,
     rows: $chatRows, replyId: $replyId, replyPhase: $replyPhase, activeSubagents: $activeSubagents, announcement: $chatAnnouncement,
@@ -48,7 +48,7 @@ export default function Chat() {
     regenerateId: $chatRegenerateId, requestRegeneration: messageRegenerateRequested,
     variants: $chatReplyVariants, selectVariant: replyVariantRequested,
     activity: $chatActivity, messages: $chatMessages, chatId: $chatId, gmMode: $chatGmMode,
-    loading: $chatLoading, locked: $chatLocked, loadError: $chatLoadError, saveError: $chatSaveError,
+    loading: $chatLoading, locked: $chatLocked, loadError: $chatLoadError, saveError: $chatSaveError, missing: $chatMissing, visible: $chatVisible,
     retryLoad: chatLoadRetryRequested, retrySave: chatSaveRetryRequested,
   });
   const username = session?.user.username ?? '';
@@ -63,6 +63,7 @@ export default function Chat() {
   const activeTab = tab === 'agents' && !agents.length ? 'chat' : tab;
   const currentAgentView = agentView?.chatId === chatId ? agentView : undefined;
   const agent = currentAgentView && agents.find(({ key }) => key === currentAgentView.key);
+  const logVisible = visible && activeTab === 'log';
   const agentKey = agent?.key;
   const agentTasks = agent?.tasks;
   const agentTurns = useMemo(() => agentTasks ? agentLogTurns(agentTasks) : [], [agentTasks]);
@@ -152,12 +153,15 @@ export default function Chat() {
           )}
         </Tabs.List>
       </header>
-      {(loadError || saveError) && (
+      {(missing || loadError || saveError) && (
         <div className="chat-status">
-          <p role="alert">{t(`error.${loadError ?? saveError!}`)}</p>
-          <Button type="button" size="compact-sm" variant="default" disabled={loading} onClick={loadError ? retryLoad : retrySave}>
-            {t(loadError || saveError === 'chat_conflict' ? 'common.retryLoad' : 'chat.retrySave')}
-          </Button>
+          {missing && <p role="alert">{t('chat.deletedElsewhere')}</p>}
+          {(loadError || saveError) && <>
+            <p role="alert">{t(`error.${loadError ?? saveError!}`)}</p>
+            <Button type="button" size="compact-sm" variant="default" disabled={loading} onClick={loadError ? retryLoad : retrySave}>
+              {t(loadError || saveError === 'chat_conflict' ? 'common.retryLoad' : 'chat.retrySave')}
+            </Button>
+          </>}
         </div>
       )}
       <Tabs.Panel className="chat-conversation-pane" value="chat">
@@ -172,10 +176,10 @@ export default function Chat() {
       </Tabs.Panel>
       <Tabs.Panel className="chat-log-pane" value="log">
         <div className="chat-primary-log" hidden={Boolean(agent)}>
-          <ChatLog key={chatId} entries={entries} messages={messages} gmMode={gmMode} onOpenAgent={selectAgent}
-            liveReply={activeTab === 'log' && !agent && replyId !== null ? rows.at(-1) : undefined} />
+          <ChatLog key={chatId} visible={logVisible && !agent} entries={entries} messages={messages} gmMode={gmMode} onOpenAgent={selectAgent}
+            liveReply={logVisible && !agent && replyId !== null ? rows.at(-1) : undefined} />
         </div>
-        {agent && <ChatLogView key={agent.key} turns={agentTurns} emptyMessage={t('chat.logEmpty')} onOpenAgent={selectAgent} />}
+        {agent && <ChatLogView key={agent.key} visible={logVisible} turns={logVisible ? agentTurns : []} emptyMessage={t('chat.logEmpty')} onOpenAgent={selectAgent} />}
       </Tabs.Panel>
       {!agent && agents.length > 0 && (
         <Tabs.Panel className="chat-agents-pane" value="agents">

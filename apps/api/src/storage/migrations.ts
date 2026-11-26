@@ -3,7 +3,7 @@ import type { Database } from 'bun:sqlite';
 import { createHash } from 'node:crypto';
 import { realmFilterKey, realmTagKeys } from '../realms/realmFilterKeys';
 
-const latestVersion = 19;
+const latestVersion = 20;
 
 const initialSchema = `
   CREATE TABLE vault_settings (
@@ -293,6 +293,15 @@ export function migrateDatabase(db: Database, vaultKey: Buffer) {
       ALTER TABLE instruction_presets ADD COLUMN world_id TEXT REFERENCES realms(id) ON DELETE SET NULL;
       ALTER TABLE agents DROP COLUMN template;
       ALTER TABLE agents ADD COLUMN world_id TEXT REFERENCES realms(id) ON DELETE SET NULL;
+    `);
+
+    if (version < 20) db.exec(`
+      ALTER TABLE agents ADD COLUMN revision INTEGER NOT NULL DEFAULT 0 CHECK (revision >= 0);
+      CREATE TRIGGER agents_world_revision AFTER UPDATE OF world_id ON agents
+      WHEN OLD.world_id IS NOT NEW.world_id AND NEW.revision = OLD.revision
+      BEGIN
+        UPDATE agents SET revision = revision + 1 WHERE id = NEW.id;
+      END;
     `);
 
     if (version < latestVersion) db.exec(`PRAGMA user_version = ${latestVersion}`);

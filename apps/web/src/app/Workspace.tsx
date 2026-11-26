@@ -37,8 +37,8 @@ export function Workspace({ user, registry, model }: {
   model: WorkspaceModel;
 }) {
   const { t } = useI18n();
-  const [screen, retainedScreens, selectedKey, selectTab, menuCollapsed, toggleMenu] = useUnit([
-    model.$screen, model.$retainedScreens, model.$settingsTab, model.settingsTabChanged, $menuCollapsed, menuToggled,
+  const [screen, retainedScreens, selectedKey, selectTab, menuCollapsed, toggleMenu, hasUnsavedChanges] = useUnit([
+    model.$screen, model.$retainedScreens, model.$settingsTab, model.settingsTabChanged, $menuCollapsed, menuToggled, model.$hasUnsavedChanges,
   ]);
   const settings = useMemo(() => ({ tabs: registry.settingsTabs, selectedKey, selectTab }),
     [registry, selectedKey, selectTab]);
@@ -50,6 +50,13 @@ export function Workspace({ user, registry, model }: {
   useEffect(() => {
     document.title = t('common.documentTitle', { title: t(screen.title ?? screen.label) });
   }, [screen, t]);
+
+  useEffect(() => {
+    if (!hasUnsavedChanges) return;
+    const confirmUnload = (event: BeforeUnloadEvent) => { event.preventDefault(); };
+    window.addEventListener('beforeunload', confirmUnload);
+    return () => window.removeEventListener('beforeunload', confirmUnload);
+  }, [hasUnsavedChanges]);
 
   function focusContent() {
     const heading = main.current?.querySelector<HTMLHeadingElement>('h1:not([hidden] h1)');

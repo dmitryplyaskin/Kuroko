@@ -5,8 +5,10 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { ConnectionState } from '@kuroko/contracts/connectionSettings';
 import { corePlugin } from '../core';
+import { agentDraftChanged, agentEditorClosed, agentEditorOpened } from '../features/agents/model';
 import { loadChatSettingsFx } from '../features/chat/settings/model';
 import { $connectionLoad, loadConnectionFx } from '../features/connection/model';
+import { realmEditorCreated, realmEditorDraftChanged } from '../features/realms/model';
 import type { WebModule } from '../modules/contracts';
 import { createModuleRegistry } from '../modules/registry';
 import { $activeSession, sessionEndRequested, sessionUserReceived } from '../platform/session/model';
@@ -141,4 +143,46 @@ test('registration rejects conflicting contributions and incomplete view binding
   assert.throws(() => createModuleRegistry(corePlugin, [{
     ...module, contributions: [{ ...notesTab, key: 'chat' }],
   }]), { code: 'module_key_duplicate', details: { kind: 'settings_tab_key', key: 'chat' } });
+});
+
+test('settings retries failed preloads on re-entry and keeps successful views cached', async () => {
+  let attempts = 0;
+  const registry = createModuleRegistry(corePlugin, [notesModule(() => {
+    if (++attempts === 1) throw new Error('Unavailable');
+  })]);
+  const workspace = createWorkspaceModel(registry);
+  const scope = fork({ handlers: [[loadConnectionFx, () => ({ activePresetId: null, presets: [], keys: [] })]] });
+  const tab = registry.settingsTabs.find(({ key }) => key === 'notes');
+  assert.ok(tab);
+
+  await allSettled(sessionUserReceived, { scope, params: { id: 1, username: 'Лина' } });
+  await allSettled(workspace.workspaceHashChanged, { scope, params: '#settings' });
+  await assert.rejects(tab.preload(), /Unavailable/);
+  assert.equal(attempts, 1);
+
+  await allSettled(workspace.workspaceHashChanged, { scope, params: '#scenes' });
+  await allSettled(workspace.workspaceHashChanged, { scope, params: '#settings' });
+  assert.equal(renderToStaticMarkup(createElement((await tab.preload()).default)), '');
+  assert.equal(attempts, 2);
+});
+
+test('workspace keeps its unsaved changes flag when either editor is hidden', async () => {
+  const workspace = createWorkspaceModel(createModuleRegistry(corePlugin));
+  const scope = fork();
+  await allSettled(sessionUserReceived, { scope, params: { id: 1, username: 'Лина' } });
+  await allSettled(workspace.workspaceHashChanged, { scope, params: '#agents' });
+  await allSettled(agentEditorOpened, { scope, params: undefined });
+  await allSettled(agentDraftChanged, { scope, params: { name: 'Летописец' } });
+  await allSettled(workspace.workspaceHashChanged, { scope, params: '#tools' });
+  assert.equal(scope.getState(workspace.$hasUnsavedChanges), true);
+
+  await allSettled(workspace.workspaceHashChanged, { scope, params: '#realms' });
+  await allSettled(realmEditorCreated, { scope, params: undefined });
+  await allSettled(realmEditorDraftChanged, { scope, params: { patch: { title: 'Станция' } } });
+  await allSettled(workspace.workspaceHashChanged, { scope, params: '#scenes' });
+  await allSettled(agentEditorClosed, { scope });
+  assert.equal(scope.getState(workspace.$hasUnsavedChanges), true);
+
+  await allSettled(realmEditorDraftChanged, { scope, params: { patch: { title: '' } } });
+  assert.equal(scope.getState(workspace.$hasUnsavedChanges), false);
 });

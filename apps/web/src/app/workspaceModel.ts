@@ -18,7 +18,10 @@ export function createWorkspaceModel(registry: ModuleRegistry) {
   const $settingsOpen = combine($activeSession, $screen, (session, screen) => session !== null && screen.route === '#settings');
   const settingsOpened = $settingsOpen.updates.filter({ fn: (open) => open }).map(() => undefined);
   const settingsClosed = $settingsOpen.updates.filter({ fn: (open) => !open }).map(() => undefined);
-  const preloadTabsFx = createEffect(() => Promise.allSettled(registry.settingsTabs.map(({ preload }) => preload())));
+  const preloadTabsFx = createEffect(() => Promise.allSettled(registry.settingsTabs.map(({ preload, resetFailedLoad }) => {
+    resetFailedLoad();
+    return preload();
+  })));
   sample({ clock: settingsOpened, target: preloadTabsFx });
   for (const { settingsLifecycle } of registry.settingsTabs) {
     if (settingsLifecycle) {
@@ -38,7 +41,9 @@ export function createWorkspaceModel(registry: ModuleRegistry) {
     .on(settingsTabChanged, (key, next) => registry.hasSettingsTab(next) ? next : key)
     .reset(sessionEnded);
 
-  return { workspaceHashChanged, settingsTabChanged, $screen, $retainedScreens, $settingsTab };
+  const $hasUnsavedChanges = combine(registry.unsavedChanges, (changes) => changes.some(Boolean));
+
+  return { workspaceHashChanged, settingsTabChanged, $screen, $retainedScreens, $settingsTab, $hasUnsavedChanges };
 }
 
 export type WorkspaceModel = ReturnType<typeof createWorkspaceModel>;

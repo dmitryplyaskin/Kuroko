@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { allSettled, createWatch, fork, scopeBind } from 'effector';
 import type { ChatMessage, ChatReplyVariantSelection, ChatSnapshot, SavedChat } from '@kuroko/contracts/chat';
+import type { SavedAgent } from '@kuroko/contracts/agents';
+import type { SavedRealm } from '@kuroko/contracts/realms';
 import { defaultChatSettings } from '@kuroko/contracts/chatSettings';
 import { defaultConnectionSettings, type ConnectionState } from '@kuroko/contracts/connectionSettings';
 import { isToolId, type ToolId } from '@kuroko/contracts/tools';
@@ -20,11 +22,14 @@ import {
   loadConnectionFx, mutateConnectionFx,
 } from '../features/connection/model';
 import { $modelCatalog, loadModelCatalogFx } from '../features/connection/modelCatalog';
-import { $enabledTools, toolsInitialized, toolSettingChanged } from '../features/tools/model';
+import { $agentEditor, $agentLibrary, agentDraftChanged, agentEditorOpened, agentSaveRequested, agentsOpened } from '../features/agents/model';
+import { $instructions, instructionDraftChanged, instructionsOpened } from '../features/instructions/model';
+import { $realmEditor, realmEditorActionRequested, realmEditorDraftChanged, realmEditorOpened } from '../features/realms/model';
+import { $enabledTools, toolsInitialized, toolSettingChanged, toolSettingsRetried } from '../features/tools/model';
 import {
   $activeSubagents, $chatActivity, $chatAnnouncement, $chatDraft, $chatError, $chatGmMode, $chatId, $chatRegenerateId, $chatReplyVariants,
-  $chatRows, $replyId, $replyPhase,
-  chatCreateRequested, chatDraftChanged, chatGmModeChanged,
+  $chatCanSend, $chatLocked, $chatMissing, $chatRows, $chats, $replyId, $replyPhase,
+  chatCreateRequested, chatDraftChanged, chatGmModeChanged, chatHidden,
   chatOpenRequested, chatSendRequested, chatShown, chatStopRequested,
   messageDeleteRequested, messageEditChanged, messageEditRequested, messageEditSubmitted, messageRegenerateRequested, replyVariantRequested,
 } from '../features/chat/model';
@@ -238,7 +243,7 @@ test('re-entering settings waits for a connection write before loading its new s
   assert.equal(scope.getState($connectionSelection).draft.model, 'saved-model');
 });
 
-test('a write finished after switching tabs updates connection data without restoring the old form state', async () => {
+test('switching settings tabs keeps a connection draft until the pending write completes', async () => {
   const saved = { ...connection, presets: connection.presets.map((preset) => ({ ...preset, model: 'saved-model' })) };
   const pending = Promise.withResolvers<ConnectionState>();
   const scope = fork({
@@ -252,7 +257,7 @@ test('a write finished after switching tabs updates connection data without rest
   scopeBind(connectionDraftChanged, { scope })({ model: 'draft-model' });
   void scopeBind(connectionPresetChangeFx, { scope })({ kind: 'update', id: 'one' });
   scopeBind(connectionTabClosed, { scope })();
-  assert.equal(scope.getState($connectionSelection).draft.model, 'demo-model');
+  assert.equal(scope.getState($connectionSelection).draft.model, 'draft-model');
 
   pending.resolve(saved);
   await allSettled(scope);
@@ -590,7 +595,7 @@ test('chat stops the request, retains the visible answer and ignores late frames
     scopeBind(chatSendRequested, { scope })();
     await writer.write(encode(sse({ type: 'text_delta', text: 'Начало' })));
     await partial.promise;
-    scopeBind(chatStopRequested, { scope })();
+    scopeBind(chatHidden, { scope })();
     assert.equal(signal?.aborted, true);
     assert.equal(scope.getState($replyId), null);
     assert.equal(scope.getState($chatAnnouncement), 'chat.announcementStopped');
@@ -600,6 +605,7 @@ test('chat stops the request, retains the visible answer and ignores late frames
     await allSettled(scope);
     assert.equal(scope.getState($chatRows).at(-1)?.text, 'Начало');
     assert.equal(scope.getState($chatError), null);
+    await allSettled(chatShown, { scope });
     const message = scope.getState($chatRows)[0]!;
     await allSettled(messageEditRequested, { scope, params: message.id });
     await allSettled(messageEditChanged, { scope, params: { id: message.id, text: '  Правка  ' } });
@@ -1004,6 +1010,158 @@ test('chat sends compact results and reads full traces on demand from this turn 
     await allSettled(chatDraftChanged, { scope: reloaded, params: 'Проверь историю другого чата.' });
     await allSettled(chatSendRequested, { scope: reloaded });
     assert.equal(reloaded.getState($chatRows).at(-1)?.text, 'В этом чате бросков нет.');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('chat keeps text typed during initial loading and waits for a successful tool settings retry', async () => {
+  const originalFetch = globalThis.fetch;
+  const list = Promise.withResolvers<Response>();
+  let rejectTools = true;
+  let requests = 0;
+  const saved = withSavedChats(async () => {
+    requests++;
+    return new Response(completed('Ответ'), { headers: sseHeaders });
+  });
+  globalThis.fetch = ((input, init) => {
+    if (input === '/api/settings/tools') {
+      return Promise.resolve(rejectTools ? Response.json({ code: 'server_error' }, { status: 503 }) : Response.json({ enabled: [] }));
+    }
+    if (input === '/api/chats' && init?.method === 'GET') return list.promise;
+    return saved(input, init);
+  }) as typeof fetch;
+  try {
+    const scope = fork();
+    await allSettled(toolsInitialized, { scope });
+    await allSettled(sessionUserReceived, { scope, params: user });
+    scopeBind(chatShown, { scope })();
+    scopeBind(chatDraftChanged, { scope })('Черновик до загрузки');
+    list.resolve(Response.json([]));
+    await allSettled(scope);
+    assert.equal(scope.getState($chatDraft), 'Черновик до загрузки');
+    assert.equal(scope.getState($chatCanSend), false);
+    await allSettled(chatSendRequested, { scope });
+    assert.equal(requests, 0);
+    rejectTools = false;
+    await allSettled(toolSettingsRetried, { scope });
+    assert.equal(scope.getState($chatCanSend), true);
+    await allSettled(chatSendRequested, { scope });
+    assert.equal(requests, 1);
+    assert.deepEqual(scope.getState($chatRows).map(({ text }) => text), ['Черновик до загрузки', 'Ответ']);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('chat recovers a send to a deleted conversation and keeps its text when opening another chat', async () => {
+  const originalFetch = globalThis.fetch;
+  let deleted: string | undefined;
+  const saved = withSavedChats(async () => { throw new Error('Unexpected generation'); });
+  globalThis.fetch = ((input, init) => input === `/api/chats/${deleted}`
+    ? Promise.resolve(Response.json({ code: 'chat_not_found' }, { status: 404 })) : saved(input, init)) as typeof fetch;
+  try {
+    const scope = await openChat();
+    const existing = scope.getState($chatId);
+    await allSettled(chatCreateRequested, { scope });
+    deleted = scope.getState($chatId);
+    await allSettled(chatDraftChanged, { scope, params: 'Сохранить сообщение' });
+    await allSettled(chatSendRequested, { scope });
+    assert.equal(scope.getState($chatMissing), true);
+    assert.equal(scope.getState($chatLocked), false);
+    assert.equal(scope.getState($chatDraft), 'Сохранить сообщение');
+    assert.ok(scope.getState($chats).every(({ id }) => id !== deleted));
+    await allSettled(chatOpenRequested, { scope, params: existing });
+    assert.equal(scope.getState($chatId), existing);
+    assert.equal(scope.getState($chatDraft), 'Сохранить сообщение');
+    assert.equal(scope.getState($chatMissing), false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('instructions keeps a dirty draft on re-entry and resets it when the account session ends', async () => {
+  const originalFetch = globalThis.fetch;
+  let loads = 0;
+  globalThis.fetch = (async (input) => {
+    assert.equal(input, '/api/settings/instructions');
+    loads++;
+    return Response.json({ activePresetId: 'first', presets: [{ id: 'first', name: 'Стиль', text: 'Сохранённая инструкция' }] });
+  }) as typeof fetch;
+  try {
+    const scope = fork();
+    await allSettled(sessionUserReceived, { scope, params: user });
+    await allSettled(instructionsOpened, { scope });
+    await allSettled(instructionDraftChanged, { scope, params: { text: 'Черновик инструкции' } });
+    await allSettled(instructionsOpened, { scope });
+    assert.equal(loads, 1);
+    assert.partialDeepStrictEqual(scope.getState($instructions), { status: 'ready', draft: { text: 'Черновик инструкции' } });
+    await allSettled(sessionEndRequested, { scope, params: { session: scope.getState($activeSession)! } });
+    assert.deepEqual(scope.getState($instructions), { status: 'idle' });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('late saves in either editor leave a new session for the same account intact', async () => {
+  const agent: SavedAgent = {
+    id: 'agent', name: 'Летописец', description: 'Сверяет записи.', instructions: 'Сверяй даты.', tools: [], revision: 0,
+  };
+  const realm: SavedRealm = {
+    id: 'realm', createdAt: 1, updatedAt: 1, revision: 0,
+    realm: { specVersion: '0.1.0', id: 'realm-card', title: 'Мир', base: 'Текст мира' },
+  };
+  const oldAgentWrite = Promise.withResolvers<Response>();
+  const oldRealmWrite = Promise.withResolvers<Response>();
+  const signals: AbortSignal[] = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input, init) => {
+    if (input === '/api/agents') return Response.json([agent]);
+    if (input === '/api/realms/realm' && init?.method === 'GET') return Response.json(realm);
+    if (init?.method === 'PUT') {
+      if (init.signal) signals.push(init.signal);
+      if (input === '/api/agents/agent') return oldAgentWrite.promise;
+      if (input === '/api/realms/realm') return oldRealmWrite.promise;
+    }
+    throw new Error('Unexpected request: ' + String(input));
+  }) as typeof fetch;
+  try {
+    const scope = fork();
+    await allSettled(sessionUserReceived, { scope, params: user });
+    await allSettled(agentsOpened, { scope });
+    await allSettled(agentEditorOpened, { scope, params: agent });
+    await allSettled(realmEditorOpened, { scope, params: realm.id });
+
+    scopeBind(agentDraftChanged, { scope })({ name: 'Первый черновик агента' });
+    scopeBind(realmEditorDraftChanged, { scope })({ patch: { title: 'Первый черновик мира' } });
+    scopeBind(agentSaveRequested, { scope })();
+    scopeBind(realmEditorActionRequested, { scope })('save');
+    assert.equal(signals.length, 2);
+    assert.equal(scope.getState($agentEditor)?.status, 'saving');
+    assert.partialDeepStrictEqual(scope.getState($realmEditor), { saving: true });
+
+    scopeBind(sessionEndRequested, { scope })({ session: scope.getState($activeSession)! });
+    assert.ok(signals.every((signal) => signal.aborted));
+    assert.equal(scope.getState($agentEditor), null);
+    assert.equal(scope.getState($realmEditor), null);
+    scopeBind(sessionUserReceived, { scope })(user);
+    scopeBind(agentEditorOpened, { scope })(agent);
+    scopeBind(agentDraftChanged, { scope })({ name: 'Новый черновик агента' });
+    const loaded = Promise.withResolvers<void>();
+    const stopWatching = createWatch({ scope, unit: $realmEditor, fn: (editor) => {
+      if (editor?.status === 'ready') loaded.resolve();
+    } });
+    scopeBind(realmEditorOpened, { scope })(realm.id);
+    await loaded.promise;
+    stopWatching();
+    scopeBind(realmEditorDraftChanged, { scope })({ patch: { title: 'Новый черновик мира' } });
+
+    oldAgentWrite.resolve(Response.json({ ...agent, name: 'Старый результат', revision: 1 }));
+    oldRealmWrite.resolve(Response.json({ ...realm, revision: 1, realm: { ...realm.realm, title: 'Старый результат' } }));
+    await allSettled(scope);
+    assert.partialDeepStrictEqual(scope.getState($agentEditor), { status: 'idle', draft: { name: 'Новый черновик агента' } });
+    assert.deepEqual(scope.getState($agentLibrary).agents, []);
+    assert.partialDeepStrictEqual(scope.getState($realmEditor), { status: 'ready', saving: false, draft: { title: 'Новый черновик мира' } });
   } finally {
     globalThis.fetch = originalFetch;
   }

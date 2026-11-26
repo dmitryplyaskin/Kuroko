@@ -1,5 +1,5 @@
 import {
-  realmSearchKey, realmSorts, type Realm, type RealmFilterOption, type RealmFilterOptions, type RealmListQuery,
+  realmDocumentsEqual, realmSearchKey, realmSorts, type Realm, type RealmFilterOption, type RealmFilterOptions, type RealmListQuery,
   type RealmSort, type RealmStartsFilter, type RealmSummary, type SavedRealm, type UpdateRealm,
 } from '@kuroko/contracts/realms';
 import type { Database } from 'bun:sqlite';
@@ -116,9 +116,12 @@ export function createRealmStore(db: Database) {
   });
 
   const create = db.transaction((userId: number, realm: Realm) => {
-    const documentJson = JSON.stringify(realm);
     const existing = findDocument.get(userId, realm.id);
-    if (existing) return existing.documentJson === documentJson ? { saved: readRow(existing), created: false } : 'duplicate';
+    if (existing) {
+      const saved = readRow(existing);
+      return realmDocumentsEqual(saved.realm, realm) ? { saved, created: false } : 'duplicate';
+    }
+    const documentJson = JSON.stringify(realm);
     const id = randomUUID();
     const now = Date.now();
     const { titleKey, excerpt, searchText, authorKey, tagsJson } = indexRealm(realm);
@@ -130,7 +133,10 @@ export function createRealmStore(db: Database) {
     const row = find.get(userId, id);
     if (!row) return 'missing';
     const documentJson = JSON.stringify(realm);
-    if (row.documentJson === documentJson && (row.revision === revision || row.revision === revision + 1)) return readRow(row);
+    if (row.revision === revision || row.revision === revision + 1) {
+      const saved = readRow(row);
+      if (realmDocumentsEqual(saved.realm, realm)) return saved;
+    }
     if (row.revision !== revision) return 'conflict';
     if (row.documentId !== realm.id) return 'identity';
     const { titleKey, excerpt, searchText, authorKey, tagsJson } = indexRealm(realm);

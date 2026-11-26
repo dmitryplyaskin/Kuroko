@@ -138,7 +138,13 @@ export const ChatMessage = memo(function ChatMessage({
   const editing = editor !== undefined;
   const actions = useModuleExtensions('chat.message.actions');
   const actionContext: MessageActionContext = { text };
-  const visibleActions = actions.filter((action) => action.isVisible?.(actionContext) ?? true);
+  const visibleActions = actions.filter((action) => {
+    try {
+      return action.isVisible?.(actionContext) ?? true;
+    } catch {
+      return false;
+    }
+  });
   const copyAction = visibleActions.find((action) => action.placement === 'copy');
   const menuActions = visibleActions.filter((action) => action !== copyAction);
   const toolbar = useRef<HTMLDivElement>(null);

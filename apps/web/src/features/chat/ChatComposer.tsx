@@ -1,8 +1,9 @@
 import { useI18n } from '../../shared/i18n/i18n';
-import { Textarea } from '@mantine/core';
+import { Button, Textarea } from '@mantine/core';
 import { ArrowUp, Square } from 'lucide-react';
 import { useUnit } from 'effector-react';
 import { useRef, type ReactNode, type SubmitEvent } from 'react';
+import { $toolSettings, toolSettingsRetried } from '../tools/model';
 import {
   $chatError, $chatCanSend, $chatDraft, $replyId,
   chatDraftChanged, chatSendRequested, chatStopRequested,
@@ -10,8 +11,9 @@ import {
 
 export function ChatComposer({ menu }: { menu: ReactNode }) {
   const { t } = useI18n();
-  const { draft, error, canSend, replyId, setDraft, send, stop } = useUnit({
+  const { draft, error, canSend, replyId, toolSettings, retryTools, setDraft, send, stop } = useUnit({
     draft: $chatDraft, error: $chatError, canSend: $chatCanSend, replyId: $replyId,
+    toolSettings: $toolSettings, retryTools: toolSettingsRetried,
     setDraft: chatDraftChanged, send: chatSendRequested, stop: chatStopRequested,
   });
   const textarea = useRef<HTMLTextAreaElement>(null);
@@ -57,6 +59,10 @@ export function ChatComposer({ menu }: { menu: ReactNode }) {
             </button>
           )}
         </form>
+        {toolSettings.status === 'loadError' && <div className="chat-status">
+          <p role="alert">{t('chat.toolsLoadFailed')}</p>
+          <Button type="button" size="compact-sm" variant="default" onClick={retryTools}>{t('common.retryLoad')}</Button>
+        </div>}
         {error && <p className="chat-input-error" role="alert">{t(`error.${error}`)}</p>}
       </div>
     </footer>

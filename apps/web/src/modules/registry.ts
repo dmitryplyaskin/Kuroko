@@ -9,7 +9,7 @@ type RegisteredView<T> = Readonly<T & {
 }>;
 
 export type RegisteredScreen = RegisteredView<WorkspaceScreen>;
-export type RegisteredTab = RegisteredView<SettingsTab> & { preload: ViewLoader };
+export type RegisteredTab = RegisteredView<SettingsTab> & { preload: ViewLoader; resetFailedLoad: () => void };
 
 type WorkspaceRoute = Readonly<{ screen: RegisteredScreen; settingsTab?: string }>;
 
@@ -30,11 +30,13 @@ export function createModuleRegistry(bundle: ModuleBundle, additionalModules: re
   const routes = new Map<string, WorkspaceRoute>();
   const extensions = new Map<ExtensionKind, ExtensionContribution[]>();
   const initializers: NonNullable<WebModule['initialize']>[] = [];
+  const unsavedChanges: NonNullable<WebModule['hasUnsavedChanges']>[] = [];
 
   for (const module of [...bundle.modules, ...additionalModules]) {
     if (moduleIds.has(module.id)) throw new CodedError('module_id_duplicate', { moduleId: module.id });
     moduleIds.add(module.id);
     if (module.initialize) initializers.push(module.initialize);
+    if (module.hasUnsavedChanges) unsavedChanges.push(module.hasUnsavedChanges);
 
     for (const contribution of module.contributions) {
       const { id } = contribution;
@@ -57,12 +59,21 @@ export function createModuleRegistry(bundle: ModuleBundle, additionalModules: re
       } else {
         let loading: ReturnType<ViewLoader> | undefined;
         let loaded: Awaited<ReturnType<ViewLoader>> | undefined;
-        const preload = () => loading ??= Promise.resolve().then(load).then((view) => loaded = view);
+        let failed = false;
+        const preload = () => loading ??= Promise.resolve().then(load).then((view) => loaded = view, (error: unknown) => {
+          failed = true;
+          throw error;
+        });
+        const resetFailedLoad = () => {
+          if (!failed) return;
+          failed = false;
+          loading = undefined;
+        };
         function View() {
           const { default: Tab } = loaded ?? use(preload());
           return createElement(Tab);
         }
-        addUnique(tabs, contribution.key, { ...contribution, moduleId: module.id, View, preload }, 'settings_tab_key');
+        addUnique(tabs, contribution.key, { ...contribution, moduleId: module.id, View, preload, resetFailedLoad }, 'settings_tab_key');
       }
     }
   }
@@ -90,6 +101,7 @@ export function createModuleRegistry(bundle: ModuleBundle, additionalModules: re
     screens: orderedScreens,
     settingsTabs: orderedTabs,
     defaultSettingsTab: bundle.defaultSettingsTab,
+    unsavedChanges,
     resolveRoute: (hash: string) => routes.get(hash) ?? defaultRoute,
     hasSettingsTab: (key: string) => tabs.has(key),
     initialize: (scope: Scope) => {

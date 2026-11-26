@@ -1,4 +1,4 @@
-import { isAgentId, readAgent } from '@kuroko/contracts/agents';
+import { isAgentId, isAgentRevision, readAgent } from '@kuroko/contracts/agents';
 import { errorBody } from '@kuroko/contracts/errors';
 import { Router, type Response } from 'express';
 import { PromptTemplateError, validatePromptTemplate } from '../instructions/promptTemplate';
@@ -29,6 +29,12 @@ export function createAgentsRouter(store: ReturnType<typeof createAgentsStore>, 
   const missing = (response: Response) => response.status(404).json(errorBody('agent_not_found'));
 
   router.get('/', (_request, response) => { response.json(store.list(response.locals.user.id)); });
+  router.get('/:id', (request, response) => {
+    const { id } = request.params;
+    const agent = isAgentId(id) ? store.find(response.locals.user.id, id) : undefined;
+    if (agent) response.json(agent);
+    else missing(response);
+  });
   router.post('/', (request, response) => {
     const draft = readDraft(request.body, response, (id) => worldExists(response.locals.user.id, id));
     if (draft) response.status(201).json(store.create(response.locals.user.id, draft));
@@ -38,9 +44,15 @@ export function createAgentsRouter(store: ReturnType<typeof createAgentsStore>, 
     if (!isAgentId(id)) { missing(response); return; }
     const draft = readDraft(request.body, response, (worldId) => worldExists(response.locals.user.id, worldId));
     if (!draft) return;
-    const agent = store.save(response.locals.user.id, id, draft);
-    if (agent) response.json(agent);
-    else missing(response);
+    const revision = request.body?.revision;
+    if (!isAgentRevision(revision)) {
+      response.status(400).json(errorBody('agent_invalid', 'revision'));
+      return;
+    }
+    const agent = store.save(response.locals.user.id, id, { ...draft, revision });
+    if (agent === 'missing') missing(response);
+    else if (agent === 'conflict') response.status(409).json(errorBody('agent_conflict'));
+    else response.json(agent);
   });
   router.delete('/:id', (request, response) => {
     const { id } = request.params;

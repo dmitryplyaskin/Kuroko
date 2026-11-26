@@ -80,7 +80,10 @@ test('runs toolbar and registered menu actions for the selected message and keep
 
   const testModule = {
     id: 'test.message-menu',
-    contributions: [{ kind: 'chat.message.actions', id: 'test.receive-text', label: 'chat.messageText', order: 5,
+    contributions: [{
+      kind: 'chat.message.actions', id: 'test.broken-visibility', label: 'chat.messageText', order: 4,
+      isVisible: () => { throw new Error('Extension failed'); }, run: () => assert.fail('Hidden action ran'),
+    }, { kind: 'chat.message.actions', id: 'test.receive-text', label: 'chat.messageText', order: 5,
       run: ({ text }) => { received.push(text); },
     }],
   } satisfies WebModule;

@@ -1,14 +1,20 @@
 import { useI18n } from '../../shared/i18n/i18n';
 import { Tabs } from '@mantine/core';
+import { useEffect } from 'react';
 import { ModuleIcon } from '../../modules/ModuleIcon';
 import { ModuleView } from '../../modules/ModuleView';
-import { useSettingsNavigation } from '../../modules/settingsNavigation';
+import { takeReloadedSettingsTab, useSettingsNavigation } from '../../modules/settingsNavigation';
 import classes from './Settings.module.css';
 
 export default function SettingsPage() {
   const { t } = useI18n();
   const { tabs, selectedKey, selectTab } = useSettingsNavigation();
   const description = tabs.find(({ key }) => key === selectedKey)?.description;
+
+  useEffect(() => {
+    const key = takeReloadedSettingsTab();
+    if (key) selectTab(key);
+  }, [selectTab]);
 
   return (
     <>

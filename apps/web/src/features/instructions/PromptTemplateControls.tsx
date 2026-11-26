@@ -2,7 +2,8 @@ import { Button, Checkbox, Modal, TextInput } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { defaultRealmFilters, realmPageSize, realmSearchMaxLength, type RealmList } from '@kuroko/contracts/realms';
 import { useEffect, useState } from 'react';
-import type { ActiveSession } from '../../platform/session/model';
+import { useUnit } from 'effector-react';
+import { protectedRequestFailed, type ActiveSession } from '../../platform/session/model';
 import { sessionRequest } from '../../platform/session/request';
 import { ApiError, errorCode, type ErrorCode } from '../../shared/http/api';
 import { useI18n } from '../../shared/i18n/i18n';
@@ -45,6 +46,7 @@ export function PromptTemplateControls({ session, text, disabled, agentName, wor
 
 function Preview({ session, text, agentName, worldId }: { session: ActiveSession; text: string; agentName?: string; worldId?: string | null }) {
   const { t } = useI18n();
+  const reportFailure = useUnit(protectedRequestFailed);
   const [gmMode, setGmMode] = useState(false);
   const [result, setResult] = useState<{ text: string } | { error: ErrorCode; line?: string }>();
   const example = t('templates.exampleScene');
@@ -55,11 +57,12 @@ function Preview({ session, text, agentName, worldId }: { session: ActiveSession
       method: 'POST', body: { text, chatTitle: example, gmMode, agentName: shownAgentName, worldId }, signal: controller.signal,
     }).then((preview) => { if (!controller.signal.aborted) setResult(preview); }, (error: unknown) => {
       if (controller.signal.aborted) return;
+      reportFailure({ session, error });
       const code = errorCode(error);
       setResult({ error: code, line: code === 'prompt_template_invalid' && error instanceof ApiError ? error.field : undefined });
     });
     return () => controller.abort();
-  }, [example, gmMode, session, shownAgentName, text, worldId]);
+  }, [example, gmMode, reportFailure, session, shownAgentName, text, worldId]);
 
   return <div className="prompt-template-help">
     <p>{t(shownAgentName === undefined ? 'templates.previewHelp' : 'templates.agentPreviewHelp')}</p>
@@ -82,6 +85,7 @@ function WorldPicker({ session, selected, onSelect }: {
   session: ActiveSession; selected?: string | null; onSelect: (world: ChosenWorld | null) => boolean;
 }) {
   const { t } = useI18n();
+  const reportFailure = useUnit(protectedRequestFailed);
   const [search, setSearch] = useState('');
   const [query] = useDebouncedValue(search, 200);
   const [offset, setOffset] = useState(0);
@@ -93,10 +97,12 @@ function WorldPicker({ session, selected, onSelect }: {
     void requestRealmList({ session, signal: controller.signal, query: {
       q: query, offset, limit: realmPageSize, sort: 'updated', filters: defaultRealmFilters,
     } }).then((result) => { if (!controller.signal.aborted) setResponse({ q: query, offset, result }); }, (error: unknown) => {
-      if (!controller.signal.aborted) setResponse({ q: query, offset, result: errorCode(error) });
+      if (controller.signal.aborted) return;
+      reportFailure({ session, error });
+      setResponse({ q: query, offset, result: errorCode(error) });
     });
     return () => controller.abort();
-  }, [offset, query, session]);
+  }, [offset, query, reportFailure, session]);
 
   return <div className="prompt-template-help">
     {full && <p role="alert">{t('templates.insertionLimit')}</p>}

@@ -1,4 +1,4 @@
-import type { AgentDraft, AgentSummary, SavedAgent } from '@kuroko/contracts/agents';
+import type { AgentDraft, AgentSummary, SavedAgent, UpdateAgent } from '@kuroko/contracts/agents';
 import type { Database } from 'bun:sqlite';
 import { randomUUID } from 'node:crypto';
 
@@ -9,7 +9,7 @@ function readAgent({ tools_json, worldId, worldTitle, ...agent }: AgentRow): Sav
 }
 
 export function createAgentsStore(db: Database) {
-  const fields = `id, name, description, instructions, tools_json, world_id AS worldId,
+  const fields = `id, revision, name, description, instructions, tools_json, world_id AS worldId,
     (SELECT title FROM realms WHERE realms.id = agents.world_id) AS worldTitle`;
   const list = db.query<AgentRow, [number]>(`SELECT ${fields} FROM agents WHERE user_id = ? ORDER BY name_key, id`);
   const catalog = db.query<AgentSummary & Pick<AgentDraft, 'worldId'>, [number]>(
@@ -20,10 +20,22 @@ export function createAgentsStore(db: Database) {
     RETURNING ${fields}
   `);
   const update = db.query<AgentRow, [string, string, string, string, string, string | null, number, string]>(`
-    UPDATE agents SET name = ?, name_key = ?, description = ?, instructions = ?, tools_json = ?, world_id = ?
+    UPDATE agents SET name = ?, name_key = ?, description = ?, instructions = ?, tools_json = ?, world_id = ?, revision = revision + 1
     WHERE user_id = ? AND id = ? RETURNING ${fields}
   `);
   const remove = db.query('DELETE FROM agents WHERE user_id = ? AND id = ?');
+  const save = db.transaction((userId: number, id: string, draft: UpdateAgent) => {
+    const current = find.get(userId, id);
+    if (!current) return 'missing';
+    const tools = JSON.stringify(draft.tools);
+    const worldId = draft.worldId ?? null;
+    const same = draft.name === current.name && draft.description === current.description &&
+      draft.instructions === current.instructions && tools === current.tools_json && worldId === current.worldId;
+    if (same && (draft.revision === current.revision || draft.revision + 1 === current.revision)) return readAgent(current);
+    if (draft.revision !== current.revision) return 'conflict';
+    return readAgent(update.get(draft.name, draft.name.toLowerCase(), draft.description, draft.instructions, tools, worldId, userId, id)!);
+  });
+
   return {
     list: (userId: number) => list.all(userId).map(readAgent),
     catalog: (userId: number) => catalog.all(userId),
@@ -35,11 +47,7 @@ export function createAgentsStore(db: Database) {
       return readAgent(insert.get(randomUUID(), userId, draft.name, draft.name.toLowerCase(), draft.description, draft.instructions,
         JSON.stringify(draft.tools), draft.worldId ?? null)!);
     },
-    save(userId: number, id: string, draft: AgentDraft) {
-      const row = update.get(draft.name, draft.name.toLowerCase(), draft.description, draft.instructions,
-        JSON.stringify(draft.tools), draft.worldId ?? null, userId, id);
-      return row ? readAgent(row) : undefined;
-    },
+    save: save.immediate,
     remove: (userId: number, id: string) => remove.run(userId, id).changes > 0,
   };
 }

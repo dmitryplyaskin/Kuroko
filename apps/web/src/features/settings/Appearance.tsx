@@ -5,7 +5,7 @@ import { Check } from 'lucide-react';
 import { useUnit } from 'effector-react';
 import { $accent, $theme, accentChanged, accents, type AccentId } from '../../shared/theme/appearanceModel';
 import { themeModes } from '../../shared/theme/themeModes';
-import './appearance.css';
+import classes from './Appearance.module.css';
 
 const accentIds = Object.keys(accents) as AccentId[];
 
@@ -20,13 +20,13 @@ export default function Appearance() {
       <LanguageSelect />
       <fieldset className="field-group">
         <legend>{t('appearance.theme')}</legend>
-        <div className="mode-options">
+        <div className={classes['mode-options']}>
           {themeModes.map(({ id, label, Icon }) => {
             const previews = id === 'auto' ? [theme.light, theme.dark] : [theme[id]];
             return (
-              <label className="choice-option mode-option" key={id}>
+              <label className={`choice-option ${classes['mode-option']}`} key={id}>
                 <input type="radio" name="theme-mode" checked={colorScheme === id} onChange={() => setColorScheme(id)} />
-                <span className="mode-preview" aria-hidden="true">
+                <span className={classes['mode-preview']} aria-hidden="true">
                   {previews.map(({ canvas, accent, control }) => (
                     <span key={canvas} style={{ backgroundColor: canvas }}>
                       <i style={{ backgroundColor: accent }} />
@@ -43,11 +43,11 @@ export default function Appearance() {
       </fieldset>
       <fieldset className="field-group">
         <legend>{t('appearance.accent')}</legend>
-        <div className="accent-options">
+        <div className={classes['accent-options']}>
           {accentIds.map((id) => (
-            <label className="choice-option accent-option" key={id}>
+            <label className={`choice-option ${classes['accent-option']}`} key={id}>
               <input type="radio" name="theme-accent" checked={accent === id} onChange={() => setAccent(id)} />
-              <span className="accent-swatch" style={{ backgroundColor: accents[id][activeScheme].accent }} aria-hidden="true" />
+              <span className={classes['accent-swatch']} style={{ backgroundColor: accents[id][activeScheme].accent }} aria-hidden="true" />
               <span>{t(accents[id].label)}</span>
               <Check className="option-check" size={17} aria-hidden="true" />
             </label>

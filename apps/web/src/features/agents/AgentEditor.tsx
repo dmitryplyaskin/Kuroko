@@ -1,112 +1,63 @@
-import { Button, Modal, Tabs, TextInput } from '@mantine/core';
-import { agentDescriptionLimit, agentInstructionsLimit, readAgent, type AgentDraft, type AgentField, type SavedAgent } from '@kuroko/contracts/agents';
+import { Button, Modal, SimpleGrid, Stack, Tabs, Text, TextInput } from '@mantine/core';
+import { agentDescriptionLimit, agentInstructionsLimit, type AgentField } from '@kuroko/contracts/agents';
 import { subagentNameLimit } from '@kuroko/contracts/tools';
 import { useUnit } from 'effector-react';
 import { ArrowLeft } from 'lucide-react';
-import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { ActiveSession } from '../../platform/session/model';
-import { ApiError, errorCode, type ErrorCode } from '../../shared/http/api';
-import { useI18n } from '../../shared/i18n/i18n';
+import { useI18n, type MessageKey } from '../../shared/i18n/i18n';
 import { PromptTextarea } from '../../shared/prompt-templates/TemplateHelp';
 import { insertPromptCode, PromptTemplateControls } from '../instructions/PromptTemplateControls';
-import { AgentTools } from './AgentTools';
-import { removeAgentFx, saveAgentFx } from './model';
+import { AgentToolPicker } from '../tools/AgentToolPicker';
+import {
+  $agentEditor, $agentEditorDirty, agentComparisonFields, agentComparisonRequested, agentComparisonResolved,
+  agentDeleteErrorCleared, agentDeleteRequested, agentDraftChanged, agentEditorClosed, agentFieldChanged,
+  agentIssueCleared, agentSaveRequested, type AgentEditorDraft,
+} from './model';
 
-const emptyDraft: AgentDraft = { name: '', description: '', instructions: '', tools: [] };
-
-export function AgentEditor({ session, initialAgent, onClose }: {
-  session: ActiveSession;
-  initialAgent?: SavedAgent;
-  onClose: (deleted?: boolean) => void;
-}) {
+export function AgentEditor({ session }: { session: ActiveSession }) {
   const { t, number } = useI18n();
-  const [save, remove, saving, removing] = useUnit([saveAgentFx, removeAgentFx, saveAgentFx.pending, removeAgentFx.pending]);
-  const [agent, setAgent] = useState(initialAgent);
-  const [draft, setDraft] = useState<AgentDraft & Pick<SavedAgent, 'worldTitle'>>(initialAgent ?? emptyDraft);
+  const { editor, dirty, change, save, remove, close, clearIssue, clearDeleteError, compare, resolve } = useUnit({
+    editor: $agentEditor, dirty: $agentEditorDirty, change: agentDraftChanged, save: agentSaveRequested,
+    remove: agentDeleteRequested, close: agentEditorClosed, clearIssue: agentIssueCleared,
+    clearDeleteError: agentDeleteErrorCleared, compare: agentComparisonRequested, resolve: agentComparisonResolved,
+  });
   const [tab, setTab] = useState('definition');
   const [confirmLeave, setConfirmLeave] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const [deleteError, setDeleteError] = useState<ErrorCode>();
-  const [issue, setIssue] = useState<{ field?: AgentField; message: string }>();
-  const [saved, setSaved] = useState(false);
+  const [comparisonOpen, setComparisonOpen] = useState(false);
   const fields = useRef<Partial<Record<AgentField, HTMLElement | null>>>({});
   const instructionInput = useRef<HTMLTextAreaElement>(null);
   const backButton = useRef<HTMLButtonElement>(null);
   const keepButton = useRef<HTMLButtonElement>(null);
-  const busy = saving || removing;
-  const baseline = agent ?? emptyDraft;
-  const dirty = draft.name !== baseline.name || draft.description !== baseline.description || draft.instructions !== baseline.instructions ||
-    (draft.worldId ?? null) !== (baseline.worldId ?? null) ||
-    draft.tools.length !== baseline.tools.length || draft.tools.some((id) => !baseline.tools.includes(id));
+  const issue = editor?.issue;
 
   useEffect(() => {
-    if (!dirty) return;
-    const confirmUnload = (event: BeforeUnloadEvent) => { event.preventDefault(); };
-    window.addEventListener('beforeunload', confirmUnload);
-    return () => window.removeEventListener('beforeunload', confirmUnload);
-  }, [dirty]);
+    if (!issue?.field) return;
+    const field = issue.field;
+    const frame = requestAnimationFrame(() => {
+      setTab(field === 'tools' ? 'tools' : 'definition');
+      fields.current[field]?.focus();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [issue]);
 
-  function change(patch: Partial<AgentDraft & Pick<SavedAgent, 'worldTitle'>>) {
-    setDraft((current) => ({ ...current, ...patch }));
-    setSaved(false);
-    if (issue?.field && (Object.hasOwn(patch, issue.field) || (issue.field === 'instructions' && Object.hasOwn(patch, 'worldId')))) setIssue(undefined);
-  }
-
-  function invalid(field: AgentField, message: string) {
-    setIssue({ field, message });
-    setTab(field === 'tools' ? 'tools' : 'definition');
-    requestAnimationFrame(() => fields.current[field]?.focus());
-  }
-
-  async function submit(event: FormEvent) {
-    event.preventDefault();
-    if (busy || confirmLeave || confirmDelete) return;
-    const result = readAgent(draft);
-    if ('field' in result) {
-      invalid(result.field, t(`agents.invalid.${result.field}`));
-      return;
-    }
-    setIssue(undefined);
-    if (agent && !dirty) { setSaved(true); return; }
-    try {
-      const updated = await save({ session, id: agent?.id, draft: result.draft });
-      if (session.signal.aborted) return;
-      setAgent(updated);
-      setDraft(updated);
-      setSaved(true);
-    } catch (error) {
-      if (session.signal.aborted) return;
-      const code = errorCode(error);
-      if (code === 'agent_invalid' && error instanceof ApiError && ['name', 'description', 'instructions', 'tools'].includes(error.field ?? '')) {
-        const field = error.field as AgentField;
-        invalid(field, t(`agents.invalid.${field}`));
-      } else if (code === 'prompt_template_invalid') {
-        const line = error instanceof ApiError ? error.field : undefined;
-        invalid('instructions', line ? t('templates.lineError', { line }) : t('error.prompt_template_invalid'));
-      } else setIssue({ message: t(`error.${code}`) });
-    }
-  }
-
-  async function removeAgent() {
-    if (!agent || busy) return;
-    setDeleteError(undefined);
-    try {
-      await remove({ session, id: agent.id });
-      if (!session.signal.aborted) onClose(true);
-    } catch (error) {
-      if (!session.signal.aborted) setDeleteError(errorCode(error));
-    }
-  }
+  if (!editor) return null;
+  const { agent, draft, status, saved, deleteError, conflict } = editor;
+  const busy = status !== 'idle';
+  const removing = status === 'deleting';
+  const issueText = issue && t(issue.key, issue.line ? { line: issue.line } : undefined);
+  const editorTab = issue?.field ? issue.field === 'tools' ? 'tools' : 'definition' : tab;
 
   function showLeaveConfirmation() {
     setConfirmLeave(true);
-    setIssue(undefined);
+    clearIssue();
     requestAnimationFrame(() => keepButton.current?.focus());
   }
 
   function resumeEditing() {
     setConfirmLeave(false);
-    setIssue(undefined);
+    clearIssue();
     requestAnimationFrame(() => backButton.current?.focus());
   }
 
@@ -114,30 +65,44 @@ export function AgentEditor({ session, initialAgent, onClose }: {
     return t('agents.textCount', { count: number.format(value.length), limit: number.format(limit) });
   }
 
-  return <form className="agent-editor" noValidate onSubmit={(event) => void submit(event)}>
+  return <form className="agent-editor" noValidate onSubmit={(event) => {
+    event.preventDefault();
+    if (!confirmLeave && !confirmDelete) save();
+  }}>
     <div className="agent-editor-bar">
       <header className="page-heading agent-editor-heading">
         <Button className="agent-back" ref={backButton} type="button" variant="subtle" disabled={busy || confirmLeave}
           leftSection={<ArrowLeft size={16} strokeWidth={1.5} aria-hidden="true" />}
-          onClick={() => dirty ? showLeaveConfirmation() : onClose()}>{t('agents.back')}</Button>
+          onClick={() => dirty ? showLeaveConfirmation() : close()}>{t('agents.back')}</Button>
         <h1 id="agents-title" tabIndex={-1}>{agent ? <bdi>{agent.name}</bdi> : t('agents.create')}</h1>
       </header>
       <div className="agent-editor-actions">
         <output className="agent-save-status">{saved && t('agents.saved')}</output>
-        <Button type="submit" loading={saving} disabled={confirmLeave}>{t('common.save')}</Button>
+        <Button type="submit" loading={status === 'saving'} disabled={confirmLeave || Boolean(conflict) || removing}>{t('common.save')}</Button>
       </div>
     </div>
-    {issue && !issue.field && <p className="agents-error agent-editor-error" role="alert">{issue.message}</p>}
+    {issue && !issue.field && <p className="agents-error agent-editor-error" role="alert">{issueText}</p>}
+    {conflict && !confirmLeave && <div className="agents-load-error">
+      <p className="agents-error" role="alert">{t('error.agent_conflict')}</p>
+      <Button type="button" variant="default" onClick={() => {
+        setComparisonOpen(true);
+        if (!conflict.latest) compare();
+      }}>{t('agents.compareVersions')}</Button>
+    </div>}
     {confirmLeave && <section className="agent-confirmation" aria-labelledby="agent-confirm-title">
       <h2 id="agent-confirm-title">{t('agents.discardTitle')}</h2>
       <p>{t('agents.discardBody')}</p>
       <div className="agent-confirm-actions">
         <Button ref={keepButton} type="button" variant="default" disabled={busy} onClick={resumeEditing}>{t('agents.keepEditing')}</Button>
-        <Button type="button" color="red" onClick={() => onClose()}>{t('agents.discard')}</Button>
+        <Button type="button" color="red" onClick={close}>{t('agents.discard')}</Button>
       </div>
     </section>}
     <div hidden={confirmLeave}>
-      <Tabs className="agent-editor-tabs" value={tab} onChange={(value) => { if (value) setTab(value); }}>
+      <Tabs className="agent-editor-tabs" value={editorTab} onChange={(value) => {
+        if (!value) return;
+        setTab(value);
+        if (value !== editorTab) clearIssue();
+      }}>
         <Tabs.List aria-label={t('agents.editorSections')}>
           <Tabs.Tab value="definition">{t('agents.definition')}</Tabs.Tab>
           <Tabs.Tab value="tools">{t('agents.tools')}</Tabs.Tab>
@@ -146,13 +111,13 @@ export function AgentEditor({ session, initialAgent, onClose }: {
           <div className="agent-writing-fields">
             <TextInput name="name" label={t('agents.name')} placeholder={t('agents.nameExample')} required value={draft.name} disabled={busy} dir="auto"
               className="agent-name-field" ref={(input) => { fields.current.name = input; }} maxLength={subagentNameLimit * 2}
-              error={issue?.field === 'name' && issue.message} onChange={(event) => change({ name: event.currentTarget.value })} />
+              error={issue?.field === 'name' && issueText} onChange={(event) => change({ name: event.currentTarget.value })} />
             <PromptTextarea scope="agent" name="description" label={t('agents.capabilities')} placeholder={t('agents.capabilitiesExample')}
               required value={draft.description} disabled={busy} dir="auto"
               classNames={{ input: 'agent-writing-input', description: 'agent-text-count' }}
               ref={(input) => { fields.current.description = input; }} maxLength={agentDescriptionLimit} minRows={4} autosize
               inputWrapperOrder={['label', 'input', 'description', 'error']} description={textCount(draft.description, agentDescriptionLimit)}
-              error={issue?.field === 'description' && issue.message} onChange={(event) => change({ description: event.currentTarget.value })} />
+              error={issue?.field === 'description' && issueText} onChange={(event) => change({ description: event.currentTarget.value })} />
             <div>
               <PromptTemplateControls session={session} text={draft.instructions} disabled={busy} worldId={draft.worldId} worldTitle={draft.worldTitle}
                 agentName={draft.name} onWorld={(world, code) => {
@@ -167,18 +132,18 @@ export function AgentEditor({ session, initialAgent, onClose }: {
                 ref={(input) => { fields.current.instructions = input; instructionInput.current = input; }}
                 maxLength={agentInstructionsLimit} minRows={12} autosize
                 inputWrapperOrder={['label', 'input', 'description', 'error']} description={textCount(draft.instructions, agentInstructionsLimit)}
-                error={issue?.field === 'instructions' && issue.message} onChange={(event) => change({ instructions: event.currentTarget.value })} />
+                error={issue?.field === 'instructions' && issueText} onChange={(event) => change({ instructions: event.currentTarget.value })} />
             </div>
           </div>
         </Tabs.Panel>
         <Tabs.Panel value="tools" className="agent-tools-panel">
-          <AgentTools selected={draft.tools} disabled={busy} issue={issue?.field === 'tools' ? issue.message : undefined}
+          <AgentToolPicker selected={draft.tools} disabled={busy} issue={issue?.field === 'tools' ? issueText : undefined}
             searchRef={(input) => { fields.current.tools = input; }} onChange={(tools) => change({ tools })} />
         </Tabs.Panel>
       </Tabs>
       {agent && <footer className="agent-editor-footer">
         <Button type="button" variant="subtle" color="red" disabled={busy} onClick={() => {
-          setDeleteError(undefined);
+          clearDeleteError();
           setConfirmDelete(true);
         }}>
           {t('agents.deleteAction')}
@@ -194,8 +159,53 @@ export function AgentEditor({ session, initialAgent, onClose }: {
         <Button type="button" variant="default" disabled={removing} data-autofocus onClick={() => setConfirmDelete(false)}>
           {t('common.cancel')}
         </Button>
-        <Button type="button" color="red" loading={removing} onClick={() => void removeAgent()}>{t('common.delete')}</Button>
+        <Button type="button" color="red" loading={removing} onClick={remove}>{t('common.delete')}</Button>
       </div>
     </Modal>}
+    {conflict && <Modal opened={comparisonOpen} onClose={() => setComparisonOpen(false)} title={t('agents.compareVersions')}
+      size="lg" closeButtonProps={{ 'aria-label': t('common.close') }}>
+      {conflict.latest ? <>
+        <p>{t('agents.compareHelp')}</p>
+        <AgentComparison draft={draft} latest={conflict.latest} />
+        <div className="agent-confirm-actions">
+          <Button type="button" variant="default" onClick={() => { resolve('useLatest'); setComparisonOpen(false); }}>{t('agents.useLatest')}</Button>
+          <Button type="button" onClick={() => { resolve('keepEdits'); setComparisonOpen(false); }}>{t('agents.keepEdits')}</Button>
+        </div>
+      </> : conflict.error ? <>
+        <p role="alert">{t(`error.${conflict.error}`)}</p>
+        <Button type="button" variant="default" onClick={compare}>{t('common.retryLoad')}</Button>
+      </> : <output>{t('common.loading')}</output>}
+    </Modal>}
   </form>;
+}
+
+const comparisonLabels: Record<typeof agentComparisonFields[number], MessageKey> = {
+  name: 'agents.name', description: 'agents.capabilities', instructions: 'agents.instructions',
+  worldId: 'templates.chooseWorld', tools: 'agents.allowedTools',
+};
+
+function AgentComparison({ draft, latest }: { draft: AgentEditorDraft; latest: AgentEditorDraft }) {
+  const { t } = useI18n();
+  const fields = agentComparisonFields.filter((field) => agentFieldChanged(latest, draft, field));
+  function value(agent: AgentEditorDraft, field: typeof agentComparisonFields[number]) {
+    if (field === 'tools') return agent.tools.join(', ');
+    if (field === 'worldId') return agent.worldTitle ?? agent.worldId;
+    return agent[field];
+  }
+
+  return <Stack gap="sm">
+    {fields.map((field) => <section key={field}>
+      <Text component="h3" fw={600}>{t(comparisonLabels[field])}</Text>
+      <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="sm">
+        <div>
+          <Text size="sm">{t('agents.yourDraft')}</Text>
+          <Text dir="auto" style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{value(draft, field) || '—'}</Text>
+        </div>
+        <div>
+          <Text size="sm">{t('agents.latestVersion')}</Text>
+          <Text dir="auto" style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{value(latest, field) || '—'}</Text>
+        </div>
+      </SimpleGrid>
+    </section>)}
+  </Stack>;
 }

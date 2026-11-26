@@ -74,7 +74,12 @@ export const changeInstructionFx = attach({
 sample({
   clock: instructionsOpened,
   source: { session: $activeSession, view: $instructions },
-  filter: ({ session, view }) => session !== null && view.status !== 'loading' && view.status !== 'saving',
+  filter: ({ session, view }) => {
+    if (!session || view.status === 'loading' || view.status === 'saving') return false;
+    if (view.status !== 'ready') return true;
+    const initial = activeDraft(view.data);
+    return view.draft.text === initial.text && (view.draft.worldId ?? null) === (initial.worldId ?? null);
+  },
   fn: ({ session }) => session!,
   target: loadFx,
 });

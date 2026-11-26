@@ -1,7 +1,9 @@
 import type { WebModule } from '../../modules/contracts';
+import { $agentEditorDirty } from './model';
 
 export const agentsModule = {
   id: 'kuroko.agents',
+  hasUnsavedChanges: $agentEditorDirty,
   contributions: [{
     kind: 'workspace.screen',
     id: 'kuroko.agents.index',

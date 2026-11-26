@@ -5,7 +5,7 @@ import { useUnit } from 'effector-react';
 import { ChevronDown, Power, Search, X } from 'lucide-react';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useI18n } from '../../shared/i18n/i18n';
-import { AgentTools } from '../agents/AgentTools';
+import { AgentToolPicker } from './AgentToolPicker';
 import { tools } from './catalog';
 import { $toolSettings, toolManagerOpened, toolSettingChanged, toolSettingsChangeFx, toolSettingsRetried } from './model';
 import { PresetControls } from '../../shared/presets/PresetControls';
@@ -109,7 +109,7 @@ function TemporaryAgentTools({ inherited, configured, disabled, onSave }: {
   return <section className="temporary-agent-tools" aria-labelledby="temporary-agent-tools-title">
     <h2 id="temporary-agent-tools-title">{t('tools.temporaryAgentTools')}</h2>
     <p>{t(configured ? 'tools.temporaryToolsCustom' : 'tools.temporaryToolsInherited')}</p>
-    <AgentTools selected={draft ?? configured ?? inherited} disabled={disabled} onChange={setDraft} />
+    <AgentToolPicker selected={draft ?? configured ?? inherited} disabled={disabled} onChange={setDraft} />
     <div className="temporary-agent-actions">
       {configured && <Button variant="default" disabled={disabled}
         onClick={() => void save(null).catch(() => {})}>{t('tools.temporaryToolsReset')}</Button>}

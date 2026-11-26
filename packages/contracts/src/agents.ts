@@ -2,7 +2,8 @@ import { instructionTextLimit, isWorldBinding, readInstructionText } from './ins
 import { isAgentToolSelection, readSubagentName, type AgentToolId } from './tools';
 
 export type AgentDraft = { name: string; description: string; instructions: string; tools: AgentToolId[]; worldId?: string | null };
-export type SavedAgent = AgentDraft & { id: string; worldTitle?: string };
+export type UpdateAgent = AgentDraft & { revision: number };
+export type SavedAgent = UpdateAgent & { id: string; worldTitle?: string };
 export type AgentSummary = Pick<SavedAgent, 'id' | 'name' | 'description'>;
 export type AgentField = Exclude<keyof AgentDraft, 'worldId'>;
 
@@ -11,6 +12,10 @@ export const agentInstructionsLimit = instructionTextLimit;
 
 export function isAgentId(value: unknown): value is string {
   return typeof value === 'string' && /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/.test(value);
+}
+
+export function isAgentRevision(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
 }
 
 function readText(value: unknown, limit: number) {

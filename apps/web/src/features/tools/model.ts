@@ -82,7 +82,7 @@ export const toolSettingsChangeFx = attach({
 });
 
 export const $enabledTools = $toolSettings.map(({ enabled }) => enabled);
-export const $toolSettingsBusy = $toolSettings.map(({ status }) => status === 'loading' || status === 'saving');
+export const $toolSettingsReady = $toolSettings.map(({ status }) => status === 'ready');
 
 sample({ clock: sessionStarted, filter: $initialized, target: loadToolSettingsFx });
 sample({

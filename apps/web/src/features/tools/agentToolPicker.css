@@ -1,0 +1,42 @@
+.tools-agent-picker { min-inline-size: 0; margin: 0; padding: 0; border: 0; }
+.tools-agent-filters { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 16px; }
+.tools-agent-filters > :first-child { flex: 1 1 16rem; min-inline-size: 0; max-inline-size: 32rem; }
+.tools-agent-filters input::placeholder { color: var(--kr-muted); opacity: 1; }
+.tools-agent-filters input::-webkit-search-cancel-button { appearance: none; }
+.tools-agent-filters .mantine-Checkbox-body { align-items: center; }
+.tools-agent-filters .mantine-Checkbox-label { display: flex; align-items: center; min-block-size: 36px; }
+.tools-agent-count { color: var(--kr-muted); font-variant-numeric: tabular-nums; font-size: .875rem; display: flex; flex-wrap: wrap; gap: 4px 16px; margin-block: 12px; }
+.tools-agent-results, .tools-agent-empty {
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--kr-border);
+  border-radius: var(--kr-radius-panel);
+  background: var(--kr-surface);
+}
+.tools-agent-results {
+  list-style: none;
+  max-block-size: min(56dvh, 36rem);
+  overflow-y: auto;
+  scroll-padding-block: 8px;
+}
+.tools-agent-results li + li { border-block-start: 1px solid var(--kr-border); }
+.tools-agent-results .mantine-Checkbox-body { gap: 12px; padding: 12px 16px; }
+.tools-agent-results .mantine-Checkbox-labelWrapper { flex: 1; min-inline-size: 0; }
+.tools-agent-results .mantine-Checkbox-label { display: block; min-block-size: 24px; cursor: pointer; }
+.tools-agent-results :is(.mantine-Checkbox-label, .mantine-Checkbox-description) { padding-inline-start: 0; overflow-wrap: anywhere; }
+.tools-agent-results .mantine-Checkbox-description { font-size: .875rem; }
+.tools-agent-name { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; }
+.tools-agent-name code { color: var(--kr-muted); font-weight: 400; font-size: .8125rem; }
+.tools-agent-empty { padding: 20px 16px; color: var(--kr-muted); }
+
+@media (hover: hover) {
+  .tools-agent-results li:has(input:not(:disabled)):hover { background: var(--kr-hover); }
+}
+
+@media (max-width: 540px) {
+  .tools-agent-filters > :first-child { flex-basis: 100%; }
+  .tools-agent-results { max-block-size: min(64dvh, 36rem); }
+  .tools-agent-results .mantine-Checkbox-body { padding-inline: 12px; }
+}
+
+.tools-agent-picker-error { color: var(--kr-danger); }

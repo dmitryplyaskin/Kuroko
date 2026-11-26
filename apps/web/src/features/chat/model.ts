@@ -10,7 +10,7 @@ import { abortFx } from '../../shared/async/abort';
 import { ApiError, errorCode, type ErrorCode } from '../../shared/http/api';
 import { $activeSession, protectedRequestFailed, sessionEnded, type ActiveSession } from '../../platform/session/model';
 import { inActiveSession } from '../../platform/session/request';
-import { $enabledTools, $toolSettingsBusy } from '../tools/model';
+import { $enabledTools, $toolSettingsReady } from '../tools/model';
 import { chatApi, streamChatReply, type ChatReplyDelta } from './chatApi';
 import { editMessageText, hasMessageContent, messageDraftTexts, type ActiveSubagent, type Message, type ReplyPhase } from './message';
 
@@ -23,9 +23,9 @@ type Reply = {
   activeSubagents?: readonly ActiveSubagent[];
   reasoningActive?: boolean;
 };
-type Navigation = { session: ActiveSession; action: 'initial' | 'create' | 'open'; id?: string };
+type Navigation = { session: ActiveSession; action: 'initial' | 'create' | 'open'; id?: string; keepDraft?: boolean };
 type Save = { session: ActiveSession; id: string; revision: number } & (
-  (Omit<ChatSnapshot, 'revision'> & { reply?: Reply; selection?: never }) |
+  (Omit<ChatSnapshot, 'revision'> & { reply?: Reply; draftToRecover?: string; selection?: never }) |
   { reply?: never; selection: ChatReplyVariantSelection }
 );
 type ChatManagement = { id: string; action: 'rename'; title: string } | { id: string; action: 'delete' };
@@ -51,7 +51,7 @@ export const messageRegenerateRequested = createEvent<number>();
 export const replyVariantRequested = createEvent<ChatReplyVariantSelection>();
 export const reasoningToggled = createEvent<{ id: number; afterToolCallId: string | undefined; open: boolean }>();
 
-const $visible = createStore(false).on(chatShown, () => true).reset(chatHidden, sessionEnded);
+export const $chatVisible = createStore(false).on(chatShown, () => true).reset(chatHidden, sessionEnded);
 const navigateFx = createEffect(async ({ session, action, id }: Navigation) => {
   if (action === 'create') return { chat: await chatApi.create(session) };
   if (action === 'open' && id) return { chat: await chatApi.open(session, id) };
@@ -80,6 +80,13 @@ const openFailed = inActiveSession(navigateFx.fail, ({ session }) => session);
 const saveSucceeded = inActiveSession(saveChatFx.done, ({ session }) => session);
 const variantSelected = saveSucceeded.filter({ fn: ({ params }) => params.selection !== undefined });
 const saveFailed = inActiveSession(saveChatFx.fail, ({ session }) => session);
+const chatMissing = createEvent<{ id: string; draft?: string }>();
+sample({
+  clock: saveFailed,
+  filter: ({ error }) => errorCode(error) === 'chat_not_found',
+  fn: ({ params }) => ({ id: params.id, draft: 'draftToRecover' in params ? params.draftToRecover : undefined }),
+  target: chatMissing,
+});
 export const chatManagementSucceeded = inActiveSession(manageChatFx.done, ({ session }) => session);
 const managementFailed = inActiveSession(manageChatFx.fail, ({ session }) => session);
 const chatDeleted = chatManagementSucceeded.filterMap(({ result }) => result.deleted);
@@ -95,7 +102,7 @@ const $saved = createStore<SavedChat | null>(null)
   .on(chatOpened, (_, { result }) => result.chat)
   .on(saveSucceeded, (_, { result }) => result)
   .on(chatManagementSucceeded, (chat, { result: { summary } }) => chat && summary?.id === chat.id ? { ...chat, ...summary } : chat)
-  .reset(activeChatDeleted, sessionEnded);
+  .reset(activeChatDeleted, chatMissing, sessionEnded);
 export const $chatId = $saved.map((chat) => chat?.id ?? '');
 export const $chatTitle = $saved.map((chat) => chat?.title ?? '');
 export const $chatGmMode = $saved.map((chat) => chat?.gmMode ?? false);
@@ -106,6 +113,9 @@ export const $chats = createStore<ChatSummary[]>([])
   .on(saveSucceeded, (chats, { result }) => updateChatList(chats, result))
   .on(chatManagementSucceeded, (chats, { result: { summary } }) => summary ? updateChatList(chats, summary) : chats)
   .on(chatDeleted, (chats, id) => chats.filter((chat) => chat.id !== id))
+  .on(chatMissing, (chats, { id }) => chats.filter((chat) => chat.id !== id))
+  .on(openFailed, (chats, { params, error }) => errorCode(error) === 'chat_not_found'
+    ? chats.filter(({ id }) => id !== params.id) : chats)
   .reset(sessionEnded);
 
 function updateChatList(chats: ChatSummary[], { id, title, updatedAt }: ChatSummary) {
@@ -118,11 +128,13 @@ const $loadError = createStore<{ code: ErrorCode; params: Navigation } | null>(n
   .reset(navigateFx, sessionEnded);
 const $saveError = createStore<{ code: ErrorCode; params: Save } | null>(null)
   .on(saveFailed, (_, { params, error }) => ({ params, code: errorCode(error) }))
+  .reset(chatMissing)
   .reset(saveChatFx, chatOpened, sessionEnded);
 
 sample({ clock: [openFailed, saveFailed, managementFailed], fn: ({ params, error }) => ({ session: params.session, error }), target: protectedRequestFailed });
 
 export const $chatLoadError = $loadError.map((failure) => failure?.code ?? null);
+export const $chatMissing = createStore(false).on(chatMissing, () => true).reset(chatOpened, sessionEnded);
 export const $chatSaveError = $saveError.map((failure) => failure?.code ?? null);
 export const $chatLoading = createStore(false).on(navigateFx, () => true).reset(chatOpened, openFailed, sessionEnded);
 const $saving = createStore(false).on(saveChatFx, () => true).reset(saveSucceeded, saveFailed, sessionEnded);
@@ -130,9 +142,9 @@ const $saving = createStore(false).on(saveChatFx, () => true).reset(saveSucceede
 const $navigation = combine({ session: $activeSession, busy: $chatLoading, current: $chatId });
 sample({
   clock: chatShown,
-  source: $navigation,
-  filter: ({ session, busy, current }) => session !== null && !busy && !current,
-  fn: ({ session }): Navigation => ({ session: session!, action: 'initial' }),
+  source: { navigation: $navigation, missing: $chatMissing },
+  filter: ({ navigation: { session, busy, current }, missing }) => session !== null && !busy && !current && !missing,
+  fn: ({ navigation: { session } }): Navigation => ({ session: session!, action: 'initial' }),
   target: navigateFx,
 });
 sample({
@@ -178,7 +190,7 @@ export const $chatLocked = combine($chatLoading, $saving, $saveError, $reply, $c
 
 sample({
   clock: replyVariantRequested,
-  source: { session: $activeSession, chat: $saved, visible: $visible, locked: $chatLocked },
+  source: { session: $activeSession, chat: $saved, visible: $chatVisible, locked: $chatLocked },
   filter: ({ session, chat, visible, locked }, { replyId, index }) => {
     const variant = chat?.replyVariants?.[replyId];
     return visible && !locked && session !== null && variant !== undefined &&
@@ -188,8 +200,8 @@ sample({
   target: saveChatFx,
 });
 
-$messages.reset(activeChatDeleted);
-$activity.reset(activeChatDeleted);
+$messages.reset(activeChatDeleted, chatMissing);
+$activity.reset(activeChatDeleted, chatMissing);
 sample({
   clock: activeChatDeleted,
   source: $activeSession,
@@ -212,25 +224,30 @@ sample({
   clock: chatCreateRequested,
   source: $chatNavigation,
   filter: ({ session, locked }) => session !== null && !locked,
-  fn: ({ session }): Navigation => ({ session: session!, action: 'create' }),
+  fn: ({ session, current }): Navigation => ({ session: session!, action: 'create', keepDraft: !current }),
   target: navigateFx,
 });
 sample({
   clock: chatOpenRequested,
   source: $chatNavigation,
   filter: ({ session, locked, current }, id) => session !== null && !locked && id !== current,
-  fn: ({ session }, id): Navigation => ({ session: session!, action: 'open', id }),
+  fn: ({ session, current }, id): Navigation => ({ session: session!, action: 'open', id, keepDraft: !current }),
   target: navigateFx,
 });
 
-export const $chatDraft = createStore('').on(chatDraftChanged, (_, draft) => draft).reset(chatOpened, activeChatDeleted, sessionEnded);
+export const $chatDraft = createStore('')
+  .on(chatDraftChanged, (_, draft) => draft)
+  .on(chatOpened, (draft, { params }) => params.action === 'initial' || params.keepDraft ? draft : '')
+  .on(chatMissing, (draft, recovery) => recovery.draft && recovery.draft !== draft
+    ? [recovery.draft, draft].filter(Boolean).join('\n\n') : draft)
+  .reset(activeChatDeleted, sessionEnded);
 
 const $composer = combine({
-  session: $activeSession, visible: $visible, draft: $chatDraft, locked: $chatLocked, chatId: $chatId, nextId: $nextId,
-  enabledTools: $enabledTools, toolSettingsBusy: $toolSettingsBusy,
+  session: $activeSession, visible: $chatVisible, draft: $chatDraft, locked: $chatLocked, chatId: $chatId, nextId: $nextId,
+  enabledTools: $enabledTools, toolSettingsReady: $toolSettingsReady,
 });
-function canGenerate({ session, visible, locked, chatId, toolSettingsBusy }: StoreValue<typeof $composer>) {
-  return session !== null && visible && !locked && !toolSettingsBusy && Boolean(chatId);
+function canGenerate({ session, visible, locked, chatId, toolSettingsReady }: StoreValue<typeof $composer>) {
+  return session !== null && visible && !locked && toolSettingsReady && Boolean(chatId);
 }
 
 function canSend(composer: StoreValue<typeof $composer>) {
@@ -255,7 +272,7 @@ export const messageSent = sample({
     const time = Date.now();
     const user: Message = { id: nextId, role: 'user', text: draft.trim(), time };
     const reply = createReply(session!, enabledTools, nextId + 1, time);
-    return { user, reply };
+    return { user, reply, draftToRecover: draft };
   },
 });
 $messages.on(messageSent, (messages, { user }) => [...messages, user]);
@@ -359,7 +376,7 @@ $reply.on(replySubagentUpdated, (_, reply) => reply);
 const replyPrepared = saveSucceeded.filterMap(({ params, result }) => params.reply && { reply: params.reply, chat: result });
 sample({
   clock: replyPrepared,
-  filter: $visible,
+  filter: $chatVisible,
   target: generateReplyFx,
 });
 sample({ clock: replyRegenerated, target: generateReplyFx });
@@ -405,6 +422,13 @@ const replyFailed = sample({
     session: params.reply.generation.session, activity: finishActivity(reply!, 'failed'),
   }),
 });
+sample({
+  clock: replyFailed,
+  source: { id: $chatId, messages: $messages },
+  filter: ({ id }, { error }) => Boolean(id) && errorCode(error) === 'chat_not_found',
+  fn: ({ id, messages }, { message }) => ({ id, draft: messages.find(({ id }) => id === message.id - 1)?.text }),
+  target: chatMissing,
+});
 sample({ clock: replyFailed, fn: ({ session, error }) => ({ session, error }), target: protectedRequestFailed });
 
 const replyStopped = sample({
@@ -417,7 +441,7 @@ const replyStopped = sample({
 });
 
 const replyPartial = sample({
-  clock: [replyFailed, replyStopped],
+  clock: [replyFailed.filter({ fn: ({ error }) => errorCode(error) !== 'chat_not_found' }), replyStopped],
   filter: ({ replaceId }) => replaceId === undefined,
   fn: ({ message, activity }) => {
     const partial = { ...message };
@@ -465,7 +489,7 @@ export const $chatActivity = combine($activity, $replyId, $liveActivity, (turns,
 
 export const $chatError = createStore<ErrorCode | null>(null)
   .on(replyFailed, (_, { error }) => errorCode(error))
-  .reset(messageSent, replyRegenerated, variantSelected, chatOpened, sessionEnded);
+  .reset(messageSent, replyRegenerated, variantSelected, chatOpened, chatMissing, sessionEnded);
 
 type Editor = { id: number; texts: string[] };
 const editOpened = sample({
@@ -480,7 +504,7 @@ const $editor = createStore<Editor | null>(null)
   .on(messageEditChanged, (editor, { id, index = 0, text }) => editor?.id === id
     ? { id, texts: editor.texts.map((value, part) => part === index ? text : value) }
     : editor)
-  .reset(messageEditCancelled, chatOpened, sessionEnded);
+  .reset(messageEditCancelled, chatOpened, chatMissing, sessionEnded);
 
 const $editorCandidate = combine($editor, $messages, $chatLocked, (editor, messages, locked) => {
   if (!editor) return null;
@@ -516,8 +540,8 @@ $editor
   .on(messageDeleted, (editor, { id }) => editor?.id === id ? null : editor)
   .reset(activeChatDeleted);
 
-const historyChanged = createEvent<{ reply?: Reply; gmMode?: boolean; activity?: ChatActivityTurn; replaceId?: number }>();
-sample({ clock: messageSent, fn: ({ reply }) => ({ reply }), target: historyChanged });
+const historyChanged = createEvent<{ reply?: Reply; gmMode?: boolean; activity?: ChatActivityTurn; replaceId?: number; draftToRecover?: string }>();
+sample({ clock: messageSent, fn: ({ reply, draftToRecover }) => ({ reply, draftToRecover }), target: historyChanged });
 sample({ clock: [messageEdited, messageDeleted], fn: () => ({}), target: historyChanged });
 sample({
   clock: chatGmModeChanged,
@@ -528,16 +552,19 @@ sample({
 });
 sample({
   clock: [replyCompleted.filter({ fn: ({ saved }) => !saved }), replyPartial],
-  filter: ({ message, activity }) => hasReplyContent(message) || Boolean(activity),
-  fn: ({ activity, replaceId }) => ({ activity, replaceId }),
+  source: $messages,
+  filter: (_, { message, activity }) => hasReplyContent(message) || Boolean(activity),
+  fn: (messages, { message, activity, replaceId }) => ({
+    activity, replaceId, draftToRecover: messages.find(({ id }) => id === message.id - 1)?.text,
+  }),
   target: historyChanged,
 });
 sample({
   clock: historyChanged,
   source: { session: $activeSession, chat: $saved, messages: $messages },
   filter: ({ session, chat }) => session !== null && chat !== null,
-  fn: ({ session, chat, messages }, { reply, gmMode, activity, replaceId }): Save =>
-    ({ session: session!, id: chat!.id, revision: chat!.revision, messages, reply, gmMode, activity, replaceId }),
+  fn: ({ session, chat, messages }, { reply, gmMode, activity, replaceId, draftToRecover }): Save =>
+    ({ session: session!, id: chat!.id, revision: chat!.revision, messages, reply, gmMode, activity, replaceId, draftToRecover }),
   target: saveChatFx,
 });
 
@@ -558,7 +585,7 @@ export const $expandedReasoning = createStore<ReadonlyMap<number, ReadonlySet<st
     next.delete(id);
     return next;
   })
-  .reset(chatOpened, activeChatDeleted, sessionEnded);
+  .reset(chatOpened, activeChatDeleted, chatMissing, sessionEnded);
 
 export const $chatAnnouncement = createStore<MessageKey | null>(null)
   .on(generateReplyFx, () => 'chat.announcementAnswering')

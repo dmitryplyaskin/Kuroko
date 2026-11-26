@@ -37,6 +37,23 @@ export type Realm = {
 
 export type SavedRealm = { id: string; revision: number; createdAt: number; updatedAt: number; favorite?: true; realm: Realm };
 export type UpdateRealm = Pick<SavedRealm, 'revision' | 'realm'>;
+
+export function realmDocumentsEqual(first: Realm, second: Realm): boolean {
+  return equalJson(first, second);
+}
+
+function equalJson(first: unknown, second: unknown): boolean {
+  if (first === second) return true;
+  if (!first || !second || typeof first !== 'object' || typeof second !== 'object') return false;
+  if (Array.isArray(first) || Array.isArray(second)) {
+    return Array.isArray(first) && Array.isArray(second) && first.length === second.length &&
+      first.every((value, index) => equalJson(value, second[index]));
+  }
+  const left = Object.entries(first).filter(([, value]) => value !== undefined);
+  const right = Object.keys(second).filter((key) => (second as Record<string, unknown>)[key] !== undefined);
+  return left.length === right.length && left.every(([key, value]) =>
+    Object.hasOwn(second, key) && equalJson(value, (second as Record<string, unknown>)[key]));
+}
 export type RealmSummary = Pick<SavedRealm, 'id' | 'createdAt' | 'updatedAt' | 'favorite'> & {
   title: string;
   excerpt: string;

@@ -157,7 +157,7 @@ sample({
 const $data = $connectionLoad.map((load) => load.status === 'ready' ? load.data : null);
 const $presetId = $data.map((data) => data?.activePresetId ?? '');
 const $activePreset = $data.map((data) => data?.presets.find((preset) => preset.id === data.activePresetId) ?? null);
-const $editedDraft = createStore<ConnectionDraft | null>(null).reset(editorReset);
+const $editedDraft = createStore<ConnectionDraft | null>(null).reset(pageDeactivated);
 const $draft = combine($editedDraft, $activePreset, (edited, preset) => edited ?? createDraft(preset ?? undefined));
 const $providerKeys = combine($data, $draft, (data, draft) => data?.keys.filter(({ provider }) => provider === draft.provider) ?? []);
 const $keyId = combine($draft, $providerKeys, (draft, keys) => keys.some(({ id }) => id === draft.keyId) ? draft.keyId : '');
@@ -200,14 +200,14 @@ const keyAppliedToDraft = sample({
   fn: ({ draft }, result) => ({ draft: { ...draft, keyId: result.kind === 'addKey' ? result.key.id : draft.keyId } }),
 });
 
-const presetAppliedOrDeleted = editorMutationDone.filter({
+const presetAppliedOrDeleted = mutationDone.filter({
   fn: (result) => result.kind === 'managePreset'
     && (result.action.kind === 'apply' || result.action.kind === 'delete'),
 });
 
 $editedDraft
   .on([draftChanged, keyAppliedToDraft], (_, { draft }) => draft)
-  .reset(presetAppliedOrDeleted, editorMutationDone.filter({ fn: (result) => result.kind === 'savePreset' }));
+  .reset(presetAppliedOrDeleted, mutationDone.filter({ fn: (result) => result.kind === 'savePreset' }));
 
 sample({ clock: [presetAppliedOrDeleted, editorReset], target: [catalogInvalidated, endpointsInvalidated] });
 sample({ clock: draftChanged, filter: ({ resetCatalog }) => resetCatalog, target: catalogInvalidated });

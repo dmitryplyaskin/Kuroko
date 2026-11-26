@@ -1,17 +1,9 @@
 import { Button, Select, TextInput } from '@mantine/core';
-import { isRealmVariableName, realmVariableLimit, realmVariableValueLimit, type RealmVariable } from '@kuroko/contracts/realms';
+import { isRealmVariableName, realmVariableLimit, realmVariableValueLimit } from '@kuroko/contracts/realms';
 import { Plus, Trash2 } from 'lucide-react';
 import { useI18n } from '../../shared/i18n/i18n';
 import { PromptTextarea } from '../../shared/prompt-templates/TemplateHelp';
-import { newRealmId } from './model';
-
-export type VariableDraft = { id: string; name: string; source: string; format: 'text' | 'json' };
-
-export function variableDrafts(variables: RealmVariable[] = []): VariableDraft[] {
-  return variables.map(({ name, value }) => typeof value === 'string'
-    ? { id: newRealmId(), name, source: value, format: 'text' }
-    : { id: newRealmId(), name, source: JSON.stringify(value), format: 'json' });
-}
+import { newRealmId, type VariableDraft } from './model';
 
 export function RealmVariables({ variables, issue, onChange }: {
   variables: VariableDraft[];

@@ -197,17 +197,17 @@ function TurnOverview({ turns, current, jump }: { turns: LogTurn[]; current?: nu
   );
 }
 
-export const ChatLog = memo(function ChatLog({ entries, messages, liveReply, gmMode, onOpenAgent }: {
-  entries: ActivityEntry[]; messages: ChatMessage[]; liveReply?: ChatMessage; gmMode: boolean; onOpenAgent: (key: string) => void;
+export const ChatLog = memo(function ChatLog({ entries, messages, liveReply, gmMode, visible, onOpenAgent }: {
+  entries: ActivityEntry[]; messages: ChatMessage[]; liveReply?: ChatMessage; gmMode: boolean; visible: boolean; onOpenAgent: (key: string) => void;
 }) {
   const { t } = useI18n();
-  const baseTurns = useMemo(() => chatLogTurns(entries, messages), [entries, messages]);
+  const baseTurns = useMemo(() => visible ? chatLogTurns(entries, messages) : [], [entries, messages, visible]);
   const turns = liveReply ? withLiveLogReply(baseTurns, liveReply) : baseTurns;
-  return <ChatLogView turns={turns} emptyMessage={t(gmMode ? 'chat.gmModeDescription' : 'chat.logEmpty')} onOpenAgent={onOpenAgent} />;
+  return <ChatLogView visible={visible} turns={turns} emptyMessage={t(gmMode ? 'chat.gmModeDescription' : 'chat.logEmpty')} onOpenAgent={onOpenAgent} />;
 });
 
-export function ChatLogView({ turns, emptyMessage, onOpenAgent }: {
-  turns: LogTurn[]; emptyMessage: string; onOpenAgent: (key: string) => void;
+export function ChatLogView({ turns, emptyMessage, visible, onOpenAgent }: {
+  turns: LogTurn[]; emptyMessage: string; visible: boolean; onOpenAgent: (key: string) => void;
 }) {
   const { t, locale, number } = useI18n();
   const [query, setQuery] = useState('');
@@ -232,6 +232,7 @@ export function ChatLogView({ turns, emptyMessage, onOpenAgent }: {
   const matches = needle ? visibleTurns.reduce((total, { rows }) => total + rows.length, 0) : 0;
 
   useLayoutEffect(() => {
+    if (!visible) return;
     if (selectedKey) heading.current?.focus({ preventScroll: true });
     else if (origin.current) {
       const trigger = origin.current;
@@ -239,7 +240,7 @@ export function ChatLogView({ turns, emptyMessage, onOpenAgent }: {
       if (trigger.isConnected) trigger.focus({ preventScroll: true });
       else search.current?.focus({ preventScroll: true });
     }
-  }, [selectedKey]);
+  }, [selectedKey, visible]);
 
   function openRow(key: string, trigger: HTMLButtonElement) {
     origin.current = trigger;
@@ -253,6 +254,7 @@ export function ChatLogView({ turns, emptyMessage, onOpenAgent }: {
     target?.scrollIntoView({ block: 'start', inline: 'nearest' });
   }
 
+  if (!visible) return null;
   if (!turns.length) return <p className="chat-section-empty chat-log-empty">{emptyMessage}</p>;
 
   const related = selected?.row.sourceKey ? byKey.get(selected.row.sourceKey) : undefined;

@@ -1,75 +1,50 @@
 import { Button, Modal, TagsInput, TextInput } from '@mantine/core';
-import { readRealm, realmSpecVersion, type Realm, type RealmStart, type RealmVariable, type SavedRealm } from '@kuroko/contracts/realms';
+import { type Realm, type RealmStart } from '@kuroko/contracts/realms';
 import { useUnit } from 'effector-react';
 import { ArrowLeft, Download, Trash2 } from 'lucide-react';
-import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { ActiveSession } from '../../platform/session/model';
-import { ApiError, errorCode, type ErrorCode } from '../../shared/http/api';
+import type { ErrorCode } from '../../shared/http/api';
 import { useI18n, type MessageKey } from '../../shared/i18n/i18n';
 import { PromptTextarea } from '../../shared/prompt-templates/TemplateHelp';
-import { deleteRealmFx, newRealmId, saveRealmFx } from './model';
+import {
+  $realmEditorDirty, newRealmId, realmEditorActionRequested, realmEditorClosed, realmEditorDeleteErrorCleared,
+  realmEditorDeleteRequested, realmEditorDraftChanged, realmEditorDraftDiscarded, realmEditorVariablesChanged,
+  type RealmEditorState, type RealmSaveIssue,
+} from './model';
 import { AvatarEditor, PreviewableRealmAvatar } from './RealmAvatar';
 import { getRealmSection, RealmContents, realmParts, sectionPart, type RealmPart } from './RealmContents';
 import { RealmFavoriteButton } from './RealmFavoriteButton';
 import { EntriesEditor, RecordEditor, StartFields } from './RealmFields';
-import { downloadRealmFile, type ImportedRealm } from './realmFile';
-import { RealmVariables, variableDrafts } from './RealmVariables';
+import { RealmVariables } from './RealmVariables';
 
-type SaveIssue = { code: ErrorCode; field?: string };
-
-export function RealmEditor({ session, initialSaved, imported, onClose }: {
-  session: ActiveSession;
-  initialSaved?: SavedRealm;
-  imported?: ImportedRealm;
-  onClose: () => void;
-}) {
+export function RealmEditor({ session, editor }: { session: ActiveSession; editor: RealmEditorState }) {
   const { t } = useI18n();
-  const [save, remove] = useUnit([saveRealmFx, deleteRealmFx]);
-  const [saved, setSaved] = useState(initialSaved);
-  const [blank] = useState<Realm>(() => imported?.realm ??
-    ({ specVersion: realmSpecVersion, id: initialSaved?.realm.id ?? newRealmId(), title: '', base: '' }));
-  const initial = saved?.realm ?? blank;
-  const [draft, setDraft] = useState(initial);
-  const [initialVariables, setInitialVariables] = useState(() => variableDrafts(initial.variables));
-  const [variables, setVariables] = useState(initialVariables);
+  const { dirty, close, change, changeVariables, action, discard, remove, clearDeleteError } = useUnit({
+    dirty: $realmEditorDirty, close: realmEditorClosed, change: realmEditorDraftChanged, changeVariables: realmEditorVariablesChanged,
+    action: realmEditorActionRequested, discard: realmEditorDraftDiscarded, remove: realmEditorDeleteRequested,
+    clearDeleteError: realmEditorDeleteErrorCleared,
+  });
+  const { saved, baseline, draft, imported, variables, issue, saving, deleting, deleteError, saveNotice } = editor;
   const [part, onPart] = useState<RealmPart>('base');
-  const [saving, setSaving] = useState(false);
-  const [deleting, setDeleting] = useState(false);
   const [avatarPending, setAvatarPending] = useState(false);
-  const [issue, setIssue] = useState<SaveIssue | null>(null);
   const [dialog, setDialog] = useState<'discard' | 'leave' | 'delete' | null>(null);
-  const [deleteError, setDeleteError] = useState<ErrorCode | null>(null);
-  const [saveNotice, setSaveNotice] = useState(false);
   const [favorite, setFavorite] = useState<boolean | null>(null);
   const [favoriteError, setFavoriteError] = useState<ErrorCode | null>(null);
   const focusSection = useRef<string>(null);
-  const dirty = draft !== initial || variables !== initialVariables;
   const unsavedImport = Boolean(imported && !saved);
   const section = getRealmSection(draft, part);
   const busy = saving || deleting || avatarPending;
 
   useEffect(() => {
-    if (!dirty && !unsavedImport) return;
-    const confirmUnload = (event: BeforeUnloadEvent) => { event.preventDefault(); };
-    window.addEventListener('beforeunload', confirmUnload);
-    return () => window.removeEventListener('beforeunload', confirmUnload);
-  }, [dirty, unsavedImport]);
-
-  function patch(patch: Partial<Realm>, removed?: boolean) {
-    setDraft((current) => {
-      const next = { ...current, ...patch };
-      return removed ? pruneReferences(next) : next;
-    });
-    setIssue(null);
-    setSaveNotice(false);
-  }
-
-  function showIssue(problem: SaveIssue) {
-    setIssue(problem);
-    if (!problem.field) return;
-    const [, field, index] = problem.field.split('/');
+    if (!issue?.field) return;
+    const [, field, index] = issue.field.split('/');
     const invalidSection = field === 'sections' ? draft.sections?.[Number(index)] : undefined;
     onPart(invalidSection ? sectionPart(invalidSection.id) : realmParts.find((part) => part === field) ?? 'base');
+  }, [issue, draft.sections]);
+
+  function patch(patch: Partial<Realm>, removed?: boolean) {
+    change({ patch, removed });
   }
 
   function createSection() {
@@ -84,90 +59,14 @@ export function RealmEditor({ session, initialSaved, imported, onClose }: {
     onPart('base');
   }
 
-  function validateDraft() {
-    const parsedVariables: RealmVariable[] = [];
-    for (const [index, { name, source, format }] of variables.entries()) {
-      try {
-        parsedVariables.push({ name: name.trim(), value: format === 'text' ? source : JSON.parse(source) });
-      } catch {
-        showIssue({ code: 'realm_variable_value_invalid', field: `/variables/${index}/value` });
-        return;
-      }
-    }
-    const validated = readRealm({
-      ...draft, title: draft.title.trim(), sections: draft.sections?.map((entry) => ({ ...entry, title: entry.title.trim() })),
-      variables: parsedVariables.length ? parsedVariables : undefined,
-    });
-    if ('realm' in validated) {
-      setIssue(null);
-      return validated.realm;
-    }
-    showIssue(validated);
-  }
-
-  function exportCard() {
-    const realm = validateDraft();
-    if (!realm) return;
-    try {
-      downloadRealmFile(realm);
-    } catch (error) {
-      showIssue({ code: error instanceof ApiError ? error.code : 'realm_file_download_failed' });
-    }
-  }
-
-  async function submit(event: FormEvent) {
-    event.preventDefault();
-    if (busy) return;
-    if (!dirty && saved) {
-      setSaveNotice(true);
-      return;
-    }
-    const realm = validateDraft();
-    if (!realm) return;
-    setSaving(true);
-    try {
-      const updated = await save({ session, saved, realm });
-      if (session.signal.aborted) return;
-      setSaved(updated);
-      setDraft(updated.realm);
-      const updatedVariables = variableDrafts(updated.realm.variables);
-      setInitialVariables(updatedVariables);
-      setVariables(updatedVariables);
-      setSaveNotice(true);
-    } catch (error) {
-      if (!session.signal.aborted) showIssue({ code: errorCode(error), field: error instanceof ApiError ? error.field : undefined });
-    } finally {
-      if (!session.signal.aborted) setSaving(false);
-    }
-  }
-
-  async function confirmDelete() {
-    if (!saved || busy) return;
-    setDeleteError(null);
-    setDeleting(true);
-    try {
-      await remove({ session, id: saved.id, revision: saved.revision });
-      if (!session.signal.aborted) onClose();
-    } catch (error) {
-      if (session.signal.aborted) return;
-      const code = errorCode(error);
-      if (code === 'realm_not_found') onClose();
-      else setDeleteError(code);
-    } finally {
-      if (!session.signal.aborted) setDeleting(false);
-    }
-  }
-
   function discardChanges() {
     if (dialog === 'leave') {
-      onClose();
+      close();
       return;
     }
-    setDraft(initial);
-    setVariables(initialVariables);
-    setIssue(null);
+    discard();
     setDialog(null);
-    if (section && !getRealmSection(initial, part)) onPart('base');
+    if (section && !getRealmSection(baseline, part)) onPart('base');
   }
 
   const [, invalidPart, invalidRecord, , invalidEntry] = issue?.field?.split('/') ?? [];
@@ -176,15 +75,18 @@ export function RealmEditor({ session, initialSaved, imported, onClose }: {
     draft.sections?.[Number(invalidRecord)]?.id === section.id
     ? Number(invalidEntry) : undefined;
   return (
-    <form className="realms-editor" onSubmit={(event) => void submit(event)} noValidate>
+    <form className="realms-editor" onSubmit={(event) => {
+      event.preventDefault();
+      if (!busy && !dialog) action('save');
+    }} noValidate>
       <div className="realms-editor-nav">
-        <button type="button" className="realms-back" disabled={busy} onClick={() => dirty || unsavedImport ? setDialog('leave') : onClose()}>
+        <button type="button" className="realms-back" disabled={busy} onClick={() => dirty || unsavedImport ? setDialog('leave') : close()}>
           <ArrowLeft size={16} aria-hidden="true" />{t('realms.back')}
         </button>
         <div className="realms-actions">
           {saved && <RealmFavoriteButton session={session} id={saved.id} title={saved.realm.title}
             favorite={favorite ?? Boolean(saved.favorite)} disabled={busy} onChanged={setFavorite} onError={setFavoriteError} />}
-          <Button type="button" variant="default" disabled={busy} onClick={exportCard} leftSection={<Download size={16} aria-hidden="true" />}>
+          <Button type="button" variant="default" disabled={busy} onClick={() => action('export')} leftSection={<Download size={16} aria-hidden="true" />}>
             {t('realms.export')}
           </Button>
         </div>
@@ -197,7 +99,7 @@ export function RealmEditor({ session, initialSaved, imported, onClose }: {
         <div className="realms-actions realms-heading-actions">
           {saveNotice && <output className="realms-muted">{t('realms.saved')}</output>}
           {saved && <Button type="button" variant="subtle" color="red" disabled={busy}
-            onClick={() => { setDeleteError(null); setDialog('delete'); }} leftSection={<Trash2 size={16} aria-hidden="true" />}>
+            onClick={() => { clearDeleteError(); setDialog('delete'); }} leftSection={<Trash2 size={16} aria-hidden="true" />}>
             {t('realms.deleteRealm')}
           </Button>}
           <Button type="button" variant="default" disabled={busy || !dirty} onClick={() => setDialog('discard')}>{t('common.cancel')}</Button>
@@ -237,7 +139,7 @@ export function RealmEditor({ session, initialSaved, imported, onClose }: {
             addLabel={t('realms.add.start')} emptyLabel={t('realms.empty.starts')} makeItem={() => ({ id: newRealmId(), title: '' })}
             onChange={(starts) => patch({ starts })} fields={(start, change) => <StartFields realm={draft} start={start} onChange={change} />} />}
           {part === 'variables' && <RealmVariables variables={variables} issue={issue?.field}
-            onChange={(next) => { setVariables(next); setIssue(null); setSaveNotice(false); }} />}
+            onChange={changeVariables} />}
           {section && <div key={section.id} className="realms-section-editor">
             <div className="realms-section-settings">
               <TextInput label={t('realms.title.section')} required value={section.title}
@@ -267,7 +169,7 @@ export function RealmEditor({ session, initialSaved, imported, onClose }: {
           <Button type="button" variant="default" disabled={deleting} data-autofocus onClick={() => setDialog(null)}>
             {t(dialog === 'delete' ? 'common.cancel' : 'realms.keepEditing')}
           </Button>
-          {dialog === 'delete' ? <Button type="button" color="red" loading={deleting} onClick={() => void confirmDelete()}>{t('common.delete')}</Button>
+          {dialog === 'delete' ? <Button type="button" color="red" loading={deleting} onClick={remove}>{t('common.delete')}</Button>
             : <Button type="button" color="red" onClick={discardChanges}>{t('realms.discard')}</Button>}
         </div>
       </Modal>
@@ -275,7 +177,7 @@ export function RealmEditor({ session, initialSaved, imported, onClose }: {
   );
 }
 
-function issueMessage({ code, field }: SaveIssue): MessageKey {
+function issueMessage({ code, field }: RealmSaveIssue): MessageKey {
   if (code !== 'realm_invalid') return `error.${code}`;
   if (field === '/title') return 'realms.required.title';
   if (field === '/base') return 'realms.required.base';
@@ -283,19 +185,4 @@ function issueMessage({ code, field }: SaveIssue): MessageKey {
   if (field?.startsWith('/sections/') && !field.includes('/entries')) return 'realms.required.section';
   if (field?.startsWith('/characters/') || field?.startsWith('/lorebook/') || field?.includes('/entries/')) return 'realms.required.entry';
   return 'error.realm_invalid';
-}
-
-function pruneReferences(realm: Realm): Realm {
-  const characterIds = new Set(realm.characters?.map(({ id }) => id));
-  const loreIds = new Set(realm.lorebook?.map(({ id }) => id));
-  const sectionIds = new Map(realm.sections?.map(({ id, entries }) => [id, new Set(entries.map((entry) => entry.id))]));
-  return {
-    ...realm,
-    starts: realm.starts?.map((start) => ({
-      ...start,
-      characterIds: start.characterIds?.filter((id) => characterIds.has(id)),
-      loreEntryIds: start.loreEntryIds?.filter((id) => loreIds.has(id)),
-      sectionEntries: start.sectionEntries?.filter(({ sectionId, entryId }) => sectionIds.get(sectionId)?.has(entryId)),
-    })),
-  };
 }

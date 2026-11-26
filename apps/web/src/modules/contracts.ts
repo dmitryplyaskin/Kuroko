@@ -1,6 +1,6 @@
 import type { MessageKey } from '../shared/i18n/i18n';
 import type { ComponentType } from 'react';
-import type { EventCallable } from 'effector';
+import type { EventCallable, Store } from 'effector';
 
 export type ModuleIconName = 'panels' | 'globe' | 'message' | 'settings' | 'palette' | 'plug' | 'tools' | 'agents' | 'instructions';
 
@@ -42,6 +42,7 @@ export type WebModule = {
   contributions: readonly (WorkspaceScreen | SettingsTab | ExtensionContribution)[];
   views?: Readonly<Partial<Record<string, ViewLoader>>>;
   initialize?: EventCallable<void>;
+  hasUnsavedChanges?: Store<boolean>;
 };
 
 export type ModuleBundle = {

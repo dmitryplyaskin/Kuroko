@@ -17,3 +17,15 @@ export function useSettingsNavigation() {
   if (!navigation) throw new CodedError('settings_navigation_unavailable');
   return navigation;
 }
+
+export function reloadSettingsTab(key: string) {
+  window.history.replaceState({ ...window.history.state, kurokoReloadedSettingsTab: key }, '');
+  window.location.reload();
+}
+
+export function takeReloadedSettingsTab() {
+  const { kurokoReloadedSettingsTab, ...state } = window.history.state ?? {};
+  if (typeof kurokoReloadedSettingsTab !== 'string') return;
+  window.history.replaceState(state, '');
+  return kurokoReloadedSettingsTab;
+}
