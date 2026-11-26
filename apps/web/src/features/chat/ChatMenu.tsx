@@ -1,10 +1,11 @@
 import { Button, Group, Menu, Modal, TextInput } from '@mantine/core';
 import { createWatch } from 'effector';
 import { useProvidedScope, useUnit } from 'effector-react';
-import { ArrowDownToLine, ArrowUpToLine, ChevronRight, List, Pencil, Plus, Trash2 } from 'lucide-react';
+import { ArrowDownToLine, ArrowUpToLine, BookOpen, ChevronRight, List, Pencil, Plus, Trash2 } from 'lucide-react';
 import { useEffect, useRef, useState, type SubmitEvent } from 'react';
 import { chatTitleLimit, type ChatSummary } from '@kuroko/contracts/chat';
 import { useI18n } from '../../shared/i18n/i18n';
+import { TemplateGuideModal } from '../../shared/prompt-templates/TemplateHelp';
 import {
   $chatGmMode, $chatId, $chatLocked, $chatManagementError, $chatManaging, $chatTitle, $chats,
   chatCreateRequested, chatGmModeChanged, chatManagementErrorCleared, chatManagementRequested,
@@ -21,6 +22,7 @@ export function ChatMenu({ hasMessages, scrollToStart, scrollToEnd }: {
   const trigger = useRef<HTMLButtonElement>(null);
   const dialogBack = useRef<HTMLButtonElement>(null);
   const [dialog, setDialog] = useState<Dialog>();
+  const [guideOpened, setGuideOpened] = useState(false);
   const [draft, setDraft] = useState('');
   const [invalidTitle, setInvalidTitle] = useState(false);
   const titleInput = useRef<HTMLInputElement>(null);
@@ -82,8 +84,15 @@ export function ChatMenu({ hasMessages, scrollToStart, scrollToEnd }: {
               <Menu.Item leftSection={<ArrowDownToLine size={16} aria-hidden="true" />} onClick={scrollToEnd}>{t('chat.historyEnd')}</Menu.Item>
             </>
           )}
+          <Menu.Divider />
+          <Menu.Item leftSection={<BookOpen size={16} aria-hidden="true" />} aria-haspopup="dialog" onClick={() => setGuideOpened(true)}>
+            {t('templates.guideTitle')}
+          </Menu.Item>
         </Menu.Dropdown>
       </Menu>
+
+      <TemplateGuideModal scope="chat" opened={guideOpened} onClose={() => setGuideOpened(false)}
+        onExitTransitionEnd={() => trigger.current?.focus({ preventScroll: true })} />
 
       <Modal opened={Boolean(dialog)} onClose={() => setDialog(undefined)}
         onExitTransitionEnd={() => trigger.current?.focus({ preventScroll: true })}

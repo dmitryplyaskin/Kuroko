@@ -1,7 +1,7 @@
 import { isLlmErrorCode } from '@kuroko/contracts/errors';
 import type { ChatActivityEntry, ChatReasoningBlock, ChatReplyVariantSelection, ChatSnapshot, ChatSummary, ChatToolCall, SavedChat } from '@kuroko/contracts/chat';
 import type { ActiveChatInstruction } from '@kuroko/contracts/instructions';
-import type { LlmAssistantPart, LlmCompletion, LlmEvent, LlmMessage, LlmRequest, LlmTextDelta, LlmToolCall } from '@kuroko/contracts/llm';
+import type { LlmAssistantPart, LlmCompletion, LlmEvent, LlmRequest, LlmTextDelta, LlmToolCall } from '@kuroko/contracts/llm';
 import { readSubagentResultName, type DelegateTaskEvent, type DelegateTaskRequest, type DelegateTaskResult, type ToolId } from '@kuroko/contracts/tools';
 import { createSubagentBatch, runToolCall, toolDeclarations } from '@kuroko/tool-runtime';
 import { chatInstructionActivity, createChatActivity, recordModelRequest } from '@kuroko/tool-runtime/chatActivity';
@@ -46,14 +46,16 @@ function readEvent(frame: string): LlmEvent | DelegateTaskEvent | undefined {
 }
 
 export async function streamChatReply(
-  session: ActiveSession, messages: ChatSnapshot['messages'], enabledTools: readonly ToolId[], signal: AbortSignal,
+  session: ActiveSession, chatId: string, messages: ChatSnapshot['messages'], enabledTools: readonly ToolId[], signal: AbortSignal,
   onDelta: (delta: ChatReplyDelta) => void, onContent: (text: string, calls: ChatToolCall[], reasoning: ChatReasoningBlock[]) => void,
   onSubagentActivity: (active: readonly ActiveSubagent[]) => void, start: ReturnType<typeof createChatActivity>,
-  onActivity: (entry: ChatActivityEntry) => void, uniqueToolIds: boolean,
+  onActivity: (entry: ChatActivityEntry) => void, uniqueToolIds: boolean, replaceId?: number,
 ): Promise<string> {
   const tools = enabledTools.length ? toolDeclarations(enabledTools) : undefined;
-  const history: LlmMessage[] = toLlmMessages(messages);
-  const { text: instruction } = await sessionRequest<ActiveChatInstruction>(session, '/settings/instructions/active', { signal });
+  const query = new URLSearchParams({ chat: chatId });
+  if (replaceId !== undefined) query.set('replace', String(replaceId));
+  const { text: instruction, messages: rendered } = await sessionRequest<ActiveChatInstruction>(session, `/settings/instructions/active?${query}`, { signal });
+  const history = rendered ?? toLlmMessages(messages);
   if (instruction) {
     history.unshift({ role: 'system', content: instruction });
     onActivity(chatInstructionActivity(instruction));

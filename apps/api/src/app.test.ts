@@ -775,6 +775,96 @@ function gmProviderStream(content: string, calls: { name: string; arguments: obj
   });
 }
 
+test('uses saved world variables and start context in chat and game master instructions', async () => {
+  await register('template-owner');
+  await register('template-other');
+  const cookie = sessionCookie(await login('template-owner')).token;
+  const other = sessionCookie(await login('template-other')).token;
+  const realm: Realm = {
+    specVersion: '0.1.0', id: 'city', title: 'Город', base: 'Старые башни. {{ vars.label }}. {% raw %}{{ untouched }}{% endraw %}.',
+    characters: [{ id: 'guard', title: 'Страж', content: 'Дежурит у лестницы №{{ vars.difficulty }}.' }],
+    starts: [{ id: 'night', title: 'Ночь', scenario: 'Часы пробили {{ 6 * 2 }}.', characterIds: ['guard'] }],
+    variables: [{ name: 'difficulty', value: 3 }, { name: 'bonus', value: { active: true, points: [1, 2] } },
+      { name: 'label', value: 'Порог {{ vars.difficulty }}' }],
+  };
+  const create = (body: Realm) => request('/realms', { method: 'POST', cookie, body });
+  const duplicate = await create({ ...realm, variables: [...realm.variables!, realm.variables![0]!] });
+  expect(await duplicate.json()).toEqual({ code: 'realm_variable_name_invalid', field: '/variables/3/name' });
+  const world = await (await create(realm)).json() as SavedRealm;
+  expect(world.realm.variables).toEqual(realm.variables);
+  const text = [
+    '@ set realm = world()',
+    '@ set score = clamp((vars.difficulty + vars.bonus.points[0]) * 2, 0, 10)',
+    '@ if realm.vars.bonus.active and score >= 7',
+    '{{ "Ведущий" if chat.gm_mode else "Чат" }} · {{ chat.title }} · {{ score }}',
+    '{{ realm.starts[0].context }}',
+    '@ endif',
+  ].join('\n');
+  const path = '/settings/instructions';
+  const preview = (source: string, owner = cookie) => request(`${path}/preview`, {
+    method: 'POST', cookie: owner, body: { text: source, chatTitle: 'Предпросмотр', worldId: world.id },
+  });
+  const expectedWorld = 'Город\n\nСтарые башни. Порог 3. {{ untouched }}.\n\nЧасы пробили 12.\n\nСтраж\nДежурит у лестницы №3.';
+  expect(await (await preview(text)).json()).toEqual({ text: `Чат · Предпросмотр · 8\n${expectedWorld}` });
+  expect(await (await preview('{{ "visible" if world().constructor is defined else "hidden" }}')).json()).toEqual({ text: 'hidden' });
+  const denied = await preview(text, other);
+  expect(denied.status).toBe(404);
+  expect(await denied.json()).toEqual({ code: 'realm_not_found' });
+  const invalid = await request(`${path}/presets`, { method: 'POST', cookie, body: { name: 'Ошибка', text: '\n@ if' } });
+  expect(invalid.status).toBe(422);
+  expect(await invalid.json()).toEqual({ code: 'prompt_template_invalid', field: '2' });
+  const preset = await request(`${path}/presets`, { method: 'POST', cookie, body: { name: 'Город ночью', text, worldId: world.id } });
+  expect(preset.status).toBe(201);
+  expect((await preset.json() as InstructionSettings).presets[0]).toMatchObject({ text, worldId: world.id, worldTitle: realm.title });
+
+  const connectionPreset = await saveGenerationPreset(cookie, 'openai', 'template-test-key');
+  expect((await request('/settings/tools/subagent-connection', { method: 'PUT', cookie, body: { presetId: connectionPreset } })).status).toBe(200);
+  expect((await request('/settings/tools/subagent', { method: 'PUT', cookie, body: { enabled: true } })).status).toBe(200);
+  const agentText = '{{ agent.name }} · {{ vars.difficulty }}';
+  const agent = await request('/agents', { method: 'POST', cookie, body: {
+    name: 'Летописец', description: 'Описывает мир {{ world().title }}.', instructions: agentText, tools: [], worldId: world.id,
+  } });
+  expect(agent.status).toBe(201);
+  const savedAgent = await agent.json() as SavedAgent;
+  expect(savedAgent).toMatchObject({ worldId: world.id, worldTitle: realm.title });
+  const chat = await (await request('/chats', { method: 'POST', cookie })).json() as SavedChat;
+  const chatPath = `/chats/${chat.id}`;
+  const messages: ChatMessage[] = [{ id: 1, role: 'user', text: 'Вхожу в город. {{ vars.difficulty + 1 }}', time: 1 }];
+  const ordinary = await (await request(chatPath, { method: 'PUT', cookie, body: { revision: chat.revision, messages } })).json() as SavedChat;
+  const renderPath = `${path}/active?chat=${chat.id}`;
+  const active = await (await request(renderPath, { cookie })).json() as { text: string; messages: LlmRequest['messages'] };
+  expect(active.text).toEqual(`Чат · ${ordinary.title} · 8\n${expectedWorld}`);
+  expect(active.messages).toEqual([{ role: 'user', content: 'Вхожу в город. 4' }]);
+  const sent: string[] = [];
+  const mock = mockGeneration((_url, init) => {
+    const { messages, stream, tools } = JSON.parse(String(init?.body));
+    if (sent.length === 0) expect(tools[0].function.description).toContain('Описывает мир Город.');
+    sent.push(messages[0].content);
+    return stream ? gmProviderStream('', [{ name: 'publishScene', arguments: { text: 'Началась ночь.' } }])
+      : Response.json({ choices: [{ message: { content: 'Началась ночь.' }, finish_reason: 'stop' }] });
+  });
+  try {
+    const normalReply = await request(generatePath, { method: 'POST', cookie, body: {
+      messages: [{ role: 'system', content: active.text }, ...active.messages], tools: toolDeclarations(['subagent']),
+    } });
+    expect(normalReply.status).toBe(200);
+    const gm = await (await request(chatPath, { method: 'PUT', cookie, body: { revision: ordinary.revision, gmMode: true, messages } })).json() as SavedChat;
+    const gmReply = await request(`${chatPath}/gm-reply`, { method: 'POST', cookie, body: { revision: gm.revision } });
+    expect(gmReply.status).toBe(200);
+    const scene = await gmReply.json() as SavedChat;
+    const gmText = `Ведущий · ${gm.title} · 8\n${expectedWorld}`;
+    expect(sent).toHaveLength(2);
+    expect(sent[0]).toBe(active.text);
+    expect(sent[1]).toContain(gmText);
+    expect(scene.activity?.[0]?.entries[0]).toMatchObject({ kind: 'instruction', details: { instruction: gmText } });
+    const agentResult = await request('/llm/delegate', { method: 'POST', cookie, body: { agentId: savedAgent.id, name: 'Вестник', task: 'Опиши город.' } });
+    expect(agentResult.status).toBe(200);
+    expect(sent[2]).toContain('Saved agent instructions:\nВестник · 3');
+  } finally {
+    mock.mockRestore();
+  }
+});
+
 test('discovers account-owned agents and runs saved instructions with only the selected tools', async () => {
   await register('saved-agent-owner');
   await register('saved-agent-other');

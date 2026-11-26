@@ -1,17 +1,19 @@
-import { Button, Modal, TagsInput, Textarea, TextInput } from '@mantine/core';
-import { readRealm, realmSpecVersion, type Realm, type RealmStart, type SavedRealm } from '@kuroko/contracts/realms';
+import { Button, Modal, TagsInput, TextInput } from '@mantine/core';
+import { readRealm, realmSpecVersion, type Realm, type RealmStart, type RealmVariable, type SavedRealm } from '@kuroko/contracts/realms';
 import { useUnit } from 'effector-react';
 import { ArrowLeft, Download, Trash2 } from 'lucide-react';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import type { ActiveSession } from '../../platform/session/model';
 import { ApiError, errorCode, type ErrorCode } from '../../shared/http/api';
 import { useI18n, type MessageKey } from '../../shared/i18n/i18n';
+import { PromptTextarea } from '../../shared/prompt-templates/TemplateHelp';
 import { deleteRealmFx, newRealmId, saveRealmFx } from './model';
 import { AvatarEditor, PreviewableRealmAvatar } from './RealmAvatar';
 import { getRealmSection, RealmContents, realmParts, sectionPart, type RealmPart } from './RealmContents';
 import { RealmFavoriteButton } from './RealmFavoriteButton';
 import { EntriesEditor, RecordEditor, StartFields } from './RealmFields';
 import { downloadRealmFile, type ImportedRealm } from './realmFile';
+import { RealmVariables, variableDrafts } from './RealmVariables';
 
 type SaveIssue = { code: ErrorCode; field?: string };
 
@@ -28,6 +30,8 @@ export function RealmEditor({ session, initialSaved, imported, onClose }: {
     ({ specVersion: realmSpecVersion, id: initialSaved?.realm.id ?? newRealmId(), title: '', base: '' }));
   const initial = saved?.realm ?? blank;
   const [draft, setDraft] = useState(initial);
+  const [initialVariables, setInitialVariables] = useState(() => variableDrafts(initial.variables));
+  const [variables, setVariables] = useState(initialVariables);
   const [part, onPart] = useState<RealmPart>('base');
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -39,7 +43,7 @@ export function RealmEditor({ session, initialSaved, imported, onClose }: {
   const [favorite, setFavorite] = useState<boolean | null>(null);
   const [favoriteError, setFavoriteError] = useState<ErrorCode | null>(null);
   const focusSection = useRef<string>(null);
-  const dirty = draft !== initial;
+  const dirty = draft !== initial || variables !== initialVariables;
   const unsavedImport = Boolean(imported && !saved);
   const section = getRealmSection(draft, part);
   const busy = saving || deleting || avatarPending;
@@ -81,8 +85,18 @@ export function RealmEditor({ session, initialSaved, imported, onClose }: {
   }
 
   function validateDraft() {
+    const parsedVariables: RealmVariable[] = [];
+    for (const [index, { name, source, format }] of variables.entries()) {
+      try {
+        parsedVariables.push({ name: name.trim(), value: format === 'text' ? source : JSON.parse(source) });
+      } catch {
+        showIssue({ code: 'realm_variable_value_invalid', field: `/variables/${index}/value` });
+        return;
+      }
+    }
     const validated = readRealm({
       ...draft, title: draft.title.trim(), sections: draft.sections?.map((entry) => ({ ...entry, title: entry.title.trim() })),
+      variables: parsedVariables.length ? parsedVariables : undefined,
     });
     if ('realm' in validated) {
       setIssue(null);
@@ -116,6 +130,9 @@ export function RealmEditor({ session, initialSaved, imported, onClose }: {
       if (session.signal.aborted) return;
       setSaved(updated);
       setDraft(updated.realm);
+      const updatedVariables = variableDrafts(updated.realm.variables);
+      setInitialVariables(updatedVariables);
+      setVariables(updatedVariables);
       setSaveNotice(true);
     } catch (error) {
       if (!session.signal.aborted) showIssue({ code: errorCode(error), field: error instanceof ApiError ? error.field : undefined });
@@ -147,6 +164,7 @@ export function RealmEditor({ session, initialSaved, imported, onClose }: {
       return;
     }
     setDraft(initial);
+    setVariables(initialVariables);
     setIssue(null);
     setDialog(null);
     if (section && !getRealmSection(initial, part)) onPart('base');
@@ -192,7 +210,7 @@ export function RealmEditor({ session, initialSaved, imported, onClose }: {
         <output className="realms-muted">{t('realms.importAvatarWarning')}</output>
       </div>}
       <fieldset className="realms-edit-fields" disabled={busy}>
-        <RealmContents realm={draft} part={part} onPart={onPart} onCreateSection={createSection}>
+        <RealmContents realm={draft} variableCount={variables.length} part={part} onPart={onPart} onCreateSection={createSection}>
           {part === 'base' && <div className="realms-record-fields">
             <AvatarEditor value={draft.avatar} kind="realm" onPending={setAvatarPending} onChange={(avatar) => patch({ avatar })} />
             <TextInput label={t('realms.title.realm')} required value={draft.title} error={issue?.field === '/title'}
@@ -205,11 +223,11 @@ export function RealmEditor({ session, initialSaved, imported, onClose }: {
             </div>
             <TagsInput label={t('realms.tags')} description={t('realms.tagsHelp')} value={draft.tags ?? []}
               onChange={(tags) => patch({ tags })} />
-            <Textarea label={t('realms.shortDescription')} description={t('realms.shortDescriptionHelp')} autosize minRows={7} maxRows={20}
+            <PromptTextarea scope="world" label={t('realms.shortDescription')} description={t('realms.shortDescriptionHelp')} autosize minRows={7} maxRows={20}
               value={draft.description ?? ''} onChange={(event) => patch({ description: event.currentTarget.value || undefined })} />
-            <Textarea label={t('realms.baseText')} description={t('realms.baseHelp')} value={draft.base}
+            <PromptTextarea scope="world" label={t('realms.baseText')} description={t('realms.baseHelp')} value={draft.base}
               required autosize minRows={16} maxRows={36} error={issue?.field === '/base'} onChange={(event) => patch({ base: event.currentTarget.value })} />
-            <Textarea label={t('realms.authorNotes')} autosize minRows={6} maxRows={20} value={draft.authorNotes ?? ''}
+            <PromptTextarea scope="world" label={t('realms.authorNotes')} autosize minRows={6} maxRows={20} value={draft.authorNotes ?? ''}
               onChange={(event) => patch({ authorNotes: event.currentTarget.value || undefined })} />
           </div>}
           {(part === 'characters' || part === 'lorebook') && <EntriesEditor key={part} entries={draft[part] ?? []}
@@ -218,6 +236,8 @@ export function RealmEditor({ session, initialSaved, imported, onClose }: {
           {part === 'starts' && <RecordEditor<RealmStart> items={draft.starts ?? []} invalidIndex={invalidIndex}
             addLabel={t('realms.add.start')} emptyLabel={t('realms.empty.starts')} makeItem={() => ({ id: newRealmId(), title: '' })}
             onChange={(starts) => patch({ starts })} fields={(start, change) => <StartFields realm={draft} start={start} onChange={change} />} />}
+          {part === 'variables' && <RealmVariables variables={variables} issue={issue?.field}
+            onChange={(next) => { setVariables(next); setIssue(null); setSaveNotice(false); }} />}
           {section && <div key={section.id} className="realms-section-editor">
             <div className="realms-section-settings">
               <TextInput label={t('realms.title.section')} required value={section.title}

@@ -1,4 +1,5 @@
-import { Accordion, ActionIcon, Button, Checkbox, Textarea, TextInput } from '@mantine/core';
+import { Accordion, ActionIcon, Button, Checkbox, TextInput } from '@mantine/core';
+import { PromptTextarea } from '../../shared/prompt-templates/TemplateHelp';
 import { resolveRealmContext } from '@kuroko/contracts/realmContext';
 import {
   isRealmOrder, orderedRealmRecords, realmMaxOrder, realmSearchKey, type Realm, type RealmCharacter, type RealmEntry,
@@ -152,10 +153,10 @@ export function EntriesEditor({ entries, kind, invalidIndex, onChange, onAvatarP
             onChange={(event) => change({ title: event.currentTarget.value })} />
           {kind === 'character' && onAvatarPending && <>
             <AvatarEditor value={entry.avatar} kind="character" onPending={onAvatarPending} onChange={(avatar) => change({ avatar })} />
-            <Textarea label={t('realms.characterSummary')} autosize minRows={5} maxRows={16} value={entry.summary ?? ''}
+            <PromptTextarea scope="world" label={t('realms.characterSummary')} autosize minRows={5} maxRows={16} value={entry.summary ?? ''}
               onChange={(event) => change({ summary: event.currentTarget.value || undefined })} />
           </>}
-          <Textarea label={t(kind === 'character' ? 'realms.characterContent' : 'realms.content')} required autosize
+          <PromptTextarea scope="world" label={t(kind === 'character' ? 'realms.characterContent' : 'realms.content')} required autosize
             minRows={kind === 'character' ? 12 : 6} maxRows={28} value={entry.content}
             onChange={(event) => change({ content: event.currentTarget.value })} />
         </>
@@ -211,9 +212,9 @@ export function StartFields({ realm, start, onChange }: {
     <>
       <TextInput label={t('realms.title.start')} required value={start.title}
         onChange={(event) => onChange({ title: event.currentTarget.value })} />
-      <Textarea label={t('realms.scenario')} description={t('realms.scenarioHelp')} autosize minRows={3} maxRows={12}
+      <PromptTextarea scope="world" label={t('realms.scenario')} description={t('realms.scenarioHelp')} autosize minRows={3} maxRows={12}
         value={start.scenario ?? ''} onChange={(event) => onChange({ scenario: event.currentTarget.value || undefined })} />
-      <Textarea label={t('realms.greeting')} description={t('realms.greetingHelp')} autosize minRows={3} maxRows={12}
+      <PromptTextarea scope="world" label={t('realms.greeting')} description={t('realms.greetingHelp')} autosize minRows={3} maxRows={12}
         value={start.greeting ?? ''} onChange={(event) => onChange({ greeting: event.currentTarget.value || undefined })} />
       <div className="realms-reference-picker">
         <h3>{t('realms.startContext')}</h3>

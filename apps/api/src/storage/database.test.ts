@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { openDatabase } from './database';
 import { createProviderKeyStore } from '../connection/providerKeyStore';
 
-test.each([1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16])('upgrades a version %i SQLite database without losing user data', (version) => {
+test.each([1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18])('upgrades a version %i SQLite database without losing user data', (version) => {
   const directory = mkdtempSync(join(tmpdir(), 'kuroko-sqlite-test-'));
   const path = join(directory, 'test.sqlite');
   const vaultKey = randomBytes(32);
@@ -20,10 +20,17 @@ test.each([1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16])('upgrades a vers
     const old = openDatabase(path, vaultKey);
     try {
       old.run('INSERT INTO users (username, username_key, password_hash) VALUES (?, ?, ?)', ['Лина', 'лина', 'test-hash']);
-      old.exec('DROP TABLE instruction_presets');
+      if (version < 17) old.exec('DROP TABLE instruction_presets');
+      else old.exec(`
+        ALTER TABLE instruction_presets DROP COLUMN world_id;
+        INSERT INTO instruction_presets (id, user_id, name, text, active) VALUES ('old-instruction', 1, 'Стиль', '{{ literal }}', 1);
+      `);
+      if (version === 18) old.exec('ALTER TABLE instruction_presets ADD COLUMN template INTEGER NOT NULL DEFAULT 0');
       if (version < 16) old.exec('DROP TABLE temporary_agent_tools');
       if (version < 15) old.exec('DROP TABLE agents');
       else {
+        old.exec('ALTER TABLE agents DROP COLUMN world_id');
+        if (version === 18) old.exec('ALTER TABLE agents ADD COLUMN template INTEGER NOT NULL DEFAULT 0');
         if (version < 16) old.exec('CREATE UNIQUE INDEX agents_v15_name ON agents (user_id, name_key)');
         old.run('INSERT INTO agents (id, user_id, name, name_key, description, instructions, tools_json) VALUES (?, ?, ?, ?, ?, ?, ?)',
           Object.values(legacyAgent));
@@ -62,9 +69,11 @@ test.each([1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16])('upgrades a vers
 
     const migrated = openDatabase(path, vaultKey);
     try {
-      expect(migrated.query('PRAGMA user_version').get()).toEqual({ user_version: 17 });
-      expect(migrated.query('SELECT * FROM instruction_presets').all()).toEqual([]);
-      expect(migrated.query('SELECT * FROM agents').all()).toEqual(version < 15 ? [] : [legacyAgent]);
+      expect(migrated.query('PRAGMA user_version').get()).toEqual({ user_version: 19 });
+      expect(migrated.query('SELECT * FROM instruction_presets').all()).toEqual(version < 17 ? [] : [
+        { id: 'old-instruction', user_id: 1, name: 'Стиль', text: '{{ literal }}', active: 1, world_id: null },
+      ]);
+      expect(migrated.query('SELECT * FROM agents').all()).toEqual(version < 15 ? [] : [{ ...legacyAgent, world_id: null }]);
       expect(migrated.query('SELECT * FROM temporary_agent_tools').all()).toEqual([]);
       expect(migrated.query('SELECT * FROM chat_reply_variants').all()).toEqual([]);
       expect(migrated.query('SELECT * FROM subagent_settings').all()).toEqual([]);

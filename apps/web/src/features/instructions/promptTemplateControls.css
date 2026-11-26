@@ -1,0 +1,40 @@
+.prompt-template-controls,
+.prompt-template-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.prompt-template-help {
+  display: grid;
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+.prompt-template-help :is(p, pre, ul) {
+  margin: 0;
+}
+
+.prompt-template-help pre {
+  padding: 0.75rem;
+  max-height: 50vh;
+  overflow: auto;
+  border: 1px solid var(--mantine-color-default-border);
+  border-radius: var(--mantine-radius-default);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.prompt-world-list {
+  display: grid;
+  gap: 0.375rem;
+  list-style: none;
+  padding: 0;
+  max-height: 52vh;
+  overflow: auto;
+}
+
+.prompt-world-list .mantine-Button-inner {
+  justify-content: flex-start;
+}

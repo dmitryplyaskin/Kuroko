@@ -41,7 +41,7 @@ function trackQuery<P extends ListRequest, Data>(effect: Effect<P, Data, Error>)
     .reset(sessionEnded);
 }
 
-export const listRealmsFx = realmEffect(({ session, signal, query }: ListRequest) => {
+export function requestRealmList({ session, signal, query }: ListRequest) {
   const params = new URLSearchParams({ q: query.q, sort: query.sort, limit: String(query.limit), offset: String(query.offset) });
   const { author, tags, starts, favorites } = query.filters;
   if (author) params.set('author', author);
@@ -49,7 +49,9 @@ export const listRealmsFx = realmEffect(({ session, signal, query }: ListRequest
   if (starts !== 'any') params.set('starts', starts);
   if (favorites) params.set('favorites', '1');
   return sessionRequest<RealmList>(session, `/realms?${params}`, { signal });
-});
+}
+
+export const listRealmsFx = realmEffect(requestRealmList);
 
 const realmPath = (id: string) => `/realms/${encodeURIComponent(id)}`;
 

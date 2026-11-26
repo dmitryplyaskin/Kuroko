@@ -24,24 +24,28 @@ export function messageBlocks({ text, toolCalls }: ChatMessage): MessageBlock[] 
   return blocks;
 }
 
-export function toLlmMessages(messages: ChatMessage[], privateContext?: ReadonlyMap<number, string>): LlmMessage[] {
+export function toLlmMessages(
+  messages: ChatMessage[], privateContext?: ReadonlyMap<number, string>, render: (text: string) => string = (text) => text,
+): LlmMessage[] {
   const history: LlmMessage[] = [];
   for (const message of messages) {
     const { role, text } = message;
     if (!hasMessageContent(message)) continue;
     if (role === 'user') {
-      history.push({ role, content: text });
+      const content = render(text);
+      if (content.trim()) history.push({ role, content });
     } else if (history.length) {
       // Earlier calls travel as text so the conversation can continue with a different provider or with tools disabled.
       const content = messageBlocks(message).map((block) => {
-        if (block.kind === 'text') return block.text;
+        if (block.kind === 'text') return message.edited ? render(block.text) : block.text;
         const calls = block.calls.map((call) =>
           `${isSubagentTool(call.name) ? 'subagent' : call.name}(${JSON.stringify(call.arguments)}) ${call.isError ? 'failed' : 'returned'} ${JSON.stringify(toolHistoryResult(call))}`);
         return `Tool calls:\n${calls.join('\n')}`;
       });
       const notes = privateContext?.get(message.id);
       if (notes) content.push(notes);
-      history.push({ role, parts: [{ type: 'text', text: content.filter((block) => block.trim()).join('\n\n') }] });
+      const answer = content.filter((block) => block.trim()).join('\n\n');
+      if (answer) history.push({ role, parts: [{ type: 'text', text: answer }] });
     }
   }
   return history;

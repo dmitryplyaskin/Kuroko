@@ -1,9 +1,12 @@
+import type { JsonValue } from './llm';
+
 export const realmSpecVersion = '0.1.0';
 
 export type RealmEntry = { id: string; title: string; content: string; order?: number };
 export type RealmCharacter = RealmEntry & { summary?: string; avatar?: string };
 export type RealmSection = { id: string; title: string; entries: RealmEntry[] };
 export type RealmSectionEntryRef = { sectionId: string; entryId: string };
+export type RealmVariable = { name: string; value: JsonValue };
 export type RealmStart = {
   id: string;
   title: string;
@@ -29,6 +32,7 @@ export type Realm = {
   lorebook?: RealmEntry[];
   sections?: RealmSection[];
   starts?: RealmStart[];
+  variables?: RealmVariable[];
 };
 
 export type SavedRealm = { id: string; revision: number; createdAt: number; updatedAt: number; favorite?: true; realm: Realm };
@@ -57,6 +61,24 @@ export const realmPageSize = 24;
 export const realmRequestByteLimit = 8 * 1024 * 1024;
 export const realmAvatarMaxLength = 65_536;
 export const realmMaxOrder = 999_999;
+export const realmVariableLimit = 100;
+export const realmVariableValueLimit = 16_000;
+
+export function isRealmVariableName(value: unknown): value is string {
+  return typeof value === 'string' && /^[a-zA-Z_][a-zA-Z_0-9]{0,63}$/.test(value);
+}
+
+export function isRealmVariableValue(value: unknown): value is JsonValue {
+  function valid(item: unknown, depth: number): boolean {
+    if (typeof item === 'string') return item.isWellFormed();
+    if (typeof item === 'number') return Number.isFinite(item);
+    if (item === null || typeof item === 'boolean') return true;
+    if (typeof item !== 'object' || depth === 12) return false;
+    if (Array.isArray(item)) return item.every((child) => valid(child, depth + 1));
+    return Object.entries(item).every(([key, child]) => key.isWellFormed() && valid(child, depth + 1));
+  }
+  return valid(value, 0) && JSON.stringify(value).length <= realmVariableValueLimit;
+}
 
 export function isRealmOrder(value: unknown): value is number {
   return typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= realmMaxOrder;
@@ -81,7 +103,10 @@ export function readRealmAvatar(value: unknown) {
   if (valid) return { mime, data };
 }
 
-type RealmIssue = { code: 'realm_invalid' | 'realm_duplicate_id' | 'realm_reference_missing'; field: string };
+type RealmIssue = {
+  code: 'realm_invalid' | 'realm_duplicate_id' | 'realm_reference_missing' | 'realm_variable_name_invalid' | 'realm_variable_value_invalid';
+  field: string;
+};
 
 function objectWithKeys(value: unknown, keys: readonly string[]): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value) &&
@@ -142,10 +167,24 @@ function checkCollection<T extends { id: string }>(value: unknown, field: string
   }
 }
 
+function checkVariables(value: unknown): RealmIssue | undefined {
+  if (value === undefined) return;
+  if (!Array.isArray(value) || value.length > realmVariableLimit) return { code: 'realm_invalid', field: '/variables' };
+  const names = new Set<string>();
+  for (const [index, item] of value.entries()) {
+    const path = `/variables/${index}`;
+    if (!objectWithKeys(item, ['name', 'value']) || !isRealmVariableName(item.name) || names.has(item.name)) {
+      return { code: 'realm_variable_name_invalid', field: `${path}/name` };
+    }
+    if (!isRealmVariableValue(item.value)) return { code: 'realm_variable_value_invalid', field: `${path}/value` };
+    names.add(item.name);
+  }
+}
+
 export function readRealm(value: unknown): { realm: Realm } | RealmIssue {
   if (!objectWithKeys(value, [
     'specVersion', 'id', 'title', 'base', 'description', 'author', 'version', 'authorNotes', 'tags', 'avatar',
-    'characters', 'lorebook', 'sections', 'starts',
+    'characters', 'lorebook', 'sections', 'starts', 'variables',
   ])) {
     return { code: 'realm_invalid', field: '' };
   }
@@ -160,7 +199,7 @@ export function readRealm(value: unknown): { realm: Realm } | RealmIssue {
   if (value.avatar !== undefined && !readRealmAvatar(value.avatar)) return { code: 'realm_invalid', field: '/avatar' };
   const issue = checkCollection(value.characters, '/characters', isCharacter) ??
     checkCollection(value.lorebook, '/lorebook', isEntry) ?? checkCollection(value.sections, '/sections', isSection) ??
-    checkCollection(value.starts, '/starts', isStart);
+    checkCollection(value.starts, '/starts', isStart) ?? checkVariables(value.variables);
   if (issue) return issue;
   const realm = value as Realm;
   for (const [index, section] of (realm.sections ?? []).entries()) {

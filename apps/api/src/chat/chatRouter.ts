@@ -4,6 +4,7 @@ import {
 } from '@kuroko/contracts/chat';
 import { errorBody } from '@kuroko/contracts/errors';
 import { Router } from 'express';
+import { PromptTemplateError } from '../instructions/promptTemplate';
 import { jsonObject, jsonValue, record } from '../llm/json';
 import { LlmError } from '../llm/llmErrors';
 import { isToolCallId, isToolName } from '../llm/readLlmRequest';
@@ -88,7 +89,8 @@ export function createChatRouter(store: ReturnType<typeof createChatStore>, gmRe
       else response.json(result);
     } catch (error) {
       if (controller.signal.aborted || response.destroyed) return;
-      if (error instanceof GmReplyError) response.status(422).json(errorBody(error.code));
+      if (error instanceof PromptTemplateError) response.status(422).json(error.body);
+      else if (error instanceof GmReplyError) response.status(422).json(errorBody(error.code));
       else {
         const failure = timeout.aborted ? new LlmError('timeout') : error instanceof LlmError ? error : new LlmError('internal_error');
         response.status(failure.status).json(failure.body);

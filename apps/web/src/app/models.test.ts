@@ -290,9 +290,11 @@ function withSavedChats(
     return { ...saved, replyVariants: { ...chat.replyVariants, [replaceId]: { index: versions.length - 1, total: versions.length } } };
   }
   return async (input, init) => {
-    if (input === '/api/settings/instructions/active') {
+    if (typeof input === 'string' && input.startsWith('/api/settings/instructions/active?')) {
       assert.equal(init?.method, 'GET');
       assert.equal(new Headers(init?.headers).get('X-Kuroko-Account'), String(user.id));
+      const chatId = new URL(input, 'http://localhost').searchParams.get('chat');
+      assert.ok(chats.some(({ id }) => chatId === id));
       return Response.json({ text: activeInstruction() });
     }
     if (input === '/api/settings/tools') return Response.json({ enabled: [...enabled] });

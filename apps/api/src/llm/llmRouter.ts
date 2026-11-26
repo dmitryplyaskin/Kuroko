@@ -9,6 +9,7 @@ import {
 } from '@kuroko/contracts/tools';
 import type { createDelegateTask, createSubagentToolDescriptions } from '../tools/delegateTask';
 import { record } from './json';
+import { PromptTemplateError } from '../instructions/promptTemplate';
 import { LlmError } from './llmErrors';
 import type { createLlmService } from './llmService';
 import { readLlmRequest } from './readLlmRequest';
@@ -130,6 +131,10 @@ export function createLlmRouter(
       }
     } catch (error) {
       if (controller.signal.aborted || response.destroyed) return;
+      if (error instanceof PromptTemplateError && !response.headersSent) {
+        response.status(422).json(error.body);
+        return;
+      }
       const failure = error instanceof LlmError ? error : new LlmError('internal_error');
       if (response.headersSent) {
         response.end(sse({ type: 'error', ...failure.body }));

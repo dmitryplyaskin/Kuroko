@@ -3,7 +3,7 @@ import { useEffect, useId, useRef, type ReactNode } from 'react';
 import { Plus } from 'lucide-react';
 import { useI18n } from '../../shared/i18n/i18n';
 
-export const realmParts = ['base', 'characters', 'lorebook', 'starts'] as const;
+export const realmParts = ['base', 'characters', 'lorebook', 'starts', 'variables'] as const;
 type StandardPart = typeof realmParts[number];
 export type RealmPart = StandardPart | `section:${string}`;
 
@@ -19,8 +19,9 @@ function isStandardPart(part: RealmPart): part is StandardPart {
   return realmParts.some((name) => name === part);
 }
 
-export function RealmContents({ realm, part, onPart, onCreateSection, children }: {
+export function RealmContents({ realm, variableCount, part, onPart, onCreateSection, children }: {
   realm: Realm;
+  variableCount: number;
   part: RealmPart;
   onPart: (part: RealmPart) => void;
   onCreateSection: () => void;
@@ -54,7 +55,7 @@ export function RealmContents({ realm, part, onPart, onCreateSection, children }
         <nav className="realms-index" aria-label={t('realms.index')} ref={index}>
           <div className="realms-index-group">
             {realmParts.map((section) => sectionButton(section, t(`realms.part.${section}`),
-              section === 'base' ? undefined : realm[section]?.length ?? 0))}
+              section === 'base' ? undefined : section === 'variables' ? variableCount : realm[section]?.length ?? 0))}
           </div>
           {Boolean(realm.sections?.length) && <div className="realms-index-group realms-index-custom">
             {realm.sections?.map((section) => sectionButton(sectionPart(section.id), section.title.trim() || untitledSection, section.entries.length))}

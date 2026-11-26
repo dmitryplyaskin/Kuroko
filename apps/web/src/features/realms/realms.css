@@ -282,6 +282,21 @@
 .realms-editor .realms-paper { max-inline-size: 54rem; }
 .realms-edit-fields :is(input, textarea, button) { scroll-margin-block-start: 8rem; }
 .realms-record-editor, .realms-record-fields, .realms-reference-picker { display: grid; gap: 16px; }
+
+.realms-variable {
+  display: grid;
+  gap: 12px;
+  padding-block-end: 16px;
+  border-bottom: 1px solid var(--mantine-color-default-border);
+}
+
+.realms-variable > button,
+.realms-variables > button {
+  justify-self: start;
+}
+
+.realms-variable-help p { margin-block: 0 8px; }
+.realms-variable-help code { overflow-wrap: anywhere; }
 .realms-record-toolbar, .realms-section-settings {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;

@@ -1,4 +1,4 @@
-import { Button, Modal, Tabs, Textarea, TextInput } from '@mantine/core';
+import { Button, Modal, Tabs, TextInput } from '@mantine/core';
 import { agentDescriptionLimit, agentInstructionsLimit, readAgent, type AgentDraft, type AgentField, type SavedAgent } from '@kuroko/contracts/agents';
 import { subagentNameLimit } from '@kuroko/contracts/tools';
 import { useUnit } from 'effector-react';
@@ -7,6 +7,8 @@ import { useEffect, useRef, useState, type FormEvent } from 'react';
 import type { ActiveSession } from '../../platform/session/model';
 import { ApiError, errorCode, type ErrorCode } from '../../shared/http/api';
 import { useI18n } from '../../shared/i18n/i18n';
+import { PromptTextarea } from '../../shared/prompt-templates/TemplateHelp';
+import { insertPromptCode, PromptTemplateControls } from '../instructions/PromptTemplateControls';
 import { AgentTools } from './AgentTools';
 import { removeAgentFx, saveAgentFx } from './model';
 
@@ -20,7 +22,7 @@ export function AgentEditor({ session, initialAgent, onClose }: {
   const { t, number } = useI18n();
   const [save, remove, saving, removing] = useUnit([saveAgentFx, removeAgentFx, saveAgentFx.pending, removeAgentFx.pending]);
   const [agent, setAgent] = useState(initialAgent);
-  const [draft, setDraft] = useState<AgentDraft>(initialAgent ?? emptyDraft);
+  const [draft, setDraft] = useState<AgentDraft & Pick<SavedAgent, 'worldTitle'>>(initialAgent ?? emptyDraft);
   const [tab, setTab] = useState('definition');
   const [confirmLeave, setConfirmLeave] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -28,11 +30,13 @@ export function AgentEditor({ session, initialAgent, onClose }: {
   const [issue, setIssue] = useState<{ field?: AgentField; message: string }>();
   const [saved, setSaved] = useState(false);
   const fields = useRef<Partial<Record<AgentField, HTMLElement | null>>>({});
+  const instructionInput = useRef<HTMLTextAreaElement>(null);
   const backButton = useRef<HTMLButtonElement>(null);
   const keepButton = useRef<HTMLButtonElement>(null);
   const busy = saving || removing;
   const baseline = agent ?? emptyDraft;
   const dirty = draft.name !== baseline.name || draft.description !== baseline.description || draft.instructions !== baseline.instructions ||
+    (draft.worldId ?? null) !== (baseline.worldId ?? null) ||
     draft.tools.length !== baseline.tools.length || draft.tools.some((id) => !baseline.tools.includes(id));
 
   useEffect(() => {
@@ -42,10 +46,10 @@ export function AgentEditor({ session, initialAgent, onClose }: {
     return () => window.removeEventListener('beforeunload', confirmUnload);
   }, [dirty]);
 
-  function change(patch: Partial<AgentDraft>) {
+  function change(patch: Partial<AgentDraft & Pick<SavedAgent, 'worldTitle'>>) {
     setDraft((current) => ({ ...current, ...patch }));
     setSaved(false);
-    if (issue?.field && Object.hasOwn(patch, issue.field)) setIssue(undefined);
+    if (issue?.field && (Object.hasOwn(patch, issue.field) || (issue.field === 'instructions' && Object.hasOwn(patch, 'worldId')))) setIssue(undefined);
   }
 
   function invalid(field: AgentField, message: string) {
@@ -76,6 +80,9 @@ export function AgentEditor({ session, initialAgent, onClose }: {
       if (code === 'agent_invalid' && error instanceof ApiError && ['name', 'description', 'instructions', 'tools'].includes(error.field ?? '')) {
         const field = error.field as AgentField;
         invalid(field, t(`agents.invalid.${field}`));
+      } else if (code === 'prompt_template_invalid') {
+        const line = error instanceof ApiError ? error.field : undefined;
+        invalid('instructions', line ? t('templates.lineError', { line }) : t('error.prompt_template_invalid'));
       } else setIssue({ message: t(`error.${code}`) });
     }
   }
@@ -140,18 +147,28 @@ export function AgentEditor({ session, initialAgent, onClose }: {
             <TextInput name="name" label={t('agents.name')} placeholder={t('agents.nameExample')} required value={draft.name} disabled={busy} dir="auto"
               className="agent-name-field" ref={(input) => { fields.current.name = input; }} maxLength={subagentNameLimit * 2}
               error={issue?.field === 'name' && issue.message} onChange={(event) => change({ name: event.currentTarget.value })} />
-            <Textarea name="description" label={t('agents.capabilities')} placeholder={t('agents.capabilitiesExample')}
+            <PromptTextarea scope="agent" name="description" label={t('agents.capabilities')} placeholder={t('agents.capabilitiesExample')}
               required value={draft.description} disabled={busy} dir="auto"
               classNames={{ input: 'agent-writing-input', description: 'agent-text-count' }}
               ref={(input) => { fields.current.description = input; }} maxLength={agentDescriptionLimit} minRows={4} autosize
               inputWrapperOrder={['label', 'input', 'description', 'error']} description={textCount(draft.description, agentDescriptionLimit)}
               error={issue?.field === 'description' && issue.message} onChange={(event) => change({ description: event.currentTarget.value })} />
-            <Textarea name="instructions" label={t('agents.instructions')} placeholder={t('agents.instructionsExample')}
-              required value={draft.instructions} disabled={busy} dir="auto"
-              classNames={{ input: 'agent-writing-input', description: 'agent-text-count' }}
-              ref={(input) => { fields.current.instructions = input; }} maxLength={agentInstructionsLimit} minRows={12} autosize
-              inputWrapperOrder={['label', 'input', 'description', 'error']} description={textCount(draft.instructions, agentInstructionsLimit)}
-              error={issue?.field === 'instructions' && issue.message} onChange={(event) => change({ instructions: event.currentTarget.value })} />
+            <div>
+              <PromptTemplateControls session={session} text={draft.instructions} disabled={busy} worldId={draft.worldId} worldTitle={draft.worldTitle}
+                agentName={draft.name} onWorld={(world, code) => {
+                  const next = code ? insertPromptCode(instructionInput.current, draft.instructions, code, agentInstructionsLimit) : draft.instructions;
+                  if (next === undefined) return false;
+                  change({ instructions: next, worldId: world?.id ?? null, worldTitle: world?.title });
+                  return true;
+                }} />
+              <PromptTextarea scope="agent" name="instructions" label={t('agents.instructions')} placeholder={t('agents.instructionsExample')}
+                required value={draft.instructions} disabled={busy} dir="auto"
+                classNames={{ input: 'agent-writing-input', description: 'agent-text-count' }}
+                ref={(input) => { fields.current.instructions = input; instructionInput.current = input; }}
+                maxLength={agentInstructionsLimit} minRows={12} autosize
+                inputWrapperOrder={['label', 'input', 'description', 'error']} description={textCount(draft.instructions, agentInstructionsLimit)}
+                error={issue?.field === 'instructions' && issue.message} onChange={(event) => change({ instructions: event.currentTarget.value })} />
+            </div>
           </div>
         </Tabs.Panel>
         <Tabs.Panel value="tools" className="agent-tools-panel">

@@ -1,4 +1,4 @@
-import { readInstructionText, type InstructionSettings } from '@kuroko/contracts/instructions';
+import { readInstructionText, type InstructionDraft, type InstructionSettings } from '@kuroko/contracts/instructions';
 import type { PresetAction } from '@kuroko/contracts/presets';
 import { attach, createEffect, createEvent, createStore, sample } from 'effector';
 import { requestPresetAction } from '../../platform/presets';
@@ -7,21 +7,22 @@ import { inActiveSession, sessionRequest } from '../../platform/session/request'
 import { errorCode, type ErrorCode } from '../../shared/http/api';
 
 type Change = PresetAction | { kind: 'clear' };
-type Editor = { status: 'ready' | 'saving'; data: InstructionSettings; draft: string; error?: ErrorCode };
+type Draft = InstructionDraft & { worldTitle?: string };
+type Editor = { status: 'ready' | 'saving'; data: InstructionSettings; draft: Draft; error?: ErrorCode };
 type View = Editor | { status: 'idle' | 'loading' } | { status: 'error'; code: ErrorCode };
 
 const path = '/settings/instructions';
 const presetsPath = `${path}/presets`;
 export const instructionsOpened = createEvent();
-export const instructionDraftChanged = createEvent<string>();
+export const instructionDraftChanged = createEvent<Partial<Draft>>();
 
 const loadFx = createEffect((session: ActiveSession) => sessionRequest<InstructionSettings>(session, path));
-const saveFx = createEffect(({ session, change, text }: { session: ActiveSession; change: Change; text?: string }) => {
+const saveFx = createEffect(({ session, change, draft }: { session: ActiveSession; change: Change; draft?: InstructionDraft }) => {
   switch (change.kind) {
     case 'create':
-      return sessionRequest<InstructionSettings>(session, presetsPath, { method: 'POST', body: { name: change.name, text } });
+      return sessionRequest<InstructionSettings>(session, presetsPath, { method: 'POST', body: { name: change.name, ...draft } });
     case 'update':
-      return sessionRequest<InstructionSettings>(session, `${presetsPath}/${encodeURIComponent(change.id)}`, { method: 'PUT', body: { text } });
+      return sessionRequest<InstructionSettings>(session, `${presetsPath}/${encodeURIComponent(change.id)}`, { method: 'PUT', body: draft });
     case 'clear':
       return sessionRequest<InstructionSettings>(session, `${path}/active`, { method: 'DELETE' });
     default:
@@ -29,8 +30,9 @@ const saveFx = createEffect(({ session, change, text }: { session: ActiveSession
   }
 });
 
-function activeText({ activePresetId, presets }: InstructionSettings) {
-  return presets.find(({ id }) => id === activePresetId)?.text ?? '';
+function activeDraft({ activePresetId, presets }: InstructionSettings): Draft {
+  const active = presets.find(({ id }) => id === activePresetId);
+  return { text: active?.text ?? '', worldId: active?.worldId, worldTitle: active?.worldTitle };
 }
 
 const loaded = inActiveSession(loadFx.done, (session) => session);
@@ -42,15 +44,16 @@ const saveFailed = inActiveSession(saveFx.fail, ({ session }) => session)
 
 export const $instructions = createStore<View>({ status: 'idle' })
   .on(loadFx, () => ({ status: 'loading' }))
-  .on(loaded, (_, { result }) => ({ status: 'ready', data: result, draft: activeText(result) }))
+  .on(loaded, (_, { result }) => ({ status: 'ready', data: result, draft: activeDraft(result) }))
   .on(loadFailed, (_, { error }) => ({ status: 'error', code: errorCode(error) }))
-  .on(instructionDraftChanged, (view, draft) => view.status === 'ready' ? { ...view, draft } : view)
+  .on(instructionDraftChanged, (view, patch) => view.status === 'ready' ? { ...view, draft: { ...view.draft, ...patch } } : view)
   .on(saveFx, (view) => view.status === 'ready' ? { ...view, status: 'saving', error: undefined } : view)
   .on(saved, (view, { params: { change }, result }) => {
-    const text = activeText(result);
+    const next = activeDraft(result);
+    const previous = view.status === 'saving' ? activeDraft(view.data) : undefined;
     const keepDraft = view.status === 'saving' && (change.kind === 'rename' || change.kind === 'copy') &&
-      result.activePresetId === view.data.activePresetId && text === activeText(view.data);
-    return { status: 'ready', data: result, draft: keepDraft ? view.draft : text };
+      result.activePresetId === view.data.activePresetId && next.text === previous?.text && next.worldId === previous.worldId;
+    return { status: 'ready', data: result, draft: keepDraft ? view.draft : next };
   })
   .on(saveFailed, (view, { change, error }) => view.status === 'saving' ? {
     ...view, status: 'ready', error: change.kind === 'clear' ? errorCode(error) : undefined,
@@ -61,9 +64,9 @@ export const changeInstructionFx = attach({
   source: { session: $activeSession, view: $instructions },
   async effect({ session, view }, change: Change) {
     if (!session || view.status !== 'ready') return false;
-    const text = readInstructionText(view.draft);
+    const text = readInstructionText(view.draft.text);
     if ((change.kind === 'create' || change.kind === 'update') && !text) return false;
-    await saveFx({ session, change, text });
+    await saveFx({ session, change, draft: text ? { text, worldId: view.draft.worldId } : undefined });
     return !session.signal.aborted;
   },
 });

@@ -5,6 +5,7 @@ import { runToolCall, toolDeclarations } from '@kuroko/tool-runtime';
 import { createChatActivity, recordModelRequest } from '@kuroko/tool-runtime/chatActivity';
 import { randomUUID } from 'node:crypto';
 import type { createAgentsStore } from '../agents/agentsStore';
+import { PromptTemplateError, type createPromptRenderer } from '../instructions/promptTemplate';
 import { LlmError } from '../llm/llmErrors';
 import type { createLlmService } from '../llm/llmService';
 import type { createToolsStore } from './toolsStore';
@@ -14,10 +15,13 @@ const maxToolRounds = 16;
 export function createSubagentToolDescriptions(
   agents: Pick<ReturnType<typeof createAgentsStore>, 'catalog'>,
   tools: Pick<ReturnType<typeof createToolsStore>, 'temporaryAgentTools'>,
+  renderPrompt: ReturnType<typeof createPromptRenderer>,
 ) {
   return (userId: number, declarations: LlmTool[]) => {
     if (!declarations.some(({ name }) => name === 'subagent')) return declarations;
-    const catalog = agents.catalog(userId);
+    const catalog = agents.catalog(userId).map(({ id, name, description, worldId }) => ({
+      id, name, description: renderPrompt(userId, { agent: { name } }, worldId)(description).trim(),
+    }));
     const temporaryTools = tools.temporaryAgentTools(userId);
     return declarations.map((tool) => tool.name === 'subagent' ? {
       ...tool,
@@ -34,6 +38,7 @@ export function createDelegateTask(
   llm: Pick<ReturnType<typeof createLlmService>, 'generate'>,
   tools: Pick<ReturnType<typeof createToolsStore>, 'list' | 'subagentPresetId' | 'temporaryAgentTools'>,
   agents: Pick<ReturnType<typeof createAgentsStore>, 'find'>,
+  renderPrompt: ReturnType<typeof createPromptRenderer>,
 ) {
   return async (userId: number, { task, name: instanceName, agentId, history = [] }: DelegateTaskRequest, signal: AbortSignal,
     onActivity?: (entry: ChatActivityEntry) => void): Promise<DelegateTaskResult> => {
@@ -53,6 +58,15 @@ export function createDelegateTask(
       { role: 'assistant', parts: [{ type: 'text', text: answer }] },
     ]);
     const allowedTools = agent?.tools ?? tools.temporaryAgentTools(userId, enabled);
+    let customInstructions: string | undefined;
+    if (agent) {
+      try {
+        customInstructions = renderPrompt(userId, { agent: { name: name ?? agent.name } }, agent.worldId)(agent.instructions).trim();
+      } catch (error) {
+        if (!(error instanceof PromptTemplateError)) throw error;
+        return { result: 'The saved agent instructions could not be rendered.', isError: true };
+      }
+    }
     const instructions = [
       'Complete the latest delegated task. Use your earlier tasks and answers when relevant.',
       'Use the available tools as needed.',
@@ -60,7 +74,7 @@ export function createDelegateTask(
       allowedTools.includes('getRollDetails') && 'Use getRollDetails for rolls already made in this delegated task.',
       'Return a concise result for the calling model and mention any missing information.',
       ...(name ? [`Your subagent name is the label ${JSON.stringify(name)}.`] : []),
-      ...(agent ? [`Saved agent instructions:\n${agent.instructions}`] : []),
+      ...(customInstructions ? [`Saved agent instructions:\n${customInstructions}`] : []),
     ].filter(Boolean).join('\n');
     const messages: LlmMessage[] = [{ role: 'system', content: instructions }, ...prior, { role: 'user', content: task }];
     const declarations = toolDeclarations(allowedTools);

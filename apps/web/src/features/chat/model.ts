@@ -297,9 +297,9 @@ const generateReplyFx = createEffect(async ({ reply: { generation, replaceId }, 
   const { signal } = generation.controller;
   try {
     const history = replaceId === undefined ? chat.messages : chat.messages.slice(0, -1);
-    const text = await streamChatReply(generation.session, history, generation.enabledTools, signal,
+    const text = await streamChatReply(generation.session, chat.id, history, generation.enabledTools, signal,
       (delta) => publish({ generation, ...delta }), (text, toolCalls, reasoningBlocks) => report({ generation, text, toolCalls, reasoningBlocks }),
-      (active) => reportSubagent({ generation, active }), start, onActivity, replaceId !== undefined || chat.replyVariants !== undefined);
+      (active) => reportSubagent({ generation, active }), start, onActivity, replaceId !== undefined || chat.replyVariants !== undefined, replaceId);
     reply.finish('completed', {});
     return text;
   } catch (error) {

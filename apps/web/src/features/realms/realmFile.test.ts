@@ -35,7 +35,9 @@ test('imports a SillyTavern JSON as a valid realm with linked starts and leaves 
 });
 
 test('keeps native Realm imports and recognizes flat SillyTavern cards with a scenario-only start', async () => {
-  const native = { specVersion: '0.1.0', id: 'r1', title: 'Kuroko', base: 'World' };
+  const native = { specVersion: '0.1.0', id: 'r1', title: 'Kuroko', base: 'World', variables: [
+    { name: 'difficulty', value: 4 }, { name: 'night', value: true }, { name: 'routes', value: ['sea', 'forest'] },
+  ] };
   assert.deepEqual(await readRealmFile(new File([JSON.stringify(native)], 'realm.json'), labels), { source: 'kuroko', realm: native });
   const flat = { name: 'Лина', scenario: 'На станции' };
   const { realm } = await readRealmFile(new File([JSON.stringify(flat)], 'flat.json'), labels);
