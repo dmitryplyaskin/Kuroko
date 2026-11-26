@@ -34,7 +34,8 @@ function recordedRows(entries: ActivityEntry[], agentId?: string) {
   const rows: LogRow[] = [];
   let lastModel: string | undefined;
   let summary: LogEvent | undefined;
-  const events = entries.filter((entry): entry is LogEvent => entry.agentId === agentId && entry.kind !== 'agent');
+  const events = entries.filter((entry): entry is LogEvent =>
+    entry.agentId === agentId && entry.kind !== 'agent' && entry.kind !== 'instruction');
   for (const event of events) {
     if (event.kind === 'reply') {
       summary ??= event;
@@ -68,7 +69,7 @@ function withLatestText(rows: LogRow[], reply: ChatMessage, pending: boolean) {
     ? rows.map((row) => row === target ? { ...row, kind: 'assistant' as const, text: remaining } : row)
     : rows;
 
-  if (!remaining && (!pending || rows.length)) return rows;
+  if (!remaining && (!pending || rows.some(({ kind }) => kind !== 'user' && kind !== 'instruction'))) return rows;
   return [...rows, { ...messageRow(reply, remaining), pending }];
 }
 
@@ -85,8 +86,17 @@ export function chatLogTurns(entries: ActivityEntry[], messages: ChatMessage[]):
   }
   for (const entry of entries) turnFor(entry.promptId).entries.push(entry);
 
+  let previousInstruction: string | undefined;
   return [...turns].sort(([a], [b]) => a - b).map(([id, { user, reply, entries }], index) => {
-    const rows = user ? [messageRow(user)] : [];
+    const rows: LogRow[] = [];
+    const instruction = entries.find((entry): entry is LogEvent => !entry.agentId && entry.kind === 'instruction');
+    if (instruction && typeof instruction.details.instruction === 'string') {
+      if (instruction.details.instruction !== previousInstruction) rows.push(eventRow(instruction));
+      previousInstruction = instruction.details.instruction;
+    } else if (reply || entries.some(({ agentId, kind }) => !agentId && kind === 'model')) {
+      previousInstruction = undefined;
+    }
+    if (user) rows.push(messageRow(user));
     if (reply && (!entries.length || entries[0]?.legacyCallId !== undefined)) rows.push(...savedRows(reply, entries));
     else {
       const recorded = recordedRows(entries);
@@ -122,12 +132,9 @@ export function agentLogTurns(tasks: AgentTask[]): LogTurn[] {
 }
 
 export function withLiveLogReply(turns: LogTurn[], reply: ChatMessage): LogTurn[] {
-  return turns.map((turn) => {
-    if (turn.id !== reply.id - 1) return turn;
-    const [first] = turn.rows;
-    const user = first?.kind === 'user' ? [first] : [];
-    return { ...turn, rows: [...user, ...withLatestText(turn.rows.slice(user.length), reply, true)] };
-  });
+  return turns.map((turn) => turn.id === reply.id - 1
+    ? { ...turn, rows: withLatestText(turn.rows, reply, true) }
+    : turn);
 }
 
 function preview(value: JsonValue | undefined, limit?: number) {
@@ -140,6 +147,7 @@ function preview(value: JsonValue | undefined, limit?: number) {
 export function logRowPreview({ kind, text, event }: LogRow) {
   if (text) return text;
   if (!event) return '';
+  if (kind === 'instruction') return preview(event.details.instruction, 200);
   if (kind === 'tool') {
     const args = preview(event.details.arguments, 140);
     const result = preview(event.details.result, 200);

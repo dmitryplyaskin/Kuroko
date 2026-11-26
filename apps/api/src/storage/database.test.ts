@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { openDatabase } from './database';
 import { createProviderKeyStore } from '../connection/providerKeyStore';
 
-test.each([1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15])('upgrades a version %i SQLite database without losing user data', (version) => {
+test.each([1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16])('upgrades a version %i SQLite database without losing user data', (version) => {
   const directory = mkdtempSync(join(tmpdir(), 'kuroko-sqlite-test-'));
   const path = join(directory, 'test.sqlite');
   const vaultKey = randomBytes(32);
@@ -20,10 +20,11 @@ test.each([1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15])('upgrades a version 
     const old = openDatabase(path, vaultKey);
     try {
       old.run('INSERT INTO users (username, username_key, password_hash) VALUES (?, ?, ?)', ['Лина', 'лина', 'test-hash']);
-      old.exec('DROP TABLE temporary_agent_tools');
+      old.exec('DROP TABLE instruction_presets');
+      if (version < 16) old.exec('DROP TABLE temporary_agent_tools');
       if (version < 15) old.exec('DROP TABLE agents');
       else {
-        old.exec('CREATE UNIQUE INDEX agents_v15_name ON agents (user_id, name_key)');
+        if (version < 16) old.exec('CREATE UNIQUE INDEX agents_v15_name ON agents (user_id, name_key)');
         old.run('INSERT INTO agents (id, user_id, name, name_key, description, instructions, tools_json) VALUES (?, ?, ?, ?, ?, ?, ?)',
           Object.values(legacyAgent));
       }
@@ -61,7 +62,8 @@ test.each([1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15])('upgrades a version 
 
     const migrated = openDatabase(path, vaultKey);
     try {
-      expect(migrated.query('PRAGMA user_version').get()).toEqual({ user_version: 16 });
+      expect(migrated.query('PRAGMA user_version').get()).toEqual({ user_version: 17 });
+      expect(migrated.query('SELECT * FROM instruction_presets').all()).toEqual([]);
       expect(migrated.query('SELECT * FROM agents').all()).toEqual(version < 15 ? [] : [legacyAgent]);
       expect(migrated.query('SELECT * FROM temporary_agent_tools').all()).toEqual([]);
       expect(migrated.query('SELECT * FROM chat_reply_variants').all()).toEqual([]);
@@ -103,6 +105,7 @@ test('imports a previously shared encrypted key into separate provider managers 
       if (!shared) throw new Error('Missing legacy key');
       store.create(1, 'openai', 'Unlinked key', 'test-unlinked-value');
       old.exec(`
+        DROP TABLE instruction_presets;
         DROP TABLE temporary_agent_tools;
         DROP TABLE agents;
         DROP TABLE chat_reply_variants;

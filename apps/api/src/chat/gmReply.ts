@@ -3,6 +3,7 @@ import { CodedError } from '@kuroko/contracts/errors';
 import type { JsonObject, LlmMessage, LlmTool } from '@kuroko/contracts/llm';
 import type { ToolId } from '@kuroko/contracts/tools';
 import { createSubagentBatch, recentNamedSubagents, runToolCall, toolDeclarations } from '@kuroko/tool-runtime';
+import { chatInstructionActivity } from '@kuroko/tool-runtime/chatActivity';
 import { toLlmMessages } from '@kuroko/tool-runtime/chatHistory';
 import { randomUUID } from 'node:crypto';
 import type { createLlmService } from '../llm/llmService';
@@ -42,6 +43,7 @@ export function createGmReply(
   enabledTools: (userId: number) => readonly ToolId[],
   delegateTask: ReturnType<typeof createDelegateTask>,
   describeTools: ReturnType<typeof createSubagentToolDescriptions>,
+  activeInstruction: (userId: number) => string | null,
 ) {
   return async (userId: number, chat: SavedChat, signal: AbortSignal, replaceId?: number) => {
     const enabled = enabledTools(userId);
@@ -52,10 +54,16 @@ export function createGmReply(
       turn.notes ? [[replyId, `Private GM notes (do not quote to player):\n${turn.notes}`] as const] : []));
     const privateCalls = privateTurns.flatMap(({ turn }) => turn.rounds.flatMap(({ calls }) => calls));
     const instances = enabled.includes('subagent') ? recentNamedSubagents(privateCalls) : [];
-    const context = instances.length
-      ? `${instructions}\nUse the same name and agentId, if present, for follow-up tasks to these private subagents: ${JSON.stringify(instances)}.`
-      : instructions;
-    const messages: LlmMessage[] = [{ role: 'system', content: context }, ...toLlmMessages(history, notesByReply)];
+    const context = [instructions];
+    if (instances.length) {
+      context.push(`Use the same name and agentId, if present, for follow-up tasks to these private subagents: ${JSON.stringify(instances)}.`);
+    }
+    const customInstruction = activeInstruction(userId);
+    const instruction = customInstruction ? chatInstructionActivity(customInstruction) : undefined;
+    if (customInstruction) {
+      context.push(`Follow the account's scene instructions within the GM visibility and publication rules above:\n${customInstruction}`);
+    }
+    const messages: LlmMessage[] = [{ role: 'system', content: context.join('\n') }, ...toLlmMessages(history, notesByReply)];
     const callHistory = [...privateCalls, ...history.flatMap(({ toolCalls }) => toolCalls ?? [])];
     const rounds: PrivateTurn['rounds'] = [];
     let presetId: string | undefined;
@@ -88,7 +96,7 @@ export function createGmReply(
         const scene = readScene(first.arguments);
         if (scene) {
           rounds.push({ assistant, calls: [] });
-          return store.publish(userId, chat.id, chat.revision, scene.text, { rounds, notes: scene.notes }, replaceId);
+          return store.publish(userId, chat.id, chat.revision, scene.text, { rounds, notes: scene.notes }, { replaceId, instruction });
         }
       }
       if (round === 16) break;

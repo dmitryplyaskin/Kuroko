@@ -41,7 +41,7 @@ export function chatReplyPrompt(messages: readonly ChatMessage[], replaceId?: nu
 export type ChatSummary = { id: string; title: string; updatedAt: number };
 export const chatTitleLimit = 64;
 
-export const chatActivityKinds = ['reply', 'model', 'tool', 'agent'] as const;
+export const chatActivityKinds = ['reply', 'instruction', 'model', 'tool', 'agent'] as const;
 export const chatActivityStatuses = ['running', 'completed', 'failed', 'stopped'] as const;
 export type ChatActivityEntry = {
   id: string;

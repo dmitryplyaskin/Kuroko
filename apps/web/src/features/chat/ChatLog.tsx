@@ -1,5 +1,5 @@
 import { Button, Tabs, TextInput } from '@mantine/core';
-import { ArrowDownRight, Bot, CircleAlert, Cpu, Layers, MessageSquare, Search, UserRound, Wrench, X } from 'lucide-react';
+import { ArrowDownRight, Bot, CircleAlert, Cpu, Layers, MessageSquare, NotebookText, Search, UserRound, Wrench, X } from 'lucide-react';
 import { memo, useId, useLayoutEffect, useMemo, useRef, useState, type Ref } from 'react';
 import type { ChatMessage } from '@kuroko/contracts/chat';
 import type { JsonValue } from '@kuroko/contracts/llm';
@@ -10,12 +10,13 @@ import { ChatText } from './ChatText';
 import './chatLog.css';
 
 const rowLabels = {
-  user: 'chat.logUser', assistant: 'chat.logAssistant', model: 'common.model', tool: 'chat.eventTool', reply: 'chat.eventReply',
+  user: 'chat.logUser', assistant: 'chat.logAssistant', instruction: 'chat.logInstruction',
+  model: 'common.model', tool: 'chat.eventTool', reply: 'chat.eventReply',
 } as const;
-const rowIcons = { user: UserRound, assistant: MessageSquare, model: Cpu, tool: Wrench, reply: CircleAlert };
+const rowIcons = { user: UserRound, assistant: MessageSquare, instruction: NotebookText, model: Cpu, tool: Wrench, reply: CircleAlert };
 const detailLabels = {
   request: 'chat.eventRequest', response: 'chat.eventResponse', arguments: 'chat.toolArguments', result: 'chat.toolResult',
-  modelResult: 'chat.eventModelResult', error: 'chat.eventError',
+  modelResult: 'chat.eventModelResult', error: 'chat.eventError', instruction: 'instructions.text',
 } as const;
 const detailTabs = {
   request: ['request'],
@@ -156,7 +157,9 @@ function LogEventRow({ row, current, inspectorId, select }: {
         </span>
         <span className="chat-log-row-meta">
           <LogStatus row={row} />
-          <time dateTime={new Date(row.time).toISOString()} title={date.format(row.time)}>{clockWithSeconds.format(row.time)}</time>
+          {row.kind !== 'instruction' && <time dateTime={new Date(row.time).toISOString()} title={date.format(row.time)}>
+            {clockWithSeconds.format(row.time)}
+          </time>}
         </span>
       </button>
     </li>

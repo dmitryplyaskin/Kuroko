@@ -14,6 +14,8 @@ import { createConnectionStore } from '../connection/connectionStore';
 import { createConnectionRouter } from '../connection/connectionRouter';
 import { createProviderConnections } from '../connection/providerConnections';
 import { createProviderKeyStore } from '../connection/providerKeyStore';
+import { createInstructionRouter } from '../instructions/instructionRouter';
+import { createInstructionStore } from '../instructions/instructionStore';
 import { createLlmRouter } from '../llm/llmRouter';
 import { createLlmService } from '../llm/llmService';
 import { createRealmRouter } from '../realms/realmRouter';
@@ -30,13 +32,15 @@ export function createApiRouter(db: Database, vaultKey: Buffer, secureCookie: bo
   const connections = createProviderConnections();
   const llm = createLlmService(presets, keys, connections);
   const chats = createChatStore(db);
+  const instructions = createInstructionStore(db);
   const tools = createToolsStore(db);
   const agents = createAgentsStore(db);
   const delegateTask = createDelegateTask(llm, tools, agents);
   const describeTools = createSubagentToolDescriptions(agents, tools);
 
   router.use('/llm', requireUser, json({ limit: '4mb' }), createLlmRouter(llm, delegateTask, describeTools));
-  router.use('/chats', requireUser, json({ limit: '8mb' }), createChatRouter(chats, createGmReply(chats, llm, tools.list, delegateTask, describeTools)));
+  router.use('/chats', requireUser, json({ limit: '8mb' }), createChatRouter(chats,
+    createGmReply(chats, llm, tools.list, delegateTask, describeTools, instructions.activeText)));
   router.use('/realms', requireUser, json({ limit: realmRequestByteLimit }), createRealmRouter(createRealmStore(db)));
   router.use(json({ limit: '128kb' }));
   router.get('/health', (_request, response) => {
@@ -45,6 +49,7 @@ export function createApiRouter(db: Database, vaultKey: Buffer, secureCookie: bo
   router.use('/auth', authRouter);
   router.use('/agents', requireUser, createAgentsRouter(agents));
   router.use('/settings/chat', requireUser, createChatSettingsRouter(createChatSettingsStore(db)));
+  router.use('/settings/instructions', requireUser, createInstructionRouter(instructions));
   router.use('/settings/tools', requireUser, createToolsRouter(tools, presets.listPresets));
   router.use('/settings/connection', requireUser, createConnectionRouter(presets, keys, connections));
 

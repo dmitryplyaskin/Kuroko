@@ -1,6 +1,10 @@
 import type { ChatActivityEntry } from '@kuroko/contracts/chat';
 import type { JsonObject, LlmCompletion, LlmRequest } from '@kuroko/contracts/llm';
 
+export function chatInstructionActivity(instruction: string): ChatActivityEntry {
+  return { id: '0', kind: 'instruction', status: 'completed', time: Date.now(), details: { instruction } };
+}
+
 export function createChatActivity(report: (entry: ChatActivityEntry) => void) {
   let nextId = 0;
   return (kind: ChatActivityEntry['kind'], details: JsonObject, name?: string) => {

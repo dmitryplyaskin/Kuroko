@@ -6,6 +6,7 @@ import type { AgentDraft, SavedAgent } from '@kuroko/contracts/agents';
 import type { ChatActivityTurn, ChatMessage, ChatSnapshot, ChatToolCall, SavedChat } from '@kuroko/contracts/chat';
 import { defaultChatSettings } from '@kuroko/contracts/chatSettings';
 import { defaultConnectionSettings, type ConnectionState, type ProviderKey } from '@kuroko/contracts/connectionSettings';
+import { instructionTextLimit, type InstructionSettings } from '@kuroko/contracts/instructions';
 import type { LlmRequest } from '@kuroko/contracts/llm';
 import type { Realm, RealmList, SavedRealm } from '@kuroko/contracts/realms';
 import type { DelegateTaskResult, ToolsResponse } from '@kuroko/contracts/tools';
@@ -332,6 +333,59 @@ test('manages private tool presets and applies or clears enabled tools as a whol
   expect(createdActive.status).toBe(201);
   const { activePresetId, presets } = await createdActive.json() as ToolsResponse;
   expect(presets?.find(({ id }) => id === activePresetId)).toMatchObject({ name: 'Активный', enabled: [] });
+});
+
+test('manages private chat instruction presets and reads the current selection across sessions', async () => {
+  await register('instructions-owner');
+  await register('instructions-other');
+  const cookie = sessionCookie(await login('instructions-owner')).token;
+  const other = sessionCookie(await login('instructions-other')).token;
+  const path = '/settings/instructions';
+  const create = (name: string, text: string) => request(`${path}/presets`, { method: 'POST', cookie, body: { name, text } });
+  const active = async (session = cookie) => (await request(`${path}/active`, { cookie: session })).json();
+  const instruction = 'Говори кратко.\nСохраняй язык игрока.';
+
+  expect((await request(`${path}/active`)).status).toBe(401);
+  expect(await active()).toEqual({ text: null });
+  const invalidText = await create('Диалог', '  ');
+  expect(invalidText.status).toBe(400);
+  expect(await invalidText.json()).toEqual({ code: 'instruction_text_invalid', field: 'text' });
+  expect((await create('Диалог', 'x'.repeat(instructionTextLimit + 1))).status).toBe(400);
+  const created = await create(' Диалог ', `  ${instruction}  `);
+  expect(created.status).toBe(201);
+  const { activePresetId, presets: [preset] } = await created.json() as InstructionSettings;
+  if (!activePresetId || !preset) throw new Error('Expected a new active instruction preset');
+  expect(preset).toEqual({ id: activePresetId, name: 'Диалог', text: instruction });
+  expect((await create('Диалог', 'Другая инструкция')).status).toBe(409);
+  expect(await active()).toEqual({ text: instruction });
+  expect(await active(other)).toEqual({ text: null });
+  expect(await (await request(path, { cookie: other })).json()).toEqual({ activePresetId: null, presets: [] });
+
+  const presetPath = `${path}/presets/${activePresetId}`;
+  expect((await request(`${presetPath}/apply`, { method: 'PUT', cookie: other })).status).toBe(404);
+  expect((await request(presetPath, { method: 'PUT', cookie: other, body: { text: 'Чужой текст' } })).status).toBe(404);
+  const copied = await request(`${presetPath}/copy`, { method: 'POST', cookie, body: { name: 'Копия' } });
+  expect(copied.status).toBe(201);
+  const copyState = await copied.json() as InstructionSettings;
+  const copy = copyState.presets.find(({ name }) => name === 'Копия')!;
+  expect(copyState.activePresetId).toBe(activePresetId);
+  expect(copy.text).toBe(instruction);
+  const renamed = await request(`${presetPath}/rename`, { method: 'PUT', cookie, body: { name: 'Сцена' } });
+  expect(await renamed.json()).toMatchObject({ activePresetId, presets: expect.arrayContaining([{ ...preset, name: 'Сцена' }]) });
+
+  const second = sessionCookie(await login('instructions-owner')).token;
+  const copyPath = `${path}/presets/${copy.id}`;
+  expect((await request(`${copyPath}/apply`, { method: 'PUT', cookie: second })).status).toBe(200);
+  expect((await request(copyPath, { method: 'PUT', cookie, body: { text: 'Подробно опиши сцену.' } })).status).toBe(200);
+  expect(await active(second)).toEqual({ text: 'Подробно опиши сцену.' });
+  expect(await (await request(`${path}/active`, { method: 'DELETE', cookie })).json()).toMatchObject({
+    activePresetId: null, presets: expect.arrayContaining([{ ...copy, text: 'Подробно опиши сцену.' }]),
+  });
+  expect(await active(second)).toEqual({ text: null });
+  expect((await request(`${copyPath}/apply`, { method: 'PUT', cookie })).status).toBe(200);
+  expect(await (await request(copyPath, { method: 'DELETE', cookie })).json()).toEqual({
+    activePresetId: null, presets: [{ ...preset, name: 'Сцена' }],
+  });
 });
 
 test('stores chats by account and rejects stale writes without losing the saved history', async () => {
@@ -1029,6 +1083,8 @@ test('restores a named GM subagent’s private history across published scenes',
   const cookie = sessionCookie(await login('gm-subagent-owner')).token;
   const presetId = await saveGenerationPreset(cookie, 'openrouter', 'gm-worker-test-key', 'author/worker');
   await saveGenerationPreset(cookie, 'openai', 'gm-main-test-key', 'main-model');
+  const instruction = 'Описывай сцену в настоящем времени.';
+  expect((await request('/settings/instructions/presets', { method: 'POST', cookie, body: { name: 'Стиль', text: instruction } })).status).toBe(201);
   expect((await request('/settings/tools/subagent-connection', { method: 'PUT', cookie, body: { presetId } })).status).toBe(200);
   expect((await request('/settings/tools/subagent', { method: 'PUT', cookie, body: { enabled: true } })).status).toBe(200);
   const chat = await (await request('/chats', { method: 'POST', cookie })).json() as SavedChat;
@@ -1043,9 +1099,11 @@ test('restores a named GM subagent’s private history across published scenes',
   const followUp = 'Развей тайну короткой подсказкой.';
   const secondAnswer = 'Из подвала слышен кашель.';
   const models: string[] = [];
+  const prompts: { role: string; content: string }[] = [];
   const mock = mockGeneration((_url, init) => {
     const body = JSON.parse(String(init?.body));
     models.push(body.model);
+    prompts.push(body.messages[0]);
     const round = models.length;
     if (round === 1 || round === 4) {
       expect(body.tools.map(({ function: { name } }: { function: { name: string } }) => name)).toEqual(['subagent', 'publishScene']);
@@ -1079,6 +1137,15 @@ test('restores a named GM subagent’s private history across published scenes',
     const published = await second.text();
     for (const secret of [answer, secondAnswer, name]) expect(published).not.toContain(secret);
     expect(models).toEqual(['main-model', 'author/worker', 'main-model', 'main-model', 'author/worker', 'main-model']);
+    for (const [index, { role, content }] of prompts.entries()) {
+      expect(role).toBe('system');
+      if (models[index] === 'main-model') {
+        expect(content).toContain(instruction);
+        expect(content).toContain('Only text sent via publishScene is shown to the player.');
+      } else {
+        expect(content).not.toContain(instruction);
+      }
+    }
   } finally {
     mock.mockRestore();
   }
@@ -1253,7 +1320,7 @@ test('keeps chat reply variants in order and restores their tools and activity',
   expect((await select(deleted, 1)).status).toBe(409);
 });
 
-test('regenerates only the latest GM reply and restores its private notes when switching variants', async () => {
+test('regenerates only the latest GM reply and restores its instructions and private notes when switching variants', async () => {
   await register('gm-regenerate-owner');
   const cookie = sessionCookie(await login('gm-regenerate-owner')).token;
   await saveGenerationPreset(cookie, 'openai', 'gm-regenerate-test-key');
@@ -1268,6 +1335,18 @@ test('regenerates only the latest GM reply and restores its private notes when s
     request(`${path}/gm-reply`, { method: 'POST', cookie, body: { revision: chat.revision, replaceId } });
   const readNotes = () => db.query<{ turn_json: string }, []>('SELECT turn_json FROM chat_private_turns ORDER BY reply_id').all()
     .map(({ turn_json }) => JSON.parse(turn_json).notes);
+  const useInstruction = (name: string, text: string) => request('/settings/instructions/presets', {
+    method: 'POST', cookie, body: { name, text },
+  });
+  const instructionLog = (chat: SavedChat) => chat.activity?.map(({ promptId, entries }) => ({
+    promptId, entries: entries.map(({ kind, details }) => ({ kind, details })),
+  }));
+  const originalInstruction = 'Описывай звуки.';
+  const replacementInstruction = 'Делай описания короткими.';
+  const logged = (promptId: number, instruction: string) => ({
+    promptId, entries: [{ kind: 'instruction' as const, details: { instruction } }],
+  });
+  expect((await useInstruction('Подробности', originalInstruction)).status).toBe(201);
   let scene: { text: string; notes: string } | undefined = { text: 'Видна дверь.', notes: 'Ключ лежит в кармане.' };
   const histories: string[] = [];
   const mock = mockGeneration((_url, init) => {
@@ -1284,6 +1363,7 @@ test('regenerates only the latest GM reply and restores its private notes when s
     const next = await reply(nextPrompt);
     expect(next.status).toBe(200);
     const saved = await next.json() as SavedChat;
+    expect(instructionLog(saved)).toEqual([logged(1, originalInstruction), logged(3, originalInstruction)]);
     expect((await reply(saved, 2)).status).toBe(409);
     expect((await reply(nextPrompt, 4)).status).toBe(409);
     expect(histories).toHaveLength(2);
@@ -1294,6 +1374,7 @@ test('regenerates only the latest GM reply and restores its private notes when s
     expect(readNotes()).toEqual(['Ключ лежит в кармане.', 'По коридору идёт сторож.']);
 
     scene = { text: 'Слышен скрип.', notes: 'Окно открыто.' };
+    expect((await useInstruction('Кратко', replacementInstruction)).status).toBe(201);
     const replacement = await reply(saved, 4);
     expect(replacement.status).toBe(200);
     const regenerated = await replacement.json() as SavedChat;
@@ -1305,6 +1386,8 @@ test('regenerates only the latest GM reply and restores its private notes when s
     expect(histories.at(-1)).toContain('Прислушиваюсь.');
     expect(histories.at(-1)).not.toContain('Слышны шаги.');
     expect(histories.at(-1)).not.toContain('По коридору идёт сторож.');
+    expect(histories.at(-1)).toContain(replacementInstruction);
+    expect(instructionLog(regenerated)).toEqual([logged(1, originalInstruction), logged(3, replacementInstruction)]);
     expect(readNotes()).toEqual(['Ключ лежит в кармане.', 'Окно открыто.']);
     expect(await (await request(path, { cookie })).json()).toEqual(regenerated);
     expect(regenerated.replyVariants).toEqual({ 4: { index: 1, total: 2 } });
@@ -1313,7 +1396,9 @@ test('regenerates only the latest GM reply and restores its private notes when s
       method: 'PUT', cookie, body: { revision: regenerated.revision, replyId: 4, index: 0 },
     });
     expect(restored.status).toBe(200);
-    expect(await restored.json()).toMatchObject({ messages: saved.messages, replyVariants: { 4: { index: 0, total: 2 } } });
+    const restoredChat = await restored.json() as SavedChat;
+    expect(restoredChat).toMatchObject({ messages: saved.messages, replyVariants: { 4: { index: 0, total: 2 } } });
+    expect(instructionLog(restoredChat)).toEqual(instructionLog(saved));
     expect(readNotes()).toEqual(['Ключ лежит в кармане.', 'По коридору идёт сторож.']);
   } finally {
     mock.mockRestore();
@@ -1640,6 +1725,7 @@ test('deletes only the confirmed account and cascades to its sessions and secret
       name: 'Default preset', provider: 'openai', keyId: id, settings: { ...defaultConnectionSettings, model: 'test-model' },
     } })).status).toBe(201);
     expect((await request('/settings/chat', { method: 'PUT', cookie, body: defaultChatSettings })).status).toBe(200);
+    expect((await request('/settings/instructions/presets', { method: 'POST', cookie, body: { name: 'Style', text: name } })).status).toBe(201);
   }
 
   expect((await request(path, { method: 'DELETE', cookie: first, body, withHeader: false })).status).toBe(403);
@@ -1657,6 +1743,7 @@ test('deletes only the confirmed account and cascades to its sessions and secret
   expect(db.query('SELECT name FROM secrets').all()).toEqual([{ name: 'Other secret' }]);
   expect(db.query('SELECT user_id FROM connection_presets').all()).toEqual([{ user_id: otherId }]);
   expect(db.query('SELECT user_id FROM chat_settings').all()).toEqual([{ user_id: otherId }]);
+  expect(db.query('SELECT user_id FROM instruction_presets').all()).toEqual([{ user_id: otherId }]);
   expect((await request('/auth/session', { cookie: otherCookie })).status).toBe(200);
 
   expect((await register('owner')).status).toBe(201);

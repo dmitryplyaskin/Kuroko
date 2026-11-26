@@ -275,7 +275,9 @@ async function openChat() {
   return scope;
 }
 
-function withSavedChats(generate: typeof fetch, publishScene?: (chat: SavedChat) => Promise<string>): typeof fetch {
+function withSavedChats(
+  generate: typeof fetch, publishScene?: (chat: SavedChat) => Promise<string>, activeInstruction: () => string | null = () => null,
+): typeof fetch {
   const chats: SavedChat[] = [];
   const enabled = new Set<ToolId>();
   const replyVersions = new Map<string, ChatMessage[]>();
@@ -288,6 +290,11 @@ function withSavedChats(generate: typeof fetch, publishScene?: (chat: SavedChat)
     return { ...saved, replyVariants: { ...chat.replyVariants, [replaceId]: { index: versions.length - 1, total: versions.length } } };
   }
   return async (input, init) => {
+    if (input === '/api/settings/instructions/active') {
+      assert.equal(init?.method, 'GET');
+      assert.equal(new Headers(init?.headers).get('X-Kuroko-Account'), String(user.id));
+      return Response.json({ text: activeInstruction() });
+    }
     if (input === '/api/settings/tools') return Response.json({ enabled: [...enabled] });
     if (typeof input === 'string' && input.startsWith('/api/settings/tools/')) {
       const id = input.split('/').at(-1);
@@ -478,6 +485,9 @@ test('chat streams reasoning separately, restores it, and sends the selected con
 test('chat regenerates only the last turn and keeps the previous answer if the replacement fails or stops', async () => {
   const originalFetch = globalThis.fetch;
   const requests: unknown[] = [];
+  const initialInstruction = { role: 'system', content: 'Пиши кратко.' };
+  const nextInstruction = { role: 'system', content: 'Добавь детали.' };
+  let instruction: string | null = initialInstruction.content;
   const waiting = Promise.withResolvers<void>();
   globalThis.fetch = withSavedChats(async (input, init) => {
     assert.equal(input, '/api/llm/generate');
@@ -492,18 +502,21 @@ test('chat regenerates only the last turn and keeps the previous answer if the r
     });
     const text = requests.length === 1 ? 'Первый ответ' : requests.length === 3 ? 'Исходный ответ' : 'Новый ответ';
     return new Response(completed(text), { headers: sseHeaders });
-  });
+  }, undefined, () => instruction);
   const scope = await openChat();
   const regenerate = (id: number) => allSettled(messageRegenerateRequested, { scope, params: id });
   try {
     await allSettled(chatDraftChanged, { scope, params: 'Первый запрос' });
     await allSettled(chatSendRequested, { scope });
+    assert.deepEqual(requests[0], [initialInstruction, { role: 'user', content: 'Первый запрос' }]);
+    assert.equal(scope.getState($chatActivity)[0]?.entries.find(({ kind }) => kind === 'instruction')?.details.instruction, initialInstruction.content);
     await allSettled(chatDraftChanged, { scope, params: 'Второй запрос' });
     await allSettled(chatSendRequested, { scope });
     await allSettled(chatDraftChanged, { scope, params: 'Несохранённый черновик' });
     assert.equal(scope.getState($chatRegenerateId), 3);
     await regenerate(2);
     assert.equal(requests.length, 2);
+    instruction = nextInstruction.content;
     await regenerate(3);
     assert.equal(scope.getState($chatError), null);
     assert.equal(scope.getState($chatRegenerateId), 4);
@@ -534,13 +547,18 @@ test('chat regenerates only the last turn and keeps the previous answer if the r
       { role: 'user', content: 'Первый запрос' }, { role: 'assistant', parts: [{ type: 'text', text: 'Первый ответ' }] },
       { role: 'user', content: 'Второй запрос' },
     ];
-    assert.deepEqual(requests.slice(1), Array.from({ length: 5 }, () => history));
+    assert.deepEqual(requests[1], [initialInstruction, ...history]);
+    assert.deepEqual(requests.slice(2), Array.from({ length: 4 }, () => [nextInstruction, ...history]));
+    assert.deepEqual(scope.getState($chatActivity).map(({ entries }) =>
+      entries.filter(({ kind }) => kind === 'instruction').map(({ details }) => details.instruction)),
+    [[initialInstruction.content], [nextInstruction.content]]);
     assert.deepEqual(scope.getState($chatReplyVariants), { 4: { index: 1, total: 2 } });
     await allSettled(replyVariantRequested, { scope, params: { replyId: 4, index: 0 } });
     assert.deepEqual(scope.getState($chatRows), original);
     const reloaded = await openChat();
     assert.deepEqual(reloaded.getState($chatRows), original);
     assert.deepEqual(reloaded.getState($chatReplyVariants), { 4: { index: 0, total: 2 } });
+    instruction = null;
     await allSettled(chatDraftChanged, { scope: reloaded, params: 'Продолжай' });
     await allSettled(chatSendRequested, { scope: reloaded });
     assert.deepEqual(requests.at(-1), [

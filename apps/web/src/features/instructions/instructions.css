@@ -1,0 +1,10 @@
+.instruction-editor {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
+}
+
+.instruction-editor > button { justify-self: start; }
+.instruction-editor-input { min-block-size: clamp(18rem, 45dvh, 34rem); }
+.instruction-status { color: var(--kr-muted); font-size: .875rem; }
+.instruction-error { color: var(--kr-danger); }

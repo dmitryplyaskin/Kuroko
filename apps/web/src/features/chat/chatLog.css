@@ -51,7 +51,7 @@
 .chat-log-track > span { flex: 1; background: var(--log-row-color); }
 
 .chat-log [data-kind='user'] { --log-row-color: var(--kr-muted); }
-.chat-log :is([data-kind='assistant'], [data-kind='model']) { --log-row-color: var(--kr-accent); }
+.chat-log :is([data-kind='assistant'], [data-kind='instruction'], [data-kind='model']) { --log-row-color: var(--kr-accent); }
 .chat-log [data-kind='tool'] { --log-row-color: var(--kr-text); }
 .chat-log [data-kind='reply'] { --log-row-color: var(--kr-danger); }
 

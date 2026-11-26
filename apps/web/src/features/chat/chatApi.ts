@@ -1,9 +1,10 @@
 import { isLlmErrorCode } from '@kuroko/contracts/errors';
 import type { ChatActivityEntry, ChatReasoningBlock, ChatReplyVariantSelection, ChatSnapshot, ChatSummary, ChatToolCall, SavedChat } from '@kuroko/contracts/chat';
+import type { ActiveChatInstruction } from '@kuroko/contracts/instructions';
 import type { LlmAssistantPart, LlmCompletion, LlmEvent, LlmMessage, LlmRequest, LlmTextDelta, LlmToolCall } from '@kuroko/contracts/llm';
 import { readSubagentResultName, type DelegateTaskEvent, type DelegateTaskRequest, type DelegateTaskResult, type ToolId } from '@kuroko/contracts/tools';
 import { createSubagentBatch, runToolCall, toolDeclarations } from '@kuroko/tool-runtime';
-import { createChatActivity, recordModelRequest } from '@kuroko/tool-runtime/chatActivity';
+import { chatInstructionActivity, createChatActivity, recordModelRequest } from '@kuroko/tool-runtime/chatActivity';
 import { toLlmMessages } from '@kuroko/tool-runtime/chatHistory';
 import type { ActiveSession } from '../../platform/session/model';
 import { sessionRequest, sessionResponse } from '../../platform/session/request';
@@ -52,6 +53,11 @@ export async function streamChatReply(
 ): Promise<string> {
   const tools = enabledTools.length ? toolDeclarations(enabledTools) : undefined;
   const history: LlmMessage[] = toLlmMessages(messages);
+  const { text: instruction } = await sessionRequest<ActiveChatInstruction>(session, '/settings/instructions/active', { signal });
+  if (instruction) {
+    history.unshift({ role: 'system', content: instruction });
+    onActivity(chatInstructionActivity(instruction));
+  }
   const savedCalls = messages.flatMap(({ toolCalls }) => toolCalls ?? []);
   const toolCalls: ChatToolCall[] = [];
   const recordedIds = new Set(savedCalls.map(({ id }) => id));

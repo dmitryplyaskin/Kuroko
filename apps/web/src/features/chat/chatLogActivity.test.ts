@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { ChatActivityEntry, ChatMessage } from '@kuroko/contracts/chat';
 import { chatActivityView } from './ChatActivity';
-import { agentLogTurns, chatLogTurns, withLiveLogReply } from './chatLogActivity';
+import { agentLogTurns, chatLogTurns, logRowPreview, withLiveLogReply } from './chatLogActivity';
 
 const prompt: ChatMessage = { id: 1, role: 'user', text: 'Привет', time: 1 };
 const reply: ChatMessage = { id: 2, role: 'assistant', text: 'Привет!', time: 2 };
@@ -21,6 +21,32 @@ test('shows a saved plain answer and uses the same single assistant row for a re
       ['user', 'Привет'], ['assistant', 'Привет!'],
     ]);
   }
+});
+
+test('shows the instruction before the user message in live and saved turns', () => {
+  const instruction = { ...event('0', 'instruction', { instruction: 'Отвечай кратко.\nСохраняй тон.' }), time: 3 };
+  const pending = withLiveLogReply(log([instruction], [prompt]), { ...reply, text: '' });
+  const waiting = { ...model('2', ''), status: 'running' as const };
+  const live = withLiveLogReply(log([instruction, waiting], [prompt]), reply);
+  for (const [turn] of [pending, live, log([instruction, model('2', reply.text)]), log([instruction])]) {
+    assert.deepEqual(turn?.rows.map(({ kind }) => kind), ['instruction', 'user', 'assistant']);
+    assert.equal(logRowPreview(turn!.rows[0]!), 'Отвечай кратко.\nСохраняй тон.');
+  }
+  assert.equal(pending[0]?.rows[2]?.pending, true);
+  assert.equal(live[0]?.rows[2]?.text, reply.text);
+});
+
+test('shows an instruction again only after it changes or a turn uses no instruction', () => {
+  const instructions = ['Пиши кратко.', 'Пиши кратко.', 'Добавляй детали.', undefined, 'Добавляй детали.'];
+  const messages = instructions.flatMap((_, index) => [{ ...prompt, id: index * 2 + 1 }, { ...reply, id: index * 2 + 2 }]);
+  const activity = instructions.flatMap((instruction, index) => instruction ? [{
+    promptId: index * 2 + 1, entries: [event('0', 'instruction', { instruction })],
+  }] : []);
+  const turns = chatLogTurns(chatActivityView(activity, messages).entries, messages);
+  assert.deepEqual(turns.map(({ rows }) => rows.map(({ kind }) => kind)), [
+    ['instruction', 'user', 'assistant'], ['user', 'assistant'], ['instruction', 'user', 'assistant'],
+    ['user', 'assistant'], ['instruction', 'user', 'assistant'],
+  ]);
 });
 
 test('keeps a recorded tool between model rounds and links it to the model that called it', () => {

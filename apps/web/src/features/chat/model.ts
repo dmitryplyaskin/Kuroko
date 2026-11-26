@@ -448,7 +448,8 @@ function withoutActivity(turns: ChatActivityTurn[], promptId: number) {
   return turns.some((turn) => turn.promptId === promptId) ? turns.filter((turn) => turn.promptId !== promptId) : turns;
 }
 $activity
-  .on(replyCompleted, (turns, { message, activity }) => {
+  .on(replyCompleted, (turns, { message, activity, saved }) => {
+    if (saved) return saved.activity ?? [];
     const history = withoutActivity(turns, message.id - 1);
     return activity ? [...history, activity] : history;
   })

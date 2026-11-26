@@ -10,6 +10,7 @@
     "./chatSettings": "./src/chatSettings.ts",
     "./connectionSettings": "./src/connectionSettings.ts",
     "./errors": "./src/errors.ts",
+    "./instructions": "./src/instructions.ts",
     "./llm": "./src/llm.ts",
     "./presets": "./src/presets.ts",
     "./realmContext": "./src/realmContext.ts",

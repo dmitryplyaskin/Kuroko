@@ -10,6 +10,7 @@ export const apiErrorCodes = [
   'auth_required', 'auth_rate_limit', 'username_invalid', 'password_length', 'username_taken',
   'invalid_credentials', 'current_password_invalid', 'password_unchanged', 'account_name_mismatch',
   'chat_settings_invalid', 'chat_not_found', 'chat_conflict', 'preset_name_invalid', 'preset_settings_invalid', 'preset_not_found',
+  'instruction_text_invalid',
   'gm_scene_unpublished', 'gm_response_length', 'response_blocked',
   'realm_invalid', 'realm_duplicate_id', 'realm_reference_missing', 'realm_id_taken', 'realm_not_found', 'realm_conflict',
   'realm_start_not_found',

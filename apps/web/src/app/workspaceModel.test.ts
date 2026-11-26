@@ -46,7 +46,7 @@ test('a module outside the core bundle adds a lazy screen and a selectable setti
   const workspace = createWorkspaceModel(registry);
   const scope = fork();
 
-  assert.deepEqual(registry.screens.map(({ route }) => route), ['#scenes', '#realms', '#chat', '#notes', '#tools', '#agents', '#settings']);
+  assert.deepEqual(registry.screens.map(({ route }) => route), ['#scenes', '#realms', '#chat', '#notes', '#instructions', '#tools', '#agents', '#settings']);
   assert.deepEqual(registry.settingsTabs.map(({ key }) => key), ['appearance', 'chat', 'notes', 'connection']);
 
   await allSettled(workspace.workspaceHashChanged, { scope, params: '#notes' });
@@ -78,6 +78,8 @@ test('unknown addresses fall back and legacy aliases retain their existing setti
 
   await allSettled(workspace.workspaceHashChanged, { scope, params: '#unknown' });
   assert.equal(scope.getState(workspace.$screen).route, '#scenes');
+  await allSettled(workspace.workspaceHashChanged, { scope, params: '#instructions' });
+  assert.equal(scope.getState(workspace.$screen).id, 'kuroko.instructions.index');
   await allSettled(workspace.workspaceHashChanged, { scope, params: '#chat' });
   await allSettled(workspace.workspaceHashChanged, { scope, params: '#settings' });
   assert.ok(scope.getState(workspace.$retainedScreens).has('kuroko.chat.index'));

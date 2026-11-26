@@ -160,7 +160,10 @@ export function createChatStore(db: Database) {
     return withVariants({ id, title: row.customTitle ?? title, updatedAt, revision: revision + 1, messages, gmMode: mode });
   });
 
-  const publish = db.transaction((userId: number, id: string, revision: number, text: string, turn: PrivateTurn, replaceId?: number) => {
+  const publish = db.transaction((
+    userId: number, id: string, revision: number, text: string, turn: PrivateTurn,
+    { replaceId, instruction }: { replaceId?: number; instruction?: ChatActivityEntry },
+  ) => {
     const row = find.get(userId, id);
     if (!row) return 'missing';
     if (row.revision !== revision || !row.gmMode) return 'conflict';
@@ -173,9 +176,10 @@ export function createChatStore(db: Database) {
     }
     chat.messages.push(reply);
     update.run(row.title, reply.time, JSON.stringify(chat.messages), row.gmMode, userId, id);
-    deleteActivity.run(id, prompt.id);
+    if (instruction) insertActivity.run(id, prompt.id, JSON.stringify([instruction]));
+    else deleteActivity.run(id, prompt.id);
     insertPrivate.run(id, reply.id, prompt.id, JSON.stringify(turn));
-    return withVariants({ ...chat, revision: revision + 1, updatedAt: reply.time });
+    return withActivity(withVariants({ ...chat, revision: revision + 1, updatedAt: reply.time }));
   });
 
   const selectVariant = db.transaction((userId: number, id: string, revision: number, { replyId, index }: ChatReplyVariantSelection) => {
