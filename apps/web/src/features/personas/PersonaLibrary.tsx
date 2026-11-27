@@ -3,7 +3,7 @@ import { useDebouncedValue } from '@mantine/hooks';
 import { defaultPersonaQuery, personaPageSize, personaSearchLimit, personaSorts, personaVariableFilters,
   type PersonaListQuery } from '@kuroko/contracts/personas';
 import { useUnit } from 'effector-react';
-import { Plus, Search, SlidersHorizontal, Star, UserRound } from 'lucide-react';
+import { Check, Play, Plus, Search, SlidersHorizontal, Star, UserRound } from 'lucide-react';
 import { useEffect, useId, useState } from 'react';
 import type { ActiveSession } from '../../platform/session/model';
 import { useI18n } from '../../shared/i18n/i18n';
@@ -16,6 +16,7 @@ import {
 } from './libraryModel';
 import { personaLibraryView } from './module';
 import { personaPath } from './requests';
+import { $personaSelection, personaSelectionOpened, personaSelectionRequested } from './selectionModel';
 import classes from './Personas.module.css';
 
 export function PersonaLibrary({ session }: { session: ActiveSession }) {
@@ -25,11 +26,18 @@ export function PersonaLibrary({ session }: { session: ActiveSession }) {
     load: listPersonasFx, create: personaCreated, open: personaOpened, favorite: $personaFavorite, setFavorite: personaFavoriteChanged,
   });
   const [view, changeView] = useUnit([personaLibraryView.$value, personaLibraryView.changed]);
+  const [selection, readSelection, selectPersona] = useUnit([$personaSelection, personaSelectionOpened, personaSelectionRequested]);
   const [debounced] = useDebouncedValue(criteria.q, 220);
   const [retry, setRetry] = useState(0);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const panelId = useId();
   const searching = criteria.q !== debounced;
+
+  useEffect(() => {
+    readSelection();
+    window.addEventListener('focus', readSelection);
+    return () => window.removeEventListener('focus', readSelection);
+  }, [readSelection, session]);
 
   useEffect(() => {
     if (searching) return;
@@ -79,6 +87,10 @@ export function PersonaLibrary({ session }: { session: ActiveSession }) {
         </div>
       </div>
       {favorite.error && <p className={library['library-message']} role="alert">{t(`error.${favorite.error}`)}</p>}
+      {selection.error && <div className={`${library['library-message']} ${library['library-state']}`}>
+        <p className={classes.error} role="alert">{t(`error.${selection.error}`)}</p>
+        <Button variant="default" onClick={readSelection}>{t('common.retryLoad')}</Button>
+      </div>}
       <div className={library['library-results']} aria-busy={!matching || matching.status === 'loading'}>
         {(!matching || (matching.status === 'loading' && !data)) && <output className={library['library-message']}>{t('personas.loading')}</output>}
         {matching?.status === 'error' && <div className={`${library['library-message']} ${library['library-state']}`}>
@@ -92,15 +104,28 @@ export function PersonaLibrary({ session }: { session: ActiveSession }) {
         </div>}
         {data && data.items.length > 0 && <>
           <ul className={library['library-list']} data-view={view} aria-label={t('personas.label')}>
-            {data.items.map(({ id, revision, name, excerpt, hasAvatar, variableCount, favorite: starred }) =>
-              <LibraryItem key={id} title={name} excerpt={excerpt} openLabel={t('personas.openNamed', { name })} onOpen={() => open(id)}
+            {data.items.map(({ id, revision, name, excerpt, hasAvatar, variableCount, favorite: starred }) => {
+              const active = selection.id === id;
+              return <LibraryItem key={id} title={name} excerpt={excerpt} openLabel={t('personas.openNamed', { name })} onOpen={() => open(id)}
                 avatar={<LibraryAvatar lazy placeholder={<UserRound size={20} />}
                   src={hasAvatar ? `/api${personaPath(id)}/avatar?v=${revision}` : undefined} />}
-                metadata={t(`personas.variableCount.${plural.select(variableCount)}`, { count: number.format(variableCount) })}
-                favorite={<LibraryFavoriteButton favorite={starred} pending={favorite.pendingId === id}
-                  disabled={matching?.status !== 'ready' || (favorite.pendingId !== undefined && favorite.pendingId !== id)}
-                  label={t('personas.favoriteNamed', { name })} title={t(starred ? 'library.removeFavorite' : 'library.addFavorite')}
-                  onClick={() => setFavorite({ id, favorite: !starred })} />} />)}
+                metadata={<>
+                  {active && <span className={classes.activeIndicator}>{t('personas.active')}</span>}
+                  <span>{t(`personas.variableCount.${plural.select(variableCount)}`, { count: number.format(variableCount) })}</span>
+                </>}
+                actions={<>
+                  <ActionIcon type="button" variant="subtle" size={44} className={classes.personaAction} aria-pressed={active}
+                    aria-label={t('personas.selectNamed', { name })} title={t(active ? 'personas.clearSelection' : 'personas.select')}
+                    loading={selection.savingId === id} disabled={selection.id === undefined || Boolean(selection.pending && selection.savingId !== id)}
+                    onClick={() => selectPersona(id)}>
+                    {active ? <Check size={19} aria-hidden="true" /> : <Play size={18} aria-hidden="true" />}
+                  </ActionIcon>
+                  <LibraryFavoriteButton favorite={starred} pending={favorite.pendingId === id}
+                    disabled={matching?.status !== 'ready' || (favorite.pendingId !== undefined && favorite.pendingId !== id)}
+                    label={t('personas.favoriteNamed', { name })} title={t(starred ? 'library.removeFavorite' : 'library.addFavorite')}
+                    onClick={() => setFavorite({ id, favorite: !starred })} />
+                </>} />;
+            })}
           </ul>
           <LibraryPagination label={t('personas.pagination')} offset={data.offset} visible={data.items.length}
             total={data.total} pageSize={personaPageSize} onPage={page} />

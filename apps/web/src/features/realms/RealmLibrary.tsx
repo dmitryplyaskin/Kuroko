@@ -173,5 +173,5 @@ function RealmLibraryItem({ item, disabled, onOpen }: {
       </span>
       <time dateTime={modified.toISOString()}>{new Intl.DateTimeFormat(locale, { dateStyle: 'medium' }).format(modified)}</time>
     </>}
-    favorite={<RealmFavoriteButton id={item.id} title={item.title} favorite={Boolean(item.favorite)} disabled={disabled} />} />;
+    actions={<RealmFavoriteButton id={item.id} title={item.title} favorite={Boolean(item.favorite)} disabled={disabled} />} />;
 }

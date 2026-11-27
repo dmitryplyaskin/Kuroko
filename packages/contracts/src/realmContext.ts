@@ -14,12 +14,16 @@ export type RealmContext = {
   entries: ContextEntry[];
 };
 
+export function resolvePlayerPersona(role?: RealmPlayerRole, persona?: Pick<PersonaDraft, 'name' | 'description'>): RealmContext['playerPersona'] {
+  const roleDescription = role?.description?.trim();
+  const name = role?.name?.trim() || persona?.name;
+  const description = roleDescription && role?.descriptionMode === 'replace'
+    ? roleDescription : [persona?.description, roleDescription].filter(Boolean).join('\n\n');
+  return name || description ? { ...(name ? { name } : {}), description } : undefined;
+}
+
 export function resolveRealmContext(realm: Realm, start?: RealmStart, persona?: Pick<PersonaDraft, 'name' | 'description'>): RealmContext {
   const playerRole = realm.playerRoles?.find(({ id }) => id === start?.playerRoleId);
-  const roleDescription = playerRole?.description?.trim();
-  const name = playerRole?.name?.trim() || persona?.name;
-  const description = roleDescription && playerRole?.descriptionMode === 'replace'
-    ? roleDescription : [persona?.description, roleDescription].filter(Boolean).join('\n\n');
   const characterIds = new Set(start?.characterIds);
   const loreIds = new Set(start?.loreEntryIds);
   const sectionIds = new Map<string, Set<string>>();
@@ -44,9 +48,10 @@ export function resolveRealmContext(realm: Realm, start?: RealmStart, persona?: 
     }
   }
 
+  const playerPersona = resolvePlayerPersona(playerRole, persona);
   return {
     base: realm.base, scenario: start?.scenario, greeting: start?.greeting, entries: entries.sort((a, b) => a.order - b.order),
     ...(playerRole ? { playerRole } : {}),
-    ...(name || description ? { playerPersona: { ...(name ? { name } : {}), description } } : {}),
+    ...(playerPersona ? { playerPersona } : {}),
   };
 }

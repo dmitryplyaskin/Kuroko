@@ -1,9 +1,10 @@
 import { CodedError, errorBody } from '@kuroko/contracts/errors';
 import { hasTemplateSyntax } from '@kuroko/contracts/instructions';
 import type { JsonValue } from '@kuroko/contracts/llm';
-import { isPersonaId, type SavedPersona } from '@kuroko/contracts/personas';
-import { resolveRealmContext } from '@kuroko/contracts/realmContext';
+import { isPersonaId, type PersonaForPrompt } from '@kuroko/contracts/personas';
+import { resolvePlayerPersona, resolveRealmContext } from '@kuroko/contracts/realmContext';
 import { orderedRealmRecords, type RealmCharacter, type RealmStart, type SavedRealm } from '@kuroko/contracts/realms';
+import type { Variable } from '@kuroko/contracts/variables';
 import wasmPath from 'minijinja-js/minijinja_js_bg.wasm' with { type: 'file' };
 import { Environment, initSync, TemplateError } from 'minijinja-js/init';
 import { readFileSync } from 'node:fs';
@@ -59,12 +60,17 @@ function clamp(value: unknown, low: unknown, high: unknown) {
 
 export function createPromptRenderer(
   findRealm: (userId: number, id: string) => SavedRealm | null,
-  findPersona: (userId: number, id: string) => SavedPersona | undefined,
+  findPersona: (userId: number, id: string) => PersonaForPrompt | undefined,
+  findActivePersona: (userId: number) => PersonaForPrompt | undefined,
 ) {
   return (userId: number, context: Context, worldId?: string | null) => {
     const worlds = new Map<string, WorldFields>();
     const realms = new Map<string, SavedRealm>();
     const pending = new Set<() => unknown>();
+    const readActivePersona = memo(() => {
+      const source = findActivePersona(userId);
+      return source ? personaTemplate(source, () => getWorld(worldId)).fields : null;
+    });
 
     function memo<T>(read: () => T): () => T {
       let result: { value: T } | undefined;
@@ -81,7 +87,7 @@ export function createPromptRenderer(
       };
     }
 
-    function evaluate(text: string, vars: WorldFields | object, currentWorld: () => WorldFields | null) {
+    function evaluate(text: string, vars: WorldFields, currentWorld: () => WorldFields | null, readPersona = readActivePersona) {
       return withEngine((engine) => {
         engine.addFunction('clamp', clamp);
         engine.addFunction('world', (id?: unknown, startId?: unknown, personaId?: unknown) => {
@@ -94,10 +100,32 @@ export function createPromptRenderer(
           if (!world) throw new Error('World not found');
           return world;
         });
-        const result = engine.renderStr(text, { ...context, vars });
+        const result = engine.renderStr(text, { ...context, vars, persona: readPersona() });
         if (result.length > 64_000) throw new PromptTemplateError();
         return result;
       });
+    }
+
+    function templateVariables(variables: Variable[], readText: (text: string) => string) {
+      function readValue(value: JsonValue): unknown {
+        if (typeof value === 'string') return readText(value);
+        if (Array.isArray(value)) return value.map(readValue);
+        if (value === null || typeof value !== 'object') return value;
+        return worldFields(Object.fromEntries(Object.entries(value).map(([key, child]) => [key, memo(() => readValue(child))])));
+      }
+      return worldFields(Object.fromEntries(variables.map(({ name, value }) => [name, memo(() => readValue(value))])));
+    }
+
+    function personaTemplate(source: PersonaForPrompt, currentWorld: () => WorldFields | null) {
+      const readText = (text: string): string => {
+        if (!hasTemplateSyntax(text)) return text;
+        const world = currentWorld();
+        return evaluate(text, (world?.vars as WorldFields | undefined) ?? {}, currentWorld, () => fields);
+      };
+      const description = memo(() => readText(source.description));
+      const vars = templateVariables(source.variables, readText);
+      const fields = worldFields({ id: () => source.id, name: () => source.name, description, vars: () => vars });
+      return { fields, description };
     }
 
     function getWorld(id?: string | null, startId?: string, personaId?: string): WorldFields | null {
@@ -113,14 +141,9 @@ export function createPromptRenderer(
       if (startId !== undefined && !start) throw new Error('World start not found');
       const persona = personaId === undefined ? undefined : findPersona(userId, personaId);
       if (personaId !== undefined && !persona) throw new Error('Persona not found');
+      const explicit = persona ? personaTemplate(persona, () => world) : undefined;
       function readText(text = ''): string {
-        return hasTemplateSyntax(text) ? evaluate(text, vars, () => world) : text;
-      }
-      function readValue(value: JsonValue): unknown {
-        if (typeof value === 'string') return readText(value);
-        if (Array.isArray(value)) return value.map(readValue);
-        if (value === null || typeof value !== 'object') return value;
-        return worldFields(Object.fromEntries(Object.entries(value).map(([key, child]) => [key, memo(() => readValue(child))])));
+        return hasTemplateSyntax(text) ? evaluate(text, vars, () => world, explicit ? () => explicit.fields : undefined) : text;
       }
       function entryFields(entry: RealmCharacter) {
         return worldFields({
@@ -128,10 +151,15 @@ export function createPromptRenderer(
           id: () => entry.id, order: () => entry.order,
         });
       }
-      const vars = worldFields(Object.fromEntries(realm.variables?.map(({ name, value }) => [name, memo(() => readValue(value))]) ?? []));
+      const vars = templateVariables(realm.variables ?? [], readText);
       const selected = resolveRealmContext(realm, start, persona);
-      const player = selected.playerPersona;
-      const playerPersona = player ? worldFields({ name: () => player.name ?? '', description: () => player.description }) : null;
+      const readPlayer = memo(() => persona && explicit ? resolvePlayerPersona(selected.playerRole, {
+        name: persona.name,
+        get description() { return explicit.description(); },
+      }) : selected.playerPersona);
+      const playerPersona = selected.playerPersona ? worldFields({
+        name: () => selected.playerPersona?.name ?? '', description: () => readPlayer()?.description ?? '',
+      }) : null;
       const base = memo(() => readText(realm.base));
       const scenario = memo(() => readText(start?.scenario));
       const entries = memo(() => selected.entries.map((entry) => worldFields(Object.fromEntries(
@@ -154,10 +182,13 @@ export function createPromptRenderer(
           title, entries: orderedRealmRecords(entries).map(({ record }) => entryFields(record)),
         })) ?? []),
         starts: memo(() => orderedRealmRecords(realm.starts ?? []).map(({ record }) => startFields(record))),
-        context: memo(() => [
-          realm.title, base(), scenario(), player ? ['Player persona', player.name, player.description].filter(Boolean).join('\n') : '',
-          ...selected.entries.map(({ title, content }) => `${title}\n${readText(content)}`),
-        ].filter((text) => text.trim()).join('\n\n')),
+        context: memo(() => {
+          const player = readPlayer();
+          return [
+            realm.title, base(), scenario(), player ? ['Player persona', player.name, player.description].filter(Boolean).join('\n') : '',
+            ...selected.entries.map(({ title, content }) => `${title}\n${readText(content)}`),
+          ].filter((text) => text.trim()).join('\n\n');
+        }),
       });
       worlds.set(key, world);
       return world;

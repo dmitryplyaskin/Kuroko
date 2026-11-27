@@ -16,13 +16,13 @@ export function LibraryAvatar({ src, placeholder, lazy, className }: {
   </span>;
 }
 
-export function LibraryItem({ title, excerpt, avatar, metadata, tags, favorite, openLabel, disabled, onOpen }: {
+export function LibraryItem({ title, excerpt, avatar, metadata, tags, actions, openLabel, disabled, onOpen }: {
   title: string;
   excerpt: string;
   avatar: ReactNode;
   metadata: ReactNode;
   tags?: string[];
-  favorite: ReactNode;
+  actions: ReactNode;
   openLabel?: string;
   disabled?: boolean;
   onOpen: () => void;
@@ -44,7 +44,7 @@ export function LibraryItem({ title, excerpt, avatar, metadata, tags, favorite, 
       <span className={classes['library-item-meta']} id={metadataId}>{metadata}</span>
       <ChevronRight size={16} aria-hidden="true" />
     </button>
-    {favorite}
+    <div className={classes['library-item-actions']}>{actions}</div>
   </li>;
 }
 

@@ -17,6 +17,6 @@ export function RealmVariables({ variables, issue, onChange }: {
       <p>{t('realms.variables.help')}</p>
       <code dir="ltr">{`{{ vars.${sampleName} }}`}</code>
     </div>
-    <VariableFields world variables={variables} issue={issue} onChange={onChange} />
+    <VariableFields scope="worldValue" variables={variables} issue={issue} onChange={onChange} />
   </div>;
 }

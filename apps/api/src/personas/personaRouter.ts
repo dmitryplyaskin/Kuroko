@@ -1,7 +1,7 @@
 import { readAvatar } from '@kuroko/contracts/avatar';
 import { errorBody } from '@kuroko/contracts/errors';
 import { isPersonaId, personaPageSize, personaSearchLimit, personaSorts, personaVariableFilters, readPersona,
-  type PersonaListQuery } from '@kuroko/contracts/personas';
+  type PersonaListQuery, type PersonaSelection } from '@kuroko/contracts/personas';
 import { isPresetRevision } from '@kuroko/contracts/presets';
 import { Router, type Response } from 'express';
 import type { createPersonaStore } from './personaStore';
@@ -38,6 +38,17 @@ export function createPersonaRouter(store: ReturnType<typeof createPersonaStore>
     const saved = store.create(response.locals.user.id, id, result.draft);
     if (saved === 'conflict') conflict(response);
     else response.location(`/api/personas/${id}`).status(saved.created ? 201 : 200).json(saved.persona);
+  });
+
+  router.get('/active', (_request, response) => {
+    response.json({ id: store.activeId(response.locals.user.id) } satisfies PersonaSelection);
+  });
+
+  router.put('/active', (request, response) => {
+    const id = request.body?.id;
+    if (id !== null && !isPersonaId(id)) { invalid(response, '/id'); return; }
+    if (!store.select(response.locals.user.id, id)) { missing(response); return; }
+    response.json({ id } satisfies PersonaSelection);
   });
 
   router.get('/:id/avatar', (request, response) => {

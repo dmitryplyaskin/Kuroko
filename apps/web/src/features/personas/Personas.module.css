@@ -1,5 +1,8 @@
 .page, .editor { min-inline-size: 0; }
 .variableFilter { inline-size: min(100%, 18rem); }
+.personaAction { --ai-radius: var(--kr-radius-control); color: var(--kr-accent); }
+.personaAction[aria-pressed='true'] { background: var(--kr-accent-surface); }
+.activeIndicator { color: var(--kr-accent); font-weight: 600; }
 .error { color: var(--kr-danger); }
 .notice { display: block; margin-block-end: 12px; color: var(--kr-muted); }
 .issue { display: grid; gap: 8px; justify-items: start; margin-block-end: 16px; }

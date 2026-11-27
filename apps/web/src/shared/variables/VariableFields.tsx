@@ -1,4 +1,4 @@
-import { Button, Select, Textarea, TextInput } from '@mantine/core';
+import { Button, Select, TextInput } from '@mantine/core';
 import { variableLimit, variableValueLimit } from '@kuroko/contracts/variables';
 import { Plus, Trash2 } from 'lucide-react';
 import { newLocalId } from '../browser/id';
@@ -7,11 +7,11 @@ import { PromptTextarea } from '../prompt-templates/TemplateHelp';
 import type { VariableDraft } from './variableDraft';
 import classes from './VariableFields.module.css';
 
-export function VariableFields({ variables, issue, disabled, world, onChange }: {
+export function VariableFields({ variables, issue, disabled, scope, onChange }: {
   variables: VariableDraft[];
   issue?: string;
   disabled?: boolean;
-  world?: boolean;
+  scope: 'worldValue' | 'personaValue';
   onChange: (variables: VariableDraft[]) => void;
 }) {
   const { t, number } = useI18n();
@@ -36,7 +36,7 @@ export function VariableFields({ variables, issue, disabled, world, onChange }: 
             data={[{ value: 'text', label: t('variables.text') }, { value: 'json', label: t('variables.json') }]}
             onChange={(next) => { if (next === 'text' || next === 'json') update(index, { format: next }); }} />
         </div>
-        {world ? <PromptTextarea scope="worldValue" {...valueProps} /> : <Textarea {...valueProps} />}
+        <PromptTextarea scope={scope} {...valueProps} />
         <Button type="button" variant="subtle" color="red" disabled={disabled}
           aria-label={t('variables.removeNumber', { number: number.format(index + 1) })} leftSection={<Trash2 size={16} aria-hidden="true" />}
           onClick={() => onChange(variables.filter((_, current) => current !== index))}>{t('variables.remove')}</Button>

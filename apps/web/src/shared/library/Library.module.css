@@ -46,7 +46,8 @@
 .library-list[data-view='list'] > li { grid-template-columns: minmax(0, 1fr) auto; align-items: center; }
 .library-list[data-view='list'] > li + li { border-block-start: 1px solid var(--kr-border); }
 .library-list > li:has(.library-item:enabled:hover) { background: var(--kr-hover); }
-.library-list[data-view='list'] .library-favorite { margin-inline-end: 16px; }
+.library-item-actions { display: flex; gap: 4px; }
+.library-list[data-view='list'] .library-item-actions { margin-inline-end: 16px; }
 .library-favorite { --ai-radius: var(--kr-radius-control); color: var(--kr-muted); }
 .library-favorite[aria-pressed='true'] { background: var(--kr-accent-surface); color: var(--kr-accent); }
 .library-item {
@@ -145,15 +146,18 @@
 .library-list[data-view='grid'] :is(.library-item-copy, .library-item-meta) { padding-inline: 12px; }
 .library-list[data-view='grid'] .library-item-meta { margin-block-start: auto; }
 .library-list[data-view='grid'] .library-item > svg { display: none; }
-.library-list[data-view='grid'] .library-favorite {
+.library-list[data-view='grid'] .library-item-actions {
   grid-area: 1 / 1;
   place-self: start end;
   margin: 8px;
+}
+
+.library-list[data-view='grid'] .library-item-actions > button {
   background: var(--kr-surface);
 }
 
-.library-list[data-view='grid'] .library-favorite[aria-pressed='true'] { background: var(--kr-accent-surface); }
-.library-list[data-view='grid'] .library-favorite:enabled:hover { box-shadow: 0 0 0 1px var(--kr-accent); }
+.library-list[data-view='grid'] .library-item-actions > button[aria-pressed='true'] { background: var(--kr-accent-surface); }
+.library-list[data-view='grid'] .library-item-actions > button:enabled:hover { box-shadow: 0 0 0 1px var(--kr-accent); }
 .library-pagination {
   display: flex;
   justify-content: space-between;
@@ -182,7 +186,7 @@
   .library-list[data-view='list'] .library-avatar { grid-row: span 2; inline-size: 72px; block-size: 72px; }
   .library-list[data-view='list'] .library-item > svg { display: none; }
   .library-list[data-view='list'] .library-item-meta { grid-column: 2; }
-  .library-list[data-view='list'] .library-favorite { margin-inline-end: 8px; }
+  .library-list[data-view='list'] .library-item-actions { flex-direction: column; margin-inline-end: 8px; }
 }
 
 @container (max-width: 26rem) {

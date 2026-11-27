@@ -4,7 +4,7 @@ import { useId, useState, type Ref } from 'react';
 import { useI18n, type MessageKey } from '../i18n/i18n';
 import './templateHelp.css';
 
-export type TemplateScope = 'chat' | 'agent' | 'world' | 'worldValue';
+export type TemplateScope = 'chat' | 'agent' | 'world' | 'worldValue' | 'persona' | 'personaValue';
 type Reference = readonly [expression: string, description: MessageKey];
 
 export function PromptTextarea({ scope, ref, id, label, size, required, withAsterisk, ...props }:
@@ -61,6 +61,11 @@ const worlds: Reference[] = [
   ['world().starts', 'templates.help.starts'],
   ['world(id, startId, personaId).player_persona', 'templates.help.playerPersona'],
 ];
+const personas: Reference[] = [
+  ['persona.name, persona.description', 'templates.help.activePersona'],
+  ['persona.vars.rank', 'templates.help.personaVars'],
+  ['world(id, startId, persona.id).player_persona', 'templates.help.activePlayerRole'],
+];
 
 function Guide({ scope, field }: { scope: TemplateScope; field?: string }) {
   const { t } = useI18n();
@@ -75,7 +80,7 @@ function Guide({ scope, field }: { scope: TemplateScope; field?: string }) {
         <Tabs.Tab value="functions">{t('templates.tabs.functions')}</Tabs.Tab>
       </Tabs.List>
       <Tabs.Panel value="syntax">
-        {scope === 'worldValue' && <p className="template-guide-note">{t('templates.help.jsonStrings')}</p>}
+        {(scope === 'worldValue' || scope === 'personaValue') && <p className="template-guide-note">{t('templates.help.jsonStrings')}</p>}
         <div className="template-guide-example">
           <div>
             <h3>{t('templates.syntax.example')}</h3>
@@ -94,8 +99,9 @@ function Guide({ scope, field }: { scope: TemplateScope; field?: string }) {
         ]} />
       </Tabs.Panel>
       <Tabs.Panel value="variables">
-        <p>{t(scope === 'world' || scope === 'worldValue' ? 'templates.help.worldScope' : 'templates.help.boundWorld')}</p>
-        <ReferenceList rows={[...variables, ...worlds]} />
+        <p>{t(scope === 'persona' || scope === 'personaValue' ? 'templates.help.personaScope'
+          : scope === 'world' || scope === 'worldValue' ? 'templates.help.worldScope' : 'templates.help.boundWorld')}</p>
+        <ReferenceList rows={[...variables, ...personas, ...worlds]} />
       </Tabs.Panel>
       <Tabs.Panel value="functions">
         <ReferenceList rows={[

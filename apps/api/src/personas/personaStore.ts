@@ -1,4 +1,6 @@
-import { personaPageSize, type PersonaDraft, type PersonaListQuery, type PersonaSummary, type SavedPersona } from '@kuroko/contracts/personas';
+import {
+  personaPageSize, type PersonaDraft, type PersonaForPrompt, type PersonaListQuery, type PersonaSummary, type SavedPersona,
+} from '@kuroko/contracts/personas';
 import type { Database } from 'bun:sqlite';
 
 type PersonaRow = Omit<SavedPersona, 'avatar' | 'variables'> & { avatar: string | null; variablesJson: string };
@@ -41,6 +43,18 @@ export function createPersonaStore(db: Database) {
   `);
   const remove = db.query('DELETE FROM personas WHERE user_id = ? AND id = ? AND revision = ?');
   const favorite = db.query('UPDATE personas SET favorite = ? WHERE user_id = ? AND id = ?');
+  const activeId = db.query<{ id: string }, [number]>('SELECT persona_id AS id FROM active_personas WHERE user_id = ?');
+  const activePersona = db.query<Omit<PersonaForPrompt, 'variables'> & { variablesJson: string }, [number]>(`
+    SELECT p.id, p.name, p.description, p.variables_json AS variablesJson
+    FROM active_personas AS a JOIN personas AS p ON p.user_id = a.user_id AND p.id = a.persona_id
+    WHERE a.user_id = ?
+  `);
+  const activate = db.query(`
+    INSERT INTO active_personas (user_id, persona_id)
+    SELECT user_id, id FROM personas WHERE user_id = ? AND id = ?
+    ON CONFLICT(user_id) DO UPDATE SET persona_id = excluded.persona_id
+  `);
+  const clearActive = db.query('DELETE FROM active_personas WHERE user_id = ?');
   const where = `user_id = $userId AND ($q = '' OR instr(name_key, $q) > 0 OR instr(description_key, $q) > 0)
     AND ($favorites = 0 OR favorite = 1)
     AND ($variables = 'any' OR (variable_count > 0) = ($variables = 'with'))`;
@@ -83,6 +97,18 @@ export function createPersonaStore(db: Database) {
 
   return {
     list,
+    activeId: (userId: number) => activeId.get(userId)?.id ?? null,
+    active(userId: number): PersonaForPrompt | undefined {
+      const row = activePersona.get(userId);
+      if (!row) return;
+      const { variablesJson, ...persona } = row;
+      return { ...persona, variables: JSON.parse(variablesJson) };
+    },
+    select(userId: number, id: string | null) {
+      if (id !== null) return activate.run(userId, id).changes > 0;
+      clearActive.run(userId);
+      return true;
+    },
     find(userId: number, id: string) {
       const row = find.get(userId, id);
       return row ? readRow(row) : undefined;

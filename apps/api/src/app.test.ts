@@ -139,6 +139,70 @@ test('sorts and paginates personas and corrects an offset after the last page is
   expect(remaining.items.map(({ id }) => id)).toEqual(ids.slice(0, -1));
 });
 
+test('persists an account’s selected persona and renders it only where prompts reference it', async () => {
+  await register('active-persona-owner');
+  await register('active-persona-other');
+  const cookie = sessionCookie(await login('active-persona-owner')).token;
+  const other = sessionCookie(await login('active-persona-other')).token;
+  const persona: CreatePersona = {
+    id: '5'.repeat(32), name: 'Лина', description: 'Ранг {{ persona.vars.rank }}. {{ persona.vars.details.label }}.',
+    variables: [
+      { name: 'rank', value: 3 },
+      { name: 'details', value: { label: '{{ persona.name }} в {{ vars.city }}', tags: ['картограф'] } },
+      { name: 'loop', value: '{{ persona.vars.loop }}' },
+    ],
+  };
+  const next: CreatePersona = { ...persona, id: '6'.repeat(32), name: 'Рей', description: 'Страж.', variables: [] };
+  const foreign: CreatePersona = { ...next, id: '7'.repeat(32), name: 'Другой игрок' };
+  for (const [body, owner] of [[persona, cookie], [next, cookie], [foreign, other]] as const) {
+    expect((await request('/personas', { method: 'POST', cookie: owner, body })).status).toBe(201);
+  }
+  const path = '/personas/active';
+  const readSelection = async (owner = cookie) => (await request(path, { cookie: owner })).json();
+  const select = (id: string | null) => request(path, { method: 'PUT', cookie, body: { id } });
+  expect((await request(path)).status).toBe(401);
+  expect(await readSelection()).toEqual({ id: null });
+  expect(await (await select(persona.id)).json()).toEqual({ id: persona.id });
+  expect((await select(foreign.id)).status).toBe(404);
+  const resumed = sessionCookie(await login('active-persona-owner')).token;
+  expect(await readSelection(resumed)).toEqual({ id: persona.id });
+  expect(await readSelection(other)).toEqual({ id: null });
+
+  const realm: Realm = {
+    specVersion: '0.1.0', id: 'active-city', title: 'Город', base: 'Ночь.',
+    variables: [{ name: 'city', value: 'Ривене' }],
+    playerRoles: [{ id: 'runner', title: 'Беглец', description: 'Уходит от погони.', descriptionMode: 'append' }],
+    starts: [{ id: 'escape', title: 'Побег', scenario: 'Рассвет.', playerRoleId: 'runner' }],
+  };
+  const world = await (await request('/realms', { method: 'POST', cookie, body: realm })).json() as SavedRealm;
+  const prefix = '/settings/instructions';
+  const preview = (text: string, owner = cookie) => request(`${prefix}/preview`, {
+    method: 'POST', cookie: owner, body: { text, ...(owner === cookie ? { worldId: world.id } : {}) },
+  });
+  const plainWorld = 'Город\n\nНочь.\n\nРассвет.\n\nPlayer persona\nУходит от погони.';
+  expect(await (await preview('{{ world().starts[0].context }}')).json()).toEqual({ text: plainWorld });
+  expect(await (await preview('{{ persona.name }}. {{ persona.description }} {{ persona.vars.details.tags[0] }}.')).json())
+    .toEqual({ text: 'Лина. Ранг 3. Лина в Ривене. картограф.' });
+  expect(await (await preview('{{ "empty" if persona is none else persona.name }}', other)).json()).toEqual({ text: 'empty' });
+  expect((await preview('{{ persona.vars.loop }}')).status).toBe(422);
+  const text = '{{ world(world().id, world().starts[0].id, persona.id).context }}';
+  const expected = 'Город\n\nНочь.\n\nРассвет.\n\nPlayer persona\nЛина\nРанг 3. Лина в Ривене.\n\nУходит от погони.';
+  expect(await (await preview(text)).json()).toEqual({ text: expected });
+  expect((await request(`${prefix}/presets`, {
+    method: 'POST', cookie, body: { name: 'Побег', text, worldId: world.id },
+  })).status).toBe(201);
+  const chat = await (await request('/chats', { method: 'POST', cookie })).json() as SavedChat;
+  expect(await (await request(`${prefix}/active?chat=${chat.id}`, { cookie })).json()).toMatchObject({ text: expected });
+
+  expect(await (await select(next.id)).json()).toEqual({ id: next.id });
+  expect(await (await preview('{{ persona.name }}')).json()).toEqual({ text: 'Рей' });
+  expect((await request(`/personas/${next.id}`, { method: 'DELETE', cookie, body: { revision: 0 } })).status).toBe(204);
+  expect(await readSelection()).toEqual({ id: null });
+  expect(await (await select(persona.id)).json()).toEqual({ id: persona.id });
+  expect(await (await select(null)).json()).toEqual({ id: null });
+  expect(await (await preview('{{ "empty" if persona is none else persona.name }}')).json()).toEqual({ text: 'empty' });
+});
+
 test('applies a start’s role to its player persona in realm context and chat instructions', async () => {
   await register('player-role-owner');
   await register('player-role-other');

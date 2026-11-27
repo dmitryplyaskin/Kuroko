@@ -40,7 +40,7 @@ export function createApiRouter(db: Database, vaultKey: Buffer, secureCookie: bo
   const realms = createRealmStore(db);
   const personas = createPersonaStore(db);
   const instructions = createInstructionStore(db);
-  const renderPrompt = createPromptRenderer(realms.find, personas.find);
+  const renderPrompt = createPromptRenderer(realms.find, personas.find, personas.active);
   const preparePrompt = createChatPrompt(instructions, renderPrompt);
   const worldExists = (userId: number, id: string) => realms.find(userId, id) !== null;
   const tools = createToolsStore(db);

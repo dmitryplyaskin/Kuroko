@@ -8,7 +8,7 @@ import { openDatabase } from './database';
 import { createProviderKeyStore } from '../connection/providerKeyStore';
 import { createPersonaStore } from '../personas/personaStore';
 
-test.each([1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22])('upgrades a version %i SQLite database without losing user data', (version) => {
+test.each([1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23])('upgrades a version %i SQLite database without losing user data', (version) => {
   const directory = mkdtempSync(join(tmpdir(), 'kuroko-sqlite-test-'));
   const path = join(directory, 'test.sqlite');
   const vaultKey = randomBytes(32);
@@ -23,8 +23,9 @@ test.each([1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 2
   try {
     const old = openDatabase(path, vaultKey);
     try {
+      old.exec('DROP TABLE active_personas');
       if (version < 22) old.exec('DROP TABLE personas');
-      else old.exec('ALTER TABLE personas DROP COLUMN variable_count');
+      else if (version === 22) old.exec('ALTER TABLE personas DROP COLUMN variable_count');
       if (version < 21) old.exec(`
         DROP TRIGGER connection_presets_key_revision;
         DROP TRIGGER instruction_presets_world_revision;
@@ -33,7 +34,7 @@ test.each([1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 2
       `);
       if (version < 20) old.exec('DROP TRIGGER agents_world_revision; ALTER TABLE agents DROP COLUMN revision');
       old.run('INSERT INTO users (username, username_key, password_hash) VALUES (?, ?, ?)', ['Лина', 'лина', 'test-hash']);
-      if (version === 22) old.run(`
+      if (version >= 22) old.run(`
         INSERT INTO personas (user_id, id, name, name_key, description, description_key, variables_json, favorite, created_at, updated_at, revision)
         VALUES (1, ?, 'Лина', 'лина', 'Штурман', 'штурман', ?, 1, 10, 20, 2)
       `, [personaId, JSON.stringify(variables)]);
@@ -87,15 +88,18 @@ test.each([1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 2
 
     const migrated = openDatabase(path, vaultKey);
     try {
-      expect(migrated.query('PRAGMA user_version').get()).toEqual({ user_version: 23 });
+      expect(migrated.query('PRAGMA user_version').get()).toEqual({ user_version: 24 });
       const personas = createPersonaStore(migrated);
+      expect(personas.activeId(1)).toBeNull();
       const library = personas.list(1, { ...defaultPersonaQuery, variables: 'with', favorites: true });
       expect(library).toEqual(version < 22 ? { items: [], total: 0, offset: 0 } : { total: 1, offset: 0, items: [
         { id: personaId, name: 'Лина', revision: 2, excerpt: 'Штурман', favorite: true, hasAvatar: false, variableCount: 1 },
       ] });
-      if (version === 22) {
+      if (version >= 22) {
         expect(personas.find(1, personaId)).toMatchObject({ name: 'Лина', description: 'Штурман', revision: 2, variables });
         expect(personas.list(1, { ...defaultPersonaQuery, variables: 'without' }).total).toBe(0);
+        expect(personas.select(1, personaId)).toBe(true);
+        expect(personas.activeId(1)).toBe(personaId);
       }
       expect(migrated.query('SELECT * FROM instruction_presets').all()).toEqual(version < 17 ? [] : [
         { id: 'old-instruction', user_id: 1, name: 'Стиль', text: '{{ literal }}', active: 1, world_id: null, revision: 0 },
@@ -128,6 +132,14 @@ test.each([1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 2
     } finally {
       migrated.close();
     }
+    if (version === 23) {
+      const reopened = openDatabase(path, vaultKey);
+      try {
+        expect(createPersonaStore(reopened).active(1)).toMatchObject({ id: personaId, variables });
+      } finally {
+        reopened.close();
+      }
+    }
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
@@ -147,6 +159,7 @@ test('imports a previously shared encrypted key into separate provider managers 
       if (!shared) throw new Error('Missing legacy key');
       store.create(1, 'openai', 'Unlinked key', 'test-unlinked-value');
       old.exec(`
+        DROP TABLE active_personas;
         DROP TABLE personas;
         DROP TABLE instruction_presets;
         DROP TABLE temporary_agent_tools;

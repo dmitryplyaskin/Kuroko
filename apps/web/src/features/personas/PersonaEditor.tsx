@@ -1,4 +1,4 @@
-import { Button, FileButton, Group, Modal, Textarea, TextInput } from '@mantine/core';
+import { Button, FileButton, Group, Modal, TextInput } from '@mantine/core';
 import { personaDescriptionLimit, personaNameLimit } from '@kuroko/contracts/personas';
 import { useUnit } from 'effector-react';
 import { ArrowLeft, ChevronDown, ImagePlus, UserRound } from 'lucide-react';
@@ -8,6 +8,7 @@ import { DiscardChangesDialog } from '../../shared/dialogs/DiscardChangesDialog'
 import { useI18n, type MessageKey } from '../../shared/i18n/i18n';
 import { LibraryAvatar } from '../../shared/library/LibraryItem';
 import library from '../../shared/library/Library.module.css';
+import { PromptTextarea } from '../../shared/prompt-templates/TemplateHelp';
 import { VariableFields } from '../../shared/variables/VariableFields';
 import {
   $personaDirty, personaAvatarPicked, personaClosed, personaDeleteRequested, personaEdited, personaOpened, personaSaveRequested,
@@ -101,7 +102,7 @@ export function PersonaEditor({ editor }: { editor: ReadyPersonaEditor }) {
         </div>
         <TextInput label={t('personas.name')} name="name" value={draft.name} dir="auto" maxLength={personaNameLimit} required disabled={busy}
           error={issue?.field === '/name'} onChange={(event) => change({ name: event.currentTarget.value })} />
-        <Textarea label={t('personas.description')} name="description" value={draft.description} dir="auto"
+        <PromptTextarea scope="persona" label={t('personas.description')} name="description" value={draft.description} dir="auto"
           minRows={5} maxRows={16} autosize maxLength={personaDescriptionLimit} disabled={busy}
           error={issue?.field === '/description'} onChange={(event) => change({ description: event.currentTarget.value })} />
       </div>
@@ -111,7 +112,8 @@ export function PersonaEditor({ editor }: { editor: ReadyPersonaEditor }) {
         </summary>
         <div className={classes.variableBody}>
           <p>{t('personas.variablesHelp')}</p>
-          <VariableFields variables={draft.variables} issue={issue?.field} disabled={busy} onChange={(variables) => change({ variables })} />
+          <VariableFields scope="personaValue" variables={draft.variables} issue={issue?.field} disabled={busy}
+            onChange={(variables) => change({ variables })} />
         </div>
       </details>
     </div>

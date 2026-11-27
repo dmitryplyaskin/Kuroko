@@ -3,7 +3,7 @@ import type { Database } from 'bun:sqlite';
 import { createHash } from 'node:crypto';
 import { realmFilterKey, realmTagKeys } from '../realms/realmFilterKeys';
 
-const latestVersion = 23;
+const latestVersion = 24;
 
 const initialSchema = `
   CREATE TABLE vault_settings (
@@ -348,6 +348,14 @@ export function migrateDatabase(db: Database, vaultKey: Buffer) {
       db.exec(`ALTER TABLE personas ADD COLUMN variable_count INTEGER
         GENERATED ALWAYS AS (json_array_length(variables_json)) VIRTUAL`);
     }
+
+    if (version < 24) db.exec(`
+      CREATE TABLE active_personas (
+        user_id INTEGER PRIMARY KEY,
+        persona_id TEXT NOT NULL,
+        FOREIGN KEY (user_id, persona_id) REFERENCES personas(user_id, id) ON DELETE CASCADE
+      ) STRICT;
+    `);
 
     if (version < latestVersion) db.exec(`PRAGMA user_version = ${latestVersion}`);
   }).immediate();

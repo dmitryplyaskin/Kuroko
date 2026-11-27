@@ -8,6 +8,8 @@ export type CreatePersona = PersonaDraft & Pick<SavedPersona, 'id'>;
 export type UpdatePersona = PersonaDraft & Pick<SavedPersona, 'revision'>;
 export type DeletePersona = Pick<SavedPersona, 'revision'>;
 export type PersonaFavorite = { favorite: boolean };
+export type PersonaSelection = { id: string | null };
+export type PersonaForPrompt = Pick<SavedPersona, 'id' | 'name' | 'description' | 'variables'>;
 export type PersonaSummary = Pick<SavedPersona, 'id' | 'name' | 'revision'> &
   PersonaFavorite & { excerpt: string; hasAvatar: boolean; variableCount: number };
 
