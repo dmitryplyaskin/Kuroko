@@ -1,10 +1,8 @@
 import type { WebModule } from '../../modules/contracts';
-import { createBrowserPreference } from '../../shared/browser/preferences';
+import { createLibraryViewPreference } from '../../shared/library/viewPreference';
 import { $realmEditorHasUnsavedChanges } from './model';
 
-export const realmLibraryView = createBrowserPreference<'list' | 'grid'>(
-  'kuroko-realms-view', 'list', (value) => value === 'grid' ? 'grid' : 'list', String,
-);
+export const realmLibraryView = createLibraryViewPreference('kuroko-realms-view');
 
 export const realmsModule = {
   id: 'kuroko.realms',

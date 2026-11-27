@@ -1,4 +1,4 @@
-import { Bot, Globe, MessageSquare, NotebookText, Palette, PanelsTopLeft, Plug, Settings, Wrench } from 'lucide-react';
+import { Bot, Globe, MessageSquare, NotebookText, Palette, PanelsTopLeft, Plug, Settings, UserRound, Wrench } from 'lucide-react';
 import type { ModuleIconName } from './contracts';
 
 const icons = {
@@ -11,6 +11,7 @@ const icons = {
   tools: Wrench,
   agents: Bot,
   instructions: NotebookText,
+  personas: UserRound,
 };
 
 export function ModuleIcon({ name, size }: { name: ModuleIconName; size: number }) {

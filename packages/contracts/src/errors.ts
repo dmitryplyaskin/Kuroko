@@ -15,6 +15,7 @@ export const apiErrorCodes = [
   'realm_invalid', 'realm_duplicate_id', 'realm_reference_missing', 'realm_id_taken', 'realm_not_found', 'realm_conflict',
   'realm_start_not_found', 'realm_variable_name_invalid', 'realm_variable_value_invalid',
   'agent_invalid', 'agent_not_found', 'agent_conflict',
+  'persona_invalid', 'persona_not_found', 'persona_conflict',
   'preset_name_taken', 'preset_conflict', 'provider_key_invalid', 'provider_key_name_taken', 'provider_key_not_found',
   'model_catalog_selection_invalid', 'model_catalog_key_invalid', 'model_catalog_rejected',
   'model_catalog_rate_limit', 'model_catalog_unavailable',

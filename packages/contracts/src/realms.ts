@@ -1,4 +1,9 @@
-import type { JsonValue } from './llm';
+import { readAvatar as readRealmAvatar } from './avatar';
+import { readVariables, type Variable as RealmVariable } from './variables';
+
+export { avatarMaxLength as realmAvatarMaxLength, readAvatar as readRealmAvatar } from './avatar';
+export { isVariableName as isRealmVariableName, isVariableValue as isRealmVariableValue,
+  variableLimit as realmVariableLimit, variableValueLimit as realmVariableValueLimit, type Variable as RealmVariable } from './variables';
 
 export const realmSpecVersion = '0.1.0';
 
@@ -6,7 +11,6 @@ export type RealmEntry = { id: string; title: string; content: string; order?: n
 export type RealmCharacter = RealmEntry & { summary?: string; avatar?: string };
 export type RealmSection = { id: string; title: string; entries: RealmEntry[] };
 export type RealmSectionEntryRef = { sectionId: string; entryId: string };
-export type RealmVariable = { name: string; value: JsonValue };
 export type RealmStart = {
   id: string;
   title: string;
@@ -76,26 +80,7 @@ export type RealmList = { items: RealmSummary[]; total: number };
 export const realmSearchMaxLength = 200;
 export const realmPageSize = 24;
 export const realmRequestByteLimit = 8 * 1024 * 1024;
-export const realmAvatarMaxLength = 65_536;
 export const realmMaxOrder = 999_999;
-export const realmVariableLimit = 100;
-export const realmVariableValueLimit = 16_000;
-
-export function isRealmVariableName(value: unknown): value is string {
-  return typeof value === 'string' && /^[a-zA-Z_][a-zA-Z_0-9]{0,63}$/.test(value);
-}
-
-export function isRealmVariableValue(value: unknown): value is JsonValue {
-  function valid(item: unknown, depth: number): boolean {
-    if (typeof item === 'string') return item.isWellFormed();
-    if (typeof item === 'number') return Number.isFinite(item);
-    if (item === null || typeof item === 'boolean') return true;
-    if (typeof item !== 'object' || depth === 12) return false;
-    if (Array.isArray(item)) return item.every((child) => valid(child, depth + 1));
-    return Object.entries(item).every(([key, child]) => key.isWellFormed() && valid(child, depth + 1));
-  }
-  return valid(value, 0) && JSON.stringify(value).length <= realmVariableValueLimit;
-}
 
 export function isRealmOrder(value: unknown): value is number {
   return typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= realmMaxOrder;
@@ -110,15 +95,6 @@ export function realmSearchKey(text: string) {
   return text.normalize('NFKC').toLowerCase();
 }
 
-export function readRealmAvatar(value: unknown) {
-  if (typeof value !== 'string' || value.length > realmAvatarMaxLength) return;
-  const [matched, mime, data] = /^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/]+={0,2})$/.exec(value) ?? [];
-  if (matched !== value || !mime || !data || data.length % 4 !== 0) return;
-  const header = atob(data.slice(0, 16));
-  const valid = mime === 'image/png' ? header.startsWith('\x89PNG\r\n\x1a\n')
-    : mime === 'image/jpeg' ? header.startsWith('\xff\xd8\xff') : header.startsWith('RIFF') && header.slice(8) === 'WEBP';
-  if (valid) return { mime, data };
-}
 
 type RealmIssue = {
   code: 'realm_invalid' | 'realm_duplicate_id' | 'realm_reference_missing' | 'realm_variable_name_invalid' | 'realm_variable_value_invalid';
@@ -186,16 +162,9 @@ function checkCollection<T extends { id: string }>(value: unknown, field: string
 
 function checkVariables(value: unknown): RealmIssue | undefined {
   if (value === undefined) return;
-  if (!Array.isArray(value) || value.length > realmVariableLimit) return { code: 'realm_invalid', field: '/variables' };
-  const names = new Set<string>();
-  for (const [index, item] of value.entries()) {
-    const path = `/variables/${index}`;
-    if (!objectWithKeys(item, ['name', 'value']) || !isRealmVariableName(item.name) || names.has(item.name)) {
-      return { code: 'realm_variable_name_invalid', field: `${path}/name` };
-    }
-    if (!isRealmVariableValue(item.value)) return { code: 'realm_variable_value_invalid', field: `${path}/value` };
-    names.add(item.name);
-  }
+  const result = readVariables(value);
+  if ('field' in result) return { field: result.field, code: result.field === '/variables' ? 'realm_invalid'
+    : result.field.endsWith('/name') ? 'realm_variable_name_invalid' : 'realm_variable_value_invalid' };
 }
 
 export function readRealm(value: unknown): { realm: Realm } | RealmIssue {

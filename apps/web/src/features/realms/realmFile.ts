@@ -1,6 +1,6 @@
 import { readRealm, realmRequestByteLimit, type Realm } from '@kuroko/contracts/realms';
 import { ApiError } from '../../shared/http/api';
-import { avatarFileByteLimit, toRealmAvatar } from './realmAvatarFile';
+import { avatarFileByteLimit, toAvatar } from '../../shared/avatar/avatarFile';
 import { convertSillyTavernCard, isPng, readSillyTavernPng, type ImportLabels } from './sillyTavernCard';
 
 export type ImportedRealm = { realm: Realm; avatarFailed?: boolean };
@@ -16,7 +16,7 @@ export async function readRealmFile(file: File, labels: ImportLabels): Promise<
   if (isPng(bytes) || file.type === 'image/png' || /\.png$/i.test(file.name)) {
     const realm = readSillyTavernPng(bytes, labels);
     if (!realm) throw new ApiError(400, 'realm_file_png_card');
-    const avatar = await toRealmAvatar(file.slice(0, file.size, 'image/png')).catch(() => undefined);
+    const avatar = await toAvatar(file.slice(0, file.size, 'image/png')).catch(() => undefined);
     if (avatar) {
       realm.avatar = avatar;
       if (realm.characters?.[0]) realm.characters[0].avatar = avatar;

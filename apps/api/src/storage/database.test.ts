@@ -1,12 +1,14 @@
 import { expect, test } from 'bun:test';
+import { defaultPersonaQuery } from '@kuroko/contracts/personas';
 import { randomBytes } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openDatabase } from './database';
 import { createProviderKeyStore } from '../connection/providerKeyStore';
+import { createPersonaStore } from '../personas/personaStore';
 
-test.each([1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20])('upgrades a version %i SQLite database without losing user data', (version) => {
+test.each([1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22])('upgrades a version %i SQLite database without losing user data', (version) => {
   const directory = mkdtempSync(join(tmpdir(), 'kuroko-sqlite-test-'));
   const path = join(directory, 'test.sqlite');
   const vaultKey = randomBytes(32);
@@ -15,11 +17,15 @@ test.each([1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20])(
     instructions: 'Записывай результат', tools_json: '["roll_dice"]',
   };
   const legacyTool = version < 15 ? 'delegate_task' : 'subagent';
+  const personaId = '1'.repeat(32);
+  const variables = [{ name: 'rank', value: 3 }];
 
   try {
     const old = openDatabase(path, vaultKey);
     try {
-      old.exec(`
+      if (version < 22) old.exec('DROP TABLE personas');
+      else old.exec('ALTER TABLE personas DROP COLUMN variable_count');
+      if (version < 21) old.exec(`
         DROP TRIGGER connection_presets_key_revision;
         DROP TRIGGER instruction_presets_world_revision;
         ALTER TABLE connection_presets DROP COLUMN revision;
@@ -27,6 +33,10 @@ test.each([1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20])(
       `);
       if (version < 20) old.exec('DROP TRIGGER agents_world_revision; ALTER TABLE agents DROP COLUMN revision');
       old.run('INSERT INTO users (username, username_key, password_hash) VALUES (?, ?, ?)', ['Лина', 'лина', 'test-hash']);
+      if (version === 22) old.run(`
+        INSERT INTO personas (user_id, id, name, name_key, description, description_key, variables_json, favorite, created_at, updated_at, revision)
+        VALUES (1, ?, 'Лина', 'лина', 'Штурман', 'штурман', ?, 1, 10, 20, 2)
+      `, [personaId, JSON.stringify(variables)]);
       if (version < 17) old.exec('DROP TABLE instruction_presets');
       else {
         if (version < 19) old.exec('ALTER TABLE instruction_presets DROP COLUMN world_id');
@@ -77,12 +87,21 @@ test.each([1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20])(
 
     const migrated = openDatabase(path, vaultKey);
     try {
-      expect(migrated.query('PRAGMA user_version').get()).toEqual({ user_version: 21 });
+      expect(migrated.query('PRAGMA user_version').get()).toEqual({ user_version: 23 });
+      const personas = createPersonaStore(migrated);
+      const library = personas.list(1, { ...defaultPersonaQuery, variables: 'with', favorites: true });
+      expect(library).toEqual(version < 22 ? { items: [], total: 0, offset: 0 } : { total: 1, offset: 0, items: [
+        { id: personaId, name: 'Лина', revision: 2, excerpt: 'Штурман', favorite: true, hasAvatar: false, variableCount: 1 },
+      ] });
+      if (version === 22) {
+        expect(personas.find(1, personaId)).toMatchObject({ name: 'Лина', description: 'Штурман', revision: 2, variables });
+        expect(personas.list(1, { ...defaultPersonaQuery, variables: 'without' }).total).toBe(0);
+      }
       expect(migrated.query('SELECT * FROM instruction_presets').all()).toEqual(version < 17 ? [] : [
         { id: 'old-instruction', user_id: 1, name: 'Стиль', text: '{{ literal }}', active: 1, world_id: null, revision: 0 },
       ]);
       expect(migrated.query('SELECT * FROM agents').all()).toEqual(version < 15 ? [] : [
-        { ...legacyAgent, world_id: version >= 19 ? 'old-realm' : null, revision: version === 20 ? 1 : 0 },
+        { ...legacyAgent, world_id: version >= 19 ? 'old-realm' : null, revision: version >= 20 ? 1 : 0 },
       ]);
       expect(migrated.query('SELECT * FROM temporary_agent_tools').all()).toEqual([]);
       expect(migrated.query('SELECT * FROM chat_reply_variants').all()).toEqual([]);
@@ -128,6 +147,7 @@ test('imports a previously shared encrypted key into separate provider managers 
       if (!shared) throw new Error('Missing legacy key');
       store.create(1, 'openai', 'Unlinked key', 'test-unlinked-value');
       old.exec(`
+        DROP TABLE personas;
         DROP TABLE instruction_presets;
         DROP TABLE temporary_agent_tools;
         DROP TABLE agents;

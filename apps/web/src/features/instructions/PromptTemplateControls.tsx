@@ -106,9 +106,9 @@ function WorldPicker({ selected, onSelect }: { selected?: string | null; onSelec
             aria-pressed={id === selected} onClick={() => setFull(!onSelect({ id, title }))}>{title}</Button></li>)}
         </ul> : <p>{t(search ? 'realms.noResults' : 'realms.empty')}</p>}
         {(offset > 0 || offset + realmPageSize < current.data.total) && <div className={classes['prompt-template-actions']}>
-          <Button type="button" variant="default" disabled={!offset} onClick={() => setOffset(offset - realmPageSize)}>{t('realms.previous')}</Button>
+          <Button type="button" variant="default" disabled={!offset} onClick={() => setOffset(offset - realmPageSize)}>{t('library.previous')}</Button>
           <Button type="button" variant="default" disabled={offset + realmPageSize >= current.data.total}
-            onClick={() => setOffset(offset + realmPageSize)}>{t('realms.next')}</Button>
+            onClick={() => setOffset(offset + realmPageSize)}>{t('library.next')}</Button>
         </div>}
       </>}
     {selected && <Button type="button" variant="subtle" onClick={() => onSelect(null)}>{t('templates.clearWorld')}</Button>}

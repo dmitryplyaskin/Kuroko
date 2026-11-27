@@ -5,6 +5,7 @@ import { ArrowLeft } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { $activeSession } from '../../platform/session/model';
 import { useI18n } from '../../shared/i18n/i18n';
+import library from '../../shared/library/Library.module.css';
 import { $realmEditor, realmEditorClosed, realmEditorCreated, realmEditorOpened, realmLoadRetried } from './model';
 import { RealmEditor } from './RealmEditor';
 import { RealmLibrary, type LibraryCriteria } from './RealmLibrary';
@@ -33,7 +34,7 @@ export default function Realms() {
         : <>
           <button type="button" className={classes['realms-back']} onClick={close}><ArrowLeft size={16} aria-hidden="true" />{t('realms.back')}</button>
           <header className={['page-heading', classes['realms-heading']].join(' ')}><h1 tabIndex={-1}>{t('realms.label')}</h1></header>
-          {view.status === 'error' ? <div className={classes['realms-state']}>
+          {view.status === 'error' ? <div className={library['library-state']}>
             <p role="alert">{t(`error.${view.code}`)}</p>
             <Button variant="default" onClick={retry}>{t('common.retryLoad')}</Button>
           </div> : <output className={classes['realms-muted']}>{t('realms.loadingDetail')}</output>}

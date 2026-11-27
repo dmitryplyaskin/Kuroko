@@ -1,9 +1,9 @@
-import { readRealmAvatar } from '@kuroko/contracts/realms';
+import { readAvatar } from '@kuroko/contracts/avatar';
 
 export const avatarFormats = 'image/jpeg,image/png,image/webp';
 export const avatarFileByteLimit = 20 * 1024 * 1024;
 
-export async function toRealmAvatar(file: Blob) {
+export async function toAvatar(file: Blob) {
   if ((file.type && !avatarFormats.split(',').includes(file.type)) || file.size > avatarFileByteLimit) {
     throw new Error('Invalid avatar file');
   }
@@ -21,11 +21,11 @@ export async function toRealmAvatar(file: Blob) {
       context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
       for (const quality of [0.8, 0.65, 0.48]) {
         const avatar = canvas.toDataURL('image/webp', quality);
-        if (readRealmAvatar(avatar)) return avatar;
+        if (readAvatar(avatar)) return avatar;
       }
     }
     const avatar = canvas.toDataURL('image/jpeg', 0.65);
-    if (readRealmAvatar(avatar)) return avatar;
+    if (readAvatar(avatar)) return avatar;
     throw new Error('Could not encode avatar');
   } finally {
     bitmap.close();

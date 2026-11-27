@@ -1,3 +1,4 @@
+import { personaRequestByteLimit } from '@kuroko/contracts/personas';
 import { realmRequestByteLimit } from '@kuroko/contracts/realms';
 import type { Database } from 'bun:sqlite';
 import { json, Router } from 'express';
@@ -20,6 +21,8 @@ import { createChatPrompt } from '../instructions/chatPrompt';
 import { createPromptRenderer } from '../instructions/promptTemplate';
 import { createLlmRouter } from '../llm/llmRouter';
 import { createLlmService } from '../llm/llmService';
+import { createPersonaRouter } from '../personas/personaRouter';
+import { createPersonaStore } from '../personas/personaStore';
 import { createRealmRouter } from '../realms/realmRouter';
 import { createRealmStore } from '../realms/realmStore';
 import { createDelegateTask, createSubagentToolDescriptions } from '../tools/delegateTask';
@@ -48,6 +51,7 @@ export function createApiRouter(db: Database, vaultKey: Buffer, secureCookie: bo
   router.use('/chats', requireUser, json({ limit: '8mb' }), createChatRouter(chats,
     createGmReply(chats, llm, tools.list, delegateTask, describeTools, preparePrompt)));
   router.use('/realms', requireUser, json({ limit: realmRequestByteLimit }), createRealmRouter(realms));
+  router.use('/personas', requireUser, json({ limit: personaRequestByteLimit }), createPersonaRouter(createPersonaStore(db)));
   router.use(json({ limit: '128kb' }));
   router.get('/health', (_request, response) => {
     response.json({ status: 'ok' });

@@ -1,0 +1,19 @@
+.fields, .row { display: grid; gap: 16px; }
+
+.row {
+  gap: 12px;
+  padding-block-end: 16px;
+  border-block-end: 1px solid var(--mantine-color-default-border);
+}
+
+.fields > button, .row > button { justify-self: start; }
+
+.metadata {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  gap: 12px;
+}
+
+@media (max-width: 36em) {
+  .metadata { grid-template-columns: minmax(0, 1fr); }
+}

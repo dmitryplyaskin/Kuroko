@@ -1,6 +1,6 @@
 import {
   readRealm, realmDocumentsEqual, realmSpecVersion, type Realm, type RealmFavorite, type RealmFilterOptions,
-  type RealmList, type RealmListQuery, type RealmVariable, type SavedRealm,
+  type RealmList, type RealmListQuery, type SavedRealm,
 } from '@kuroko/contracts/realms';
 import { attach, createEffect, createEvent, createStore, sample, type Effect } from 'effector';
 import { inActiveSession, $activeSession, protectedRequestFailed, sessionEnded, type ActiveSession } from '../../platform/session/model';
@@ -8,8 +8,10 @@ import { sessionRequest } from '../../platform/session/request';
 import { ApiError, errorCode, type ErrorCode } from '../../shared/http/api';
 
 import { abortFx } from '../../shared/async/abort';
+import { toAvatar } from '../../shared/avatar/avatarFile';
+import { newLocalId } from '../../shared/browser/id';
+import { parseVariableDrafts, variableDrafts, variableDraftsEqual, type VariableDraft } from '../../shared/variables/variableDraft';
 import { downloadRealmFile, type ImportedRealm } from './realmFile';
-import { toRealmAvatar } from './realmAvatarFile';
 
 type Request = { session: ActiveSession; signal: AbortSignal };
 type ListRequest = Request & { query: RealmListQuery };
@@ -17,9 +19,7 @@ type QueryState<Params, Data> = { params: Params } & (
   { status: 'loading'; data?: Data } | { status: 'ready'; data: Data } | { status: 'error'; code: ErrorCode }
 );
 
-export function newRealmId() {
-  return Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) => byte.toString(16).padStart(2, '0')).join('');
-}
+export const newRealmId = newLocalId;
 
 function realmEffect<P extends { session: ActiveSession }, Data>(request: (params: P) => Promise<Data>) {
   const effect = createEffect(request);
@@ -149,7 +149,6 @@ sample({
   target: listRealmsFx,
 });
 
-export type VariableDraft = { id: string; name: string; source: string; format: 'text' | 'json' };
 export type RealmSaveIssue = { code: ErrorCode; field?: string };
 type AvatarSelection = { characterId?: string; file: File };
 type AvatarRequest = AvatarSelection & { session: ActiveSession; baseline: Realm };
@@ -172,12 +171,6 @@ export type RealmEditorState = {
 };
 type RealmEditorView = RealmEditorState | { status: 'loading'; request: EditorLoad } | { status: 'error'; id: string; code: ErrorCode };
 
-function variableDrafts(variables: RealmVariable[] = []): VariableDraft[] {
-  return variables.map(({ name, value }) => typeof value === 'string'
-    ? { id: newRealmId(), name, source: value, format: 'text' }
-    : { id: newRealmId(), name, source: JSON.stringify(value), format: 'json' });
-}
-
 function prepareEditor(saved?: SavedRealm, imported?: ImportedRealm): RealmEditorState {
   const realm = saved?.realm ?? imported?.realm ?? { specVersion: realmSpecVersion, id: newRealmId(), title: '', base: '' };
   const variables = variableDrafts(realm.variables);
@@ -189,11 +182,7 @@ function prepareEditor(saved?: SavedRealm, imported?: ImportedRealm): RealmEdito
 
 function editorDirty(editor: RealmEditorState) {
   const { baseline, draft, baselineVariables, variables } = editor;
-  return !realmDocumentsEqual(baseline, draft) || baselineVariables.length !== variables.length ||
-    variables.some(({ name, source, format }, index) => {
-      const initial = baselineVariables[index]!;
-      return name !== initial.name || source !== initial.source || format !== initial.format;
-    });
+  return !realmDocumentsEqual(baseline, draft) || !variableDraftsEqual(baselineVariables, variables);
 }
 
 function canEdit(view: RealmEditorView | null): view is RealmEditorState {
@@ -212,17 +201,11 @@ function hasAvatarTarget(view: RealmEditorState, characterId?: string) {
 }
 
 function validateEditor({ draft, variables }: RealmEditorState): { realm: Realm } | RealmSaveIssue {
-  const parsedVariables: RealmVariable[] = [];
-  for (const [index, { name, source, format }] of variables.entries()) {
-    try {
-      parsedVariables.push({ name: name.trim(), value: format === 'text' ? source : JSON.parse(source) });
-    } catch {
-      return { code: 'realm_variable_value_invalid', field: `/variables/${index}/value` };
-    }
-  }
+  const parsed = parseVariableDrafts(variables);
+  if ('field' in parsed) return { code: 'realm_variable_value_invalid', field: parsed.field };
   return readRealm({
     ...draft, title: draft.title.trim(), sections: draft.sections?.map((entry) => ({ ...entry, title: entry.title.trim() })),
-    variables: parsedVariables.length ? parsedVariables : undefined,
+    variables: parsed.variables.length ? parsed.variables : undefined,
   });
 }
 
@@ -254,7 +237,7 @@ export const realmEditorDeleteRequested = createEvent();
 export const realmAvatarSelected = createEvent<AvatarSelection>();
 export const realmAvatarRemoved = createEvent<string | undefined>();
 
-export const processRealmAvatarFx = createEffect(({ file }: AvatarRequest) => toRealmAvatar(file));
+export const processRealmAvatarFx = createEffect(({ file }: AvatarRequest) => toAvatar(file));
 const avatarProcessed = inActiveSession(processRealmAvatarFx.done, ({ session }) => session);
 const avatarFailed = inActiveSession(processRealmAvatarFx.fail, ({ session }) => session);
 

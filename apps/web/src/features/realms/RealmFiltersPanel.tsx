@@ -3,6 +3,7 @@ import { defaultRealmFilters, realmStartsFilters, type RealmFilterOption, type R
 import { useUnit } from 'effector-react';
 import { useEffect } from 'react';
 import { useI18n } from '../../shared/i18n/i18n';
+import library from '../../shared/library/Library.module.css';
 import { $realmFilterOptions, realmFiltersClosed, realmFiltersOpened, realmFiltersRetried } from './model';
 import classes from './Realms.module.css';
 
@@ -29,7 +30,7 @@ export function RealmFiltersPanel({ filters, onChange }: {
   }, [open, close]);
 
   return (
-    <div className={classes['realms-filters-panel']}>
+    <div className={library['library-filters-panel']}>
       <div className={classes['realms-filter-fields']}>
         <MultiSelect label={t('realms.tags')} data={keepSelected(options?.tags ?? [], filters.tags)} value={[...filters.tags]}
           searchable clearable clearButtonProps={{ 'aria-label': t('realms.clearTags') }}

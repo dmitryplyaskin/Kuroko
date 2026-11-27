@@ -3,21 +3,16 @@ import { Globe, ImagePlus, UserRound, ZoomIn } from 'lucide-react';
 import { useRef, useState } from 'react';
 import { useUnit } from 'effector-react';
 import { useI18n } from '../../shared/i18n/i18n';
+import { LibraryAvatar } from '../../shared/library/LibraryItem';
 import { $realmAvatarOperation, realmAvatarRemoved, realmAvatarSelected } from './model';
-import { avatarFormats } from './realmAvatarFile';
+import { avatarFormats } from '../../shared/avatar/avatarFile';
 import classes from './Realms.module.css';
 
 type AvatarKind = 'realm' | 'character';
 
 export function RealmAvatar({ src, kind, lazy }: { src?: string; kind: AvatarKind; lazy?: boolean }) {
-  const [failed, setFailed] = useState<string>();
   const Icon = kind === 'realm' ? Globe : UserRound;
-  return (
-    <span className={classes['realms-avatar']} aria-hidden="true">
-      {src && src !== failed ? <img src={src} alt="" loading={lazy ? 'lazy' : undefined} decoding="async"
-        onError={() => setFailed(src)} /> : <Icon size={20} />}
-    </span>
-  );
+  return <LibraryAvatar src={src} placeholder={<Icon size={20} />} lazy={lazy} className={classes['realms-avatar']} />;
 }
 
 export function PreviewableRealmAvatar({ src, kind }: { src?: string; kind: AvatarKind }) {

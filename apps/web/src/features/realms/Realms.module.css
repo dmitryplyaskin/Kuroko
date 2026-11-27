@@ -15,166 +15,17 @@
 .realms-modal-actions > button { min-inline-size: 0; max-inline-size: 100%; block-size: auto; padding-block: 8px; }
 .realms-modal-actions :global(.mantine-Button-label) { white-space: normal; line-height: 1.3; text-align: center; }
 
-.realms-library, .realms-paper {
+.realms-paper {
   min-inline-size: 0;
   border: 1px solid var(--kr-border);
   border-radius: var(--kr-radius-panel);
   background: var(--kr-surface);
 }
 
-.realms-library { container-type: inline-size; overflow: hidden; }
-
-.realms-toolbar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px 12px;
-  padding: 16px;
-  border-block-end: 1px solid var(--kr-border);
-}
-
-.realms-toolbar > :global(.mantine-TextInput-root) { flex: 1 1 13rem; min-inline-size: 0; }
-.realms-toolbar :is(input, select) { min-block-size: 40px; }
-.realms-toolbar-options { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-.realms-toolbar-options :global(.mantine-NativeSelect-root) { min-inline-size: 0; }
-.realms-view-options { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-inline-start: auto; }
-.realms-view-label { display: flex; align-items: center; gap: 6px; }
-.realms-filter-toggle { --ai-radius: var(--kr-radius-control); }
-.realms-filter-toggle[data-selected] { background: var(--kr-accent-surface); color: var(--kr-accent); }
-.realms-filters-panel { display: grid; gap: 12px; padding: 16px; border-block-end: 1px solid var(--kr-border); }
 .realms-filter-fields { display: grid; align-items: start; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
 .realms-filter-error { display: flex; align-items: center; flex-wrap: wrap; justify-content: space-between; gap: 8px; color: var(--kr-danger); }
-.realms-results { min-block-size: 144px; }
-.realms-message { display: block; padding: 24px; color: var(--kr-muted); }
-.realms-message h2 { font-size: 1.125rem; font-weight: 600; color: var(--kr-text); }
-.realms-message p { max-inline-size: 56ch; }
-.realms-state { display: grid; justify-items: start; gap: 12px; }
-.realms-list { list-style: none; margin: 0; padding: 0; }
-.realms-list > li { display: grid; min-inline-size: 0; }
-.realms-list[data-view='list'] > li { grid-template-columns: minmax(0, 1fr) auto; align-items: center; }
-.realms-list[data-view='list'] > li + li { border-block-start: 1px solid var(--kr-border); }
-.realms-list > li:has(.realms-item:enabled:hover) { background: var(--kr-hover); }
-.realms-list[data-view='list'] .realms-favorite { margin-inline-end: 16px; }
-.realms-favorite { --ai-radius: var(--kr-radius-control); color: var(--kr-muted); }
-.realms-favorite[aria-pressed='true'] { background: var(--kr-accent-surface); color: var(--kr-accent); }
-.realms-item {
-  min-inline-size: 0;
-  inline-size: 100%;
-  border: 0;
-  background: transparent;
-  color: var(--kr-text);
-  cursor: pointer;
-  text-align: start;
-  font: inherit;
-}
-
-.realms-item:disabled { cursor: default; }
-.realms-item:focus-visible { outline-offset: -3px; }
-.realms-list[data-view='list'] .realms-item {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) minmax(0, 10.5rem) auto;
-  gap: 16px;
-  align-items: center;
-  padding-block: 16px;
-  padding-inline: 24px 8px;
-}
-
-.realms-avatar {
-  display: grid;
-  place-items: center;
-  inline-size: 48px;
-  block-size: 48px;
-  flex: none;
-  overflow: clip;
-  border: 1px solid var(--kr-border);
-  border-radius: var(--kr-radius-control);
-  background: var(--kr-hover);
-  color: var(--kr-muted);
-}
-
-.realms-avatar img { display: block; inline-size: 100%; block-size: 100%; object-fit: cover; }
 .realms-title .realms-avatar { inline-size: 72px; block-size: 72px; }
-.realms-avatar-editor .realms-avatar, .realms-list[data-view='list'] .realms-avatar { inline-size: 96px; block-size: 96px; }
-.realms-item-copy, .realms-item-meta { display: grid; gap: 4px; min-inline-size: 0; }
-.realms-item-copy strong {
-  font: 550 1.25rem/1.35 var(--kr-font-story);
-  overflow-wrap: anywhere;
-}
-
-.realms-item-excerpt { overflow-wrap: anywhere; font-size: .875rem; line-height: 1.5; }
-.realms-item-excerpt, .realms-item-meta, .realms-item > svg { color: var(--kr-muted); }
-.realms-item-meta { font-size: .8125rem; line-height: 1.45; font-variant-numeric: tabular-nums; }
-.realms-item-counts { display: flex; flex-wrap: wrap; gap: 2px 10px; overflow-wrap: anywhere; }
-.realms-item-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-block-start: 4px; }
-.realms-item-tags > span {
-  max-inline-size: 100%;
-  padding: 2px 8px;
-  border-radius: var(--kr-radius-control);
-  background: var(--kr-accent-surface);
-  color: var(--kr-accent);
-  font-size: .75rem;
-  overflow-wrap: anywhere;
-}
-
-.realms-list[data-view='grid'] {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
-  padding: 16px;
-}
-
-.realms-list[data-view='grid'] > li {
-  grid-template: minmax(0, 1fr) / minmax(0, 1fr);
-  border: 1px solid var(--kr-border);
-  border-radius: var(--kr-radius-panel);
-}
-
-.realms-list[data-view='grid'] .realms-item {
-  grid-area: 1 / 1;
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 12px;
-  padding: 0 0 12px;
-  border-radius: inherit;
-}
-
-.realms-list[data-view='grid'] .realms-avatar {
-  position: relative;
-  inline-size: 100%;
-  block-size: auto;
-  max-block-size: 16rem;
-  aspect-ratio: 4 / 3;
-  border: 0;
-  border-radius: var(--kr-radius-panel) var(--kr-radius-panel) 0 0;
-}
-
-.realms-list[data-view='grid'] .realms-avatar img { position: absolute; inset: 0; object-fit: contain; }
-.realms-list[data-view='grid'] .realms-avatar > svg { inline-size: 32px; block-size: 32px; }
-.realms-list[data-view='grid'] :is(.realms-item-copy, .realms-item-meta) { padding-inline: 12px; }
-.realms-list[data-view='grid'] .realms-item-meta { margin-block-start: auto; }
-.realms-list[data-view='grid'] .realms-item > svg { display: none; }
-.realms-list[data-view='grid'] .realms-favorite {
-  grid-area: 1 / 1;
-  place-self: start end;
-  margin: 8px;
-  background: var(--kr-surface);
-}
-
-.realms-list[data-view='grid'] .realms-favorite[aria-pressed='true'] { background: var(--kr-accent-surface); }
-.realms-list[data-view='grid'] .realms-favorite:enabled:hover { box-shadow: 0 0 0 1px var(--kr-accent); }
-.realms-pagination {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 12px;
-  padding: 12px 16px;
-  border-block-start: 1px solid var(--kr-border);
-  color: var(--kr-muted);
-  font-size: .875rem;
-  font-variant-numeric: tabular-nums;
-}
+.realms-avatar-editor .realms-avatar { inline-size: 96px; block-size: 96px; }
 
 .realms-back {
   display: inline-flex;
@@ -283,18 +134,6 @@
 .realms-edit-fields :is(input, textarea, button) { scroll-margin-block-start: 8rem; }
 .realms-record-editor, .realms-record-fields, .realms-reference-picker { display: grid; gap: 16px; }
 
-.realms-variable {
-  display: grid;
-  gap: 12px;
-  padding-block-end: 16px;
-  border-bottom: 1px solid var(--mantine-color-default-border);
-}
-
-.realms-variable > button,
-.realms-variables > button {
-  justify-self: start;
-}
-
 .realms-variable-help p { margin-block: 0 8px; }
 .realms-variable-help code { overflow-wrap: anywhere; }
 .realms-record-toolbar, .realms-section-settings {
@@ -382,33 +221,12 @@
   .realms-create-section { justify-self: end; }
 }
 
-@media (max-width: 740px) {
-  .realms-list[data-view='grid'] { grid-template-columns: minmax(0, 1fr); }
-}
-
-@container (max-width: 34rem) {
-  .realms-list[data-view='list'] .realms-item {
-    grid-template-columns: auto minmax(0, 1fr);
-    gap: 8px 12px;
-    align-items: start;
-    padding-inline: 16px 4px;
-  }
-
-  .realms-list[data-view='list'] .realms-avatar { grid-row: span 2; inline-size: 72px; block-size: 72px; }
-  .realms-list[data-view='list'] .realms-item > svg { display: none; }
-  .realms-list[data-view='list'] .realms-item-meta { grid-column: 2; }
-  .realms-list[data-view='list'] .realms-favorite { margin-inline-end: 8px; }
-}
-
 @container (max-width: 26rem) {
-  .realms-toolbar-options, .realms-toolbar > :global(.mantine-TextInput-root) { flex-basis: 100%; }
-  .realms-toolbar-options > :global(.mantine-NativeSelect-root) { flex: 1; }
   .realms-filter-fields { grid-template-columns: minmax(0, 1fr); }
-  .realms-view-options { margin-inline-start: 0; }
 }
 
 @media (max-width: 520px) {
-  .realms-paper, .realms-message { padding: 16px; }
+  .realms-paper { padding: 16px; }
   .realms-ordered-label { gap: 8px; }
   .realms-modal-actions, .realms-record-toolbar, .realms-section-settings { display: grid; grid-template-columns: minmax(0, 1fr); }
   .realms-record-toolbar > .realms-actions { grid-column: 1; }

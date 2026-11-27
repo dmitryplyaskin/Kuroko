@@ -3,7 +3,7 @@ import type { Database } from 'bun:sqlite';
 import { createHash } from 'node:crypto';
 import { realmFilterKey, realmTagKeys } from '../realms/realmFilterKeys';
 
-const latestVersion = 21;
+const latestVersion = 23;
 
 const initialSchema = `
   CREATE TABLE vault_settings (
@@ -320,6 +320,34 @@ export function migrateDatabase(db: Database, vaultKey: Buffer) {
         UPDATE instruction_presets SET revision = revision + 1 WHERE id = NEW.id;
       END;
     `);
+
+    if (version < 22) db.exec(`
+      CREATE TABLE personas (
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        name_key TEXT NOT NULL,
+        description TEXT NOT NULL,
+        description_key TEXT NOT NULL,
+        avatar TEXT,
+        variables_json TEXT NOT NULL CHECK (json_type(variables_json) = 'array'),
+        variable_count INTEGER GENERATED ALWAYS AS (json_array_length(variables_json)) STORED,
+        favorite INTEGER NOT NULL DEFAULT 0 CHECK (favorite IN (0, 1)),
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        revision INTEGER NOT NULL DEFAULT 0 CHECK (revision >= 0),
+        PRIMARY KEY (user_id, id)
+      ) STRICT;
+      CREATE INDEX personas_owner_updated ON personas (user_id, updated_at DESC, id);
+      CREATE INDEX personas_owner_created ON personas (user_id, created_at DESC, id);
+      CREATE INDEX personas_owner_name ON personas (user_id, name_key, id);
+    `);
+
+    if (version < 23 && !db.query("SELECT 1 FROM pragma_table_xinfo('personas') WHERE name = 'variable_count'").get()) {
+      // Early version 22 databases need a column that can be added to existing rows.
+      db.exec(`ALTER TABLE personas ADD COLUMN variable_count INTEGER
+        GENERATED ALWAYS AS (json_array_length(variables_json)) VIRTUAL`);
+    }
 
     if (version < latestVersion) db.exec(`PRAGMA user_version = ${latestVersion}`);
   }).immediate();

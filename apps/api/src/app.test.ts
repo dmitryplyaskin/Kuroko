@@ -8,6 +8,7 @@ import { defaultChatSettings } from '@kuroko/contracts/chatSettings';
 import { defaultConnectionSettings, type ConnectionState, type ProviderKey } from '@kuroko/contracts/connectionSettings';
 import { instructionTextLimit, type InstructionSettings } from '@kuroko/contracts/instructions';
 import type { LlmRequest } from '@kuroko/contracts/llm';
+import { personaPageSize, type CreatePersona, type PersonaList, type SavedPersona } from '@kuroko/contracts/personas';
 import type { Realm, RealmList, SavedRealm } from '@kuroko/contracts/realms';
 import type { DelegateTaskResult, ToolsResponse } from '@kuroko/contracts/tools';
 import { createSubagentBatch, runToolCall, toolDeclarations } from '@kuroko/tool-runtime';
@@ -61,6 +62,82 @@ function sessionCookie(response: Response) {
   if (!cookie) throw new Error('Expected session cookie');
   return { header: cookie, token: cookie.split(';', 1)[0]! };
 }
+
+test('keeps personas private, validates variables, and protects retries and revisions', async () => {
+  await register('persona-owner');
+  await register('persona-other');
+  const cookie = sessionCookie(await login('persona-owner')).token;
+  const other = sessionCookie(await login('persona-other')).token;
+  const id = '1'.repeat(32);
+  const path = `/personas/${id}`;
+  const avatar = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACklEQVR42mMAAQAABQABoIJXOAAAAABJRU5ErkJggg==';
+  const draft: CreatePersona = {
+    id, name: 'Ада', description: 'Штурман на борту', avatar,
+    variables: [{ name: 'equipment', value: ['компас'] }, { name: 'rank', value: 3 }],
+  };
+  const create = (body: object) => request('/personas', { cookie, method: 'POST', body });
+  const update = (body: object, owner = cookie) => request(path, { cookie: owner, method: 'PUT', body });
+  const remove = (revision: number) => request(path, { cookie, method: 'DELETE', body: { revision } });
+  const list = async (query = '', owner = cookie) => (await request(`/personas${query}`, { cookie: owner })).json() as Promise<PersonaList>;
+
+  expect((await request('/personas')).status).toBe(401);
+  const invalid = await create({ ...draft, variables: [...draft.variables, draft.variables[0]] });
+  expect(invalid.status).toBe(400);
+  expect(await invalid.json()).toEqual({ code: 'persona_invalid', field: '/variables/2/name' });
+  const created = await create(draft);
+  expect(created.status).toBe(201);
+  const saved = await created.json() as SavedPersona;
+  expect(saved).toMatchObject({ ...draft, revision: 0 });
+  const replayed = await create(draft);
+  expect(replayed.status).toBe(200);
+  expect(await replayed.json()).toEqual(saved);
+
+  expect(await list('', other)).toEqual({ items: [], total: 0, offset: 0 });
+  expect((await request(path, { cookie: other })).status).toBe(404);
+  expect((await request(`${path}/avatar`, { cookie: other })).status).toBe(404);
+  expect((await update({ ...draft, revision: 0 }, other)).status).toBe(404);
+  expect((await request(`${path}/favorite`, { method: 'PUT', body: { favorite: true }, cookie: other })).status).toBe(404);
+  const image = await request(`${path}/avatar`, { cookie });
+  expect(image.headers.get('Content-Type')).toBe('image/png');
+  expect(image.headers.get('Cache-Control')).toBe('no-store');
+  expect(Buffer.from(await image.arrayBuffer()).toString('base64')).toBe(avatar.split(',')[1]!);
+
+  expect((await request(`${path}/favorite`, { method: 'PUT', body: { favorite: true }, cookie })).status).toBe(200);
+  expect((await list('?q=ШТУРМАН&variables=with&favorites=1')).items).toEqual([
+    { id, name: draft.name, excerpt: draft.description, revision: 0, hasAvatar: true, favorite: true, variableCount: 2 },
+  ]);
+  expect((await list('?variables=without')).total).toBe(0);
+  const edited = { ...draft, name: 'Ада Рей', revision: 0, avatar: undefined };
+  const changed = await update(edited);
+  expect(changed.status).toBe(200);
+  expect(await changed.json()).toMatchObject({ name: edited.name, revision: 1 });
+  expect((await update(edited)).status).toBe(200);
+  expect((await update({ ...draft, revision: 0 })).status).toBe(409);
+  expect((await remove(0)).status).toBe(409);
+  expect((await request(`${path}/avatar`, { cookie })).status).toBe(404);
+  expect((await remove(1)).status).toBe(204);
+  expect((await list()).total).toBe(0);
+});
+
+test('sorts and paginates personas and corrects an offset after the last page is removed', async () => {
+  await register('persona-library');
+  const cookie = sessionCookie(await login('persona-library')).token;
+  const ids = Array.from({ length: personaPageSize + 1 }, (_, index) => index.toString(16).padStart(32, '0'));
+  for (const [index, id] of ids.entries()) {
+    const response = await request('/personas', { cookie, method: 'POST', body: {
+      id, name: `Персона ${String(index + 1).padStart(2, '0')}`, description: '', variables: [],
+    } });
+    expect(response.status).toBe(201);
+  }
+  const query = `/personas?sort=name-asc&offset=${personaPageSize}&variables=without`;
+  const last = ids.at(-1);
+  const page = await (await request(query, { cookie })).json() as PersonaList;
+  expect(page).toMatchObject({ total: personaPageSize + 1, offset: personaPageSize, items: [{ id: last }] });
+  expect((await request(`/personas/${last}`, { cookie, method: 'DELETE', body: { revision: 0 } })).status).toBe(204);
+  const remaining = await (await request(query, { cookie })).json() as PersonaList;
+  expect(remaining.offset).toBe(0);
+  expect(remaining.items.map(({ id }) => id)).toEqual(ids.slice(0, -1));
+});
 
 test('validates, searches, sorts and edits private realms without overwriting newer revisions', async () => {
   await register('realm-owner');
