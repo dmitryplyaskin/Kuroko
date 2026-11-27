@@ -205,6 +205,9 @@ function validateEditor({ draft, variables }: RealmEditorState): { realm: Realm 
   if ('field' in parsed) return { code: 'realm_variable_value_invalid', field: parsed.field };
   return readRealm({
     ...draft, title: draft.title.trim(), sections: draft.sections?.map((entry) => ({ ...entry, title: entry.title.trim() })),
+    playerRoles: draft.playerRoles?.map((role) => ({
+      ...role, title: role.title.trim(), name: role.name?.trim() || undefined, description: role.description?.trim() || undefined,
+    })),
     variables: parsed.variables.length ? parsed.variables : undefined,
   });
 }
@@ -213,10 +216,12 @@ function pruneReferences(realm: Realm): Realm {
   const characterIds = new Set(realm.characters?.map(({ id }) => id));
   const loreIds = new Set(realm.lorebook?.map(({ id }) => id));
   const sectionIds = new Map(realm.sections?.map(({ id, entries }) => [id, new Set(entries.map((entry) => entry.id))]));
+  const roleIds = new Set(realm.playerRoles?.map(({ id }) => id));
   return {
     ...realm,
     starts: realm.starts?.map((start) => ({
       ...start,
+      playerRoleId: start.playerRoleId && roleIds.has(start.playerRoleId) ? start.playerRoleId : undefined,
       characterIds: start.characterIds?.filter((id) => characterIds.has(id)),
       loreEntryIds: start.loreEntryIds?.filter((id) => loreIds.has(id)),
       sectionEntries: start.sectionEntries?.filter(({ sectionId, entryId }) => sectionIds.get(sectionId)?.has(entryId)),

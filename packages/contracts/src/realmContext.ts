@@ -1,4 +1,5 @@
-import { orderedRealmRecords, type Realm, type RealmEntry, type RealmStart } from './realms';
+import type { PersonaDraft } from './personas';
+import { orderedRealmRecords, type Realm, type RealmEntry, type RealmPlayerRole, type RealmStart } from './realms';
 
 type ContextEntry = Pick<RealmEntry, 'id' | 'title' | 'content'> & { order: number } & (
   { source: 'character' | 'lorebook' } | { source: 'section'; sectionId: string; sectionTitle: string }
@@ -8,10 +9,17 @@ export type RealmContext = {
   base: string;
   scenario?: string;
   greeting?: string;
+  playerRole?: RealmPlayerRole;
+  playerPersona?: { name?: string; description: string };
   entries: ContextEntry[];
 };
 
-export function resolveRealmContext(realm: Realm, start?: RealmStart): RealmContext {
+export function resolveRealmContext(realm: Realm, start?: RealmStart, persona?: Pick<PersonaDraft, 'name' | 'description'>): RealmContext {
+  const playerRole = realm.playerRoles?.find(({ id }) => id === start?.playerRoleId);
+  const roleDescription = playerRole?.description?.trim();
+  const name = playerRole?.name?.trim() || persona?.name;
+  const description = roleDescription && playerRole?.descriptionMode === 'replace'
+    ? roleDescription : [persona?.description, roleDescription].filter(Boolean).join('\n\n');
   const characterIds = new Set(start?.characterIds);
   const loreIds = new Set(start?.loreEntryIds);
   const sectionIds = new Map<string, Set<string>>();
@@ -36,5 +44,9 @@ export function resolveRealmContext(realm: Realm, start?: RealmStart): RealmCont
     }
   }
 
-  return { base: realm.base, scenario: start?.scenario, greeting: start?.greeting, entries: entries.sort((a, b) => a.order - b.order) };
+  return {
+    base: realm.base, scenario: start?.scenario, greeting: start?.greeting, entries: entries.sort((a, b) => a.order - b.order),
+    ...(playerRole ? { playerRole } : {}),
+    ...(name || description ? { playerPersona: { ...(name ? { name } : {}), description } } : {}),
+  };
 }

@@ -59,6 +59,7 @@ const worlds: Reference[] = [
   ['world().description, world().author_notes', 'templates.help.metadata'],
   ['world().characters, world().lorebook, world().sections', 'templates.help.records'],
   ['world().starts', 'templates.help.starts'],
+  ['world(id, startId, personaId).player_persona', 'templates.help.playerPersona'],
 ];
 
 function Guide({ scope, field }: { scope: TemplateScope; field?: string }) {

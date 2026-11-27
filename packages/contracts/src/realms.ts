@@ -1,4 +1,6 @@
 import { readAvatar as readRealmAvatar } from './avatar';
+import { personaDescriptionLimit } from './personas';
+import { readPresetName } from './presets';
 import { readVariables, type Variable as RealmVariable } from './variables';
 
 export { avatarMaxLength as realmAvatarMaxLength, readAvatar as readRealmAvatar } from './avatar';
@@ -11,12 +13,22 @@ export type RealmEntry = { id: string; title: string; content: string; order?: n
 export type RealmCharacter = RealmEntry & { summary?: string; avatar?: string };
 export type RealmSection = { id: string; title: string; entries: RealmEntry[] };
 export type RealmSectionEntryRef = { sectionId: string; entryId: string };
+export const realmPlayerRoleModes = ['append', 'replace'] as const;
+export type RealmPlayerRole = {
+  id: string;
+  title: string;
+  order?: number;
+  name?: string;
+  description?: string;
+  descriptionMode: typeof realmPlayerRoleModes[number];
+};
 export type RealmStart = {
   id: string;
   title: string;
   order?: number;
   scenario?: string;
   greeting?: string;
+  playerRoleId?: string;
   characterIds?: string[];
   loreEntryIds?: string[];
   sectionEntries?: RealmSectionEntryRef[];
@@ -35,6 +47,7 @@ export type Realm = {
   characters?: RealmCharacter[];
   lorebook?: RealmEntry[];
   sections?: RealmSection[];
+  playerRoles?: RealmPlayerRole[];
   starts?: RealmStart[];
   variables?: RealmVariable[];
 };
@@ -138,15 +151,26 @@ function isSectionEntryRef(value: unknown): value is RealmSectionEntryRef {
 }
 
 function isStart(value: unknown): value is RealmStart {
-  return objectWithKeys(value, ['id', 'title', 'order', 'scenario', 'greeting', 'characterIds', 'loreEntryIds', 'sectionEntries']) &&
+  return objectWithKeys(value, ['id', 'title', 'order', 'scenario', 'greeting', 'playerRoleId', 'characterIds', 'loreEntryIds', 'sectionEntries']) &&
     isText(value.id) && isText(value.title) &&
     (value.order === undefined || isRealmOrder(value.order)) &&
     (isText(value.scenario) || isText(value.greeting)) &&
     (value.scenario === undefined || isText(value.scenario)) &&
     (value.greeting === undefined || isText(value.greeting)) &&
+    (value.playerRoleId === undefined || isText(value.playerRoleId)) &&
     (value.characterIds === undefined || isIdList(value.characterIds)) &&
     (value.loreEntryIds === undefined || isIdList(value.loreEntryIds)) &&
     (value.sectionEntries === undefined || (Array.isArray(value.sectionEntries) && value.sectionEntries.every(isSectionEntryRef)));
+}
+
+function isPlayerRole(value: unknown): value is RealmPlayerRole {
+  return objectWithKeys(value, ['id', 'title', 'order', 'name', 'description', 'descriptionMode']) &&
+    isText(value.id) && readPresetName(value.title) !== undefined &&
+    (value.order === undefined || isRealmOrder(value.order)) &&
+    (value.name === undefined || readPresetName(value.name) !== undefined) &&
+    (value.description === undefined || (isText(value.description) && Boolean(value.description.trim()) &&
+      value.description.length <= personaDescriptionLimit && !value.description.includes('\0'))) &&
+    realmPlayerRoleModes.some((mode) => mode === value.descriptionMode);
 }
 
 function checkCollection<T extends { id: string }>(value: unknown, field: string, check: (item: unknown) => item is T): RealmIssue | undefined {
@@ -170,7 +194,7 @@ function checkVariables(value: unknown): RealmIssue | undefined {
 export function readRealm(value: unknown): { realm: Realm } | RealmIssue {
   if (!objectWithKeys(value, [
     'specVersion', 'id', 'title', 'base', 'description', 'author', 'version', 'authorNotes', 'tags', 'avatar',
-    'characters', 'lorebook', 'sections', 'starts', 'variables',
+    'characters', 'lorebook', 'sections', 'playerRoles', 'starts', 'variables',
   ])) {
     return { code: 'realm_invalid', field: '' };
   }
@@ -185,6 +209,7 @@ export function readRealm(value: unknown): { realm: Realm } | RealmIssue {
   if (value.avatar !== undefined && !readRealmAvatar(value.avatar)) return { code: 'realm_invalid', field: '/avatar' };
   const issue = checkCollection(value.characters, '/characters', isCharacter) ??
     checkCollection(value.lorebook, '/lorebook', isEntry) ?? checkCollection(value.sections, '/sections', isSection) ??
+    checkCollection(value.playerRoles, '/playerRoles', isPlayerRole) ??
     checkCollection(value.starts, '/starts', isStart) ?? checkVariables(value.variables);
   if (issue) return issue;
   const realm = value as Realm;
@@ -199,8 +224,10 @@ function checkReferences(realm: Realm): RealmIssue | undefined {
   const characters = new Set(realm.characters?.map(({ id }) => id));
   const lorebook = new Set(realm.lorebook?.map(({ id }) => id));
   const sections = new Map(realm.sections?.map(({ id, entries }) => [id, new Set(entries.map((entry) => entry.id))]));
+  const roles = new Set(realm.playerRoles?.map(({ id }) => id));
   for (const [index, start] of (realm.starts ?? []).entries()) {
     const field = `/starts/${index}`;
+    if (start.playerRoleId && !roles.has(start.playerRoleId)) return { code: 'realm_reference_missing', field: `${field}/playerRoleId` };
     if (start.characterIds?.some((id) => !characters.has(id))) return { code: 'realm_reference_missing', field: `${field}/characterIds` };
     if (start.loreEntryIds?.some((id) => !lorebook.has(id))) return { code: 'realm_reference_missing', field: `${field}/loreEntryIds` };
     const seen = new Set<string>();

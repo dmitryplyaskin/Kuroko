@@ -38,8 +38,9 @@ export function createApiRouter(db: Database, vaultKey: Buffer, secureCookie: bo
   const llm = createLlmService(presets, keys, connections);
   const chats = createChatStore(db);
   const realms = createRealmStore(db);
+  const personas = createPersonaStore(db);
   const instructions = createInstructionStore(db);
-  const renderPrompt = createPromptRenderer(realms.find);
+  const renderPrompt = createPromptRenderer(realms.find, personas.find);
   const preparePrompt = createChatPrompt(instructions, renderPrompt);
   const worldExists = (userId: number, id: string) => realms.find(userId, id) !== null;
   const tools = createToolsStore(db);
@@ -50,8 +51,8 @@ export function createApiRouter(db: Database, vaultKey: Buffer, secureCookie: bo
   router.use('/llm', requireUser, json({ limit: '4mb' }), createLlmRouter(llm, delegateTask, describeTools));
   router.use('/chats', requireUser, json({ limit: '8mb' }), createChatRouter(chats,
     createGmReply(chats, llm, tools.list, delegateTask, describeTools, preparePrompt)));
-  router.use('/realms', requireUser, json({ limit: realmRequestByteLimit }), createRealmRouter(realms));
-  router.use('/personas', requireUser, json({ limit: personaRequestByteLimit }), createPersonaRouter(createPersonaStore(db)));
+  router.use('/realms', requireUser, json({ limit: realmRequestByteLimit }), createRealmRouter(realms, personas.find));
+  router.use('/personas', requireUser, json({ limit: personaRequestByteLimit }), createPersonaRouter(personas));
   router.use(json({ limit: '128kb' }));
   router.get('/health', (_request, response) => {
     response.json({ status: 'ok' });

@@ -1,5 +1,5 @@
 import { Button, Modal, TagsInput, TextInput } from '@mantine/core';
-import { type Realm, type RealmStart } from '@kuroko/contracts/realms';
+import type { Realm, RealmPlayerRole, RealmStart } from '@kuroko/contracts/realms';
 import { useUnit } from 'effector-react';
 import { ArrowLeft, Download, Trash2 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
@@ -14,7 +14,7 @@ import {
 import { AvatarEditor, PreviewableRealmAvatar } from './RealmAvatar';
 import { getRealmSection, RealmContents, realmParts, sectionPart, type RealmPart } from './RealmContents';
 import { RealmFavoriteButton } from './RealmFavoriteButton';
-import { EntriesEditor, RecordEditor, StartFields } from './RealmFields';
+import { EntriesEditor, PlayerRoleFields, RecordEditor, StartFields } from './RealmFields';
 import { RealmVariables } from './RealmVariables';
 import classes from './Realms.module.css';
 
@@ -132,6 +132,11 @@ export function RealmEditor({ editor }: { editor: RealmEditorState }) {
           {(part === 'characters' || part === 'lorebook') && <EntriesEditor key={part} entries={draft[part] ?? []}
             kind={part === 'characters' ? 'character' : 'entry'} invalidIndex={invalidIndex}
             onChange={(entries, removed) => patch({ [part]: entries }, removed)} />}
+          {part === 'playerRoles' && <RecordEditor<RealmPlayerRole> items={draft.playerRoles ?? []} invalidIndex={invalidIndex}
+            addLabel={t('realms.playerRole.add')} emptyLabel={t('realms.playerRole.empty')}
+            makeItem={() => ({ id: newRealmId(), title: '', descriptionMode: 'append' })}
+            onChange={(playerRoles, removed) => patch({ playerRoles }, removed)}
+            fields={(role, change) => <PlayerRoleFields role={role} onChange={change} />} />}
           {part === 'starts' && <RecordEditor<RealmStart> items={draft.starts ?? []} invalidIndex={invalidIndex}
             addLabel={t('realms.add.start')} emptyLabel={t('realms.empty.starts')} makeItem={() => ({ id: newRealmId(), title: '' })}
             onChange={(starts) => patch({ starts })} fields={(start, change) => <StartFields realm={draft} start={start} onChange={change} />} />}
@@ -176,6 +181,7 @@ function issueMessage({ code, field }: RealmSaveIssue): MessageKey {
   if (code !== 'realm_invalid') return `error.${code}`;
   if (field === '/title') return 'realms.required.title';
   if (field === '/base') return 'realms.required.base';
+  if (field?.startsWith('/playerRoles/')) return 'realms.playerRole.invalid';
   if (field?.startsWith('/starts/')) return 'realms.required.start';
   if (field?.startsWith('/sections/') && !field.includes('/entries')) return 'realms.required.section';
   if (field?.startsWith('/characters/') || field?.startsWith('/lorebook/') || field?.includes('/entries/')) return 'realms.required.entry';

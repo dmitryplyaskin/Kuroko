@@ -44,6 +44,7 @@ function indexRealm(realm: Realm) {
     for (const entry of section.entries) text.push(entry.title, entry.content);
   }
   for (const start of realm.starts ?? []) text.push(start.title, start.scenario ?? '', start.greeting ?? '');
+  for (const role of realm.playerRoles ?? []) text.push(role.title, role.name, role.description);
   return {
     titleKey: realmSearchKey(realm.title),
     excerpt: Array.from((realm.description?.trim() || realm.base).replace(/\s+/g, ' ').trim()).slice(0, 180).join(''),

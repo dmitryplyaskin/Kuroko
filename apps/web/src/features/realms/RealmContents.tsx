@@ -4,7 +4,7 @@ import { Plus } from 'lucide-react';
 import { useI18n } from '../../shared/i18n/i18n';
 import classes from './Realms.module.css';
 
-export const realmParts = ['base', 'characters', 'lorebook', 'starts', 'variables'] as const;
+export const realmParts = ['base', 'characters', 'playerRoles', 'lorebook', 'starts', 'variables'] as const;
 type StandardPart = typeof realmParts[number];
 export type RealmPart = StandardPart | `section:${string}`;
 

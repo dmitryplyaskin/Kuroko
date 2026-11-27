@@ -1,9 +1,10 @@
-import { Accordion, ActionIcon, Button, Checkbox, TextInput } from '@mantine/core';
+import { Accordion, ActionIcon, Button, Checkbox, NativeSelect, Textarea, TextInput } from '@mantine/core';
 import { PromptTextarea } from '../../shared/prompt-templates/TemplateHelp';
+import { personaDescriptionLimit, personaNameLimit } from '@kuroko/contracts/personas';
 import { resolveRealmContext } from '@kuroko/contracts/realmContext';
 import {
-  isRealmOrder, orderedRealmRecords, realmMaxOrder, realmSearchKey, type Realm, type RealmCharacter, type RealmEntry,
-  type RealmSectionEntryRef, type RealmStart,
+  isRealmOrder, orderedRealmRecords, realmMaxOrder, realmPlayerRoleModes, realmSearchKey, type Realm, type RealmCharacter, type RealmEntry,
+  type RealmPlayerRole, type RealmSectionEntryRef, type RealmStart,
 } from '@kuroko/contracts/realms';
 import { ArrowDown, ArrowUp, Plus, Trash2 } from 'lucide-react';
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
@@ -191,6 +192,26 @@ function ReferencePicker({ label, entries, ids, onChange }: {
   </fieldset>;
 }
 
+export function PlayerRoleFields({ role, onChange }: { role: RealmPlayerRole; onChange: (patch: Partial<RealmPlayerRole>) => void }) {
+  const { t } = useI18n();
+  return <>
+    <TextInput label={t('realms.playerRole.title')} value={role.title} maxLength={personaNameLimit} required
+      onChange={(event) => onChange({ title: event.currentTarget.value })} />
+    <TextInput label={t('realms.playerRole.name')} description={t('realms.playerRole.nameHelp')}
+      value={role.name ?? ''} maxLength={personaNameLimit}
+      onChange={(event) => onChange({ name: event.currentTarget.value || undefined })} />
+    <NativeSelect label={t('realms.playerRole.descriptionMode')} value={role.descriptionMode}
+      data={realmPlayerRoleModes.map((value) => ({ value, label: t(`realms.playerRole.${value}`) }))}
+      onChange={(event) => {
+        const descriptionMode = realmPlayerRoleModes.find((mode) => mode === event.currentTarget.value);
+        if (descriptionMode) onChange({ descriptionMode });
+      }} />
+    <Textarea label={t('realms.playerRole.description')} value={role.description ?? ''}
+      maxLength={personaDescriptionLimit} autosize minRows={4} maxRows={16} dir="auto"
+      onChange={(event) => onChange({ description: event.currentTarget.value || undefined })} />
+  </>;
+}
+
 export function StartFields({ realm, start, onChange }: {
   realm: Realm;
   start: RealmStart;
@@ -200,6 +221,7 @@ export function StartFields({ realm, start, onChange }: {
   const characters = realm.characters ?? [];
   const lorebook = realm.lorebook ?? [];
   const sections = (realm.sections ?? []).filter((section) => section.entries.length);
+  const roles = orderedRealmRecords(realm.playerRoles ?? []);
   const refs = start.sectionEntries ?? [];
   const context = resolveRealmContext(realm, start);
 
@@ -212,6 +234,12 @@ export function StartFields({ realm, start, onChange }: {
     <>
       <TextInput label={t('realms.title.start')} required value={start.title}
         onChange={(event) => onChange({ title: event.currentTarget.value })} />
+      <NativeSelect label={t('realms.startPlayerRole')} value={start.playerRoleId ?? ''}
+        description={roles.length === 0 ? t('realms.playerRole.startHelp') : undefined}
+        data={[{ value: '', label: t('realms.playerRole.own') }, ...roles.map(({ record }) => ({
+          value: record.id, label: record.title.trim() || t('realms.untitled'),
+        }))]}
+        onChange={(event) => onChange({ playerRoleId: event.currentTarget.value || undefined })} />
       <PromptTextarea scope="world" label={t('realms.scenario')} description={t('realms.scenarioHelp')} autosize minRows={3} maxRows={12}
         value={start.scenario ?? ''} onChange={(event) => onChange({ scenario: event.currentTarget.value || undefined })} />
       <PromptTextarea scope="world" label={t('realms.greeting')} description={t('realms.greetingHelp')} autosize minRows={3} maxRows={12}

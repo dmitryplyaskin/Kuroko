@@ -139,6 +139,74 @@ test('sorts and paginates personas and corrects an offset after the last page is
   expect(remaining.items.map(({ id }) => id)).toEqual(ids.slice(0, -1));
 });
 
+test('applies a start’s role to its player persona in realm context and chat instructions', async () => {
+  await register('player-role-owner');
+  await register('player-role-other');
+  const cookie = sessionCookie(await login('player-role-owner')).token;
+  const other = sessionCookie(await login('player-role-other')).token;
+  const persona = { id: '3'.repeat(32), name: 'Лина', description: 'Собирает карты.', variables: [] };
+  const foreignPersona = { ...persona, id: '4'.repeat(32) };
+  expect((await request('/personas', { method: 'POST', cookie, body: persona })).status).toBe(201);
+  expect((await request('/personas', { method: 'POST', cookie: other, body: foreignPersona })).status).toBe(201);
+  const realm: Realm = {
+    specVersion: '0.1.0', id: 'fortress', title: 'Крепость', base: 'Ворота закрыты.',
+    playerRoles: [
+      { id: 'runner', title: 'Беглец', description: 'Уходит от погони.', descriptionMode: 'append' },
+      { id: 'guard', title: 'Страж', name: 'Рей', description: 'Охраняет ворота.', descriptionMode: 'replace' },
+    ],
+    starts: [
+      { id: 'escape', title: 'Побег', scenario: 'Ночь.', playerRoleId: 'runner' },
+      { id: 'watch', title: 'Дозор', scenario: 'Рассвет.', playerRoleId: 'guard' },
+      { id: 'return', title: 'Возвращение', scenario: 'Полдень.', playerRoleId: 'runner' },
+      { id: 'own', title: 'Визит', scenario: 'Вечер.' },
+    ],
+  };
+  const create = (body: Realm) => request('/realms', { method: 'POST', cookie, body });
+  const invalid = await create({ ...realm, playerRoles: [] });
+  expect(invalid.status).toBe(400);
+  expect(await invalid.json()).toEqual({ code: 'realm_reference_missing', field: '/starts/0/playerRoleId' });
+  const duplicate = await create({ ...realm, playerRoles: [...realm.playerRoles!, realm.playerRoles![0]!] });
+  expect(duplicate.status).toBe(400);
+  expect(await duplicate.json()).toEqual({ code: 'realm_duplicate_id', field: '/playerRoles/2/id' });
+  const created = await create(realm);
+  expect(created.status).toBe(201);
+  const saved = await created.json() as SavedRealm;
+  expect(saved.realm).toEqual(realm);
+
+  const contextPath = `/realms/${saved.id}/context`;
+  const context = (start: string, id = persona.id) => request(`${contextPath}?start=${start}&persona=${id}`, { cookie });
+  const appended = { name: 'Лина', description: 'Собирает карты.\n\nУходит от погони.' };
+  for (const start of ['escape', 'return']) {
+    expect(await (await context(start)).json()).toMatchObject({ playerRole: realm.playerRoles![0], playerPersona: appended });
+  }
+  expect(await (await context('watch')).json()).toMatchObject({
+    playerRole: realm.playerRoles![1], playerPersona: { name: 'Рей', description: 'Охраняет ворота.' },
+  });
+  expect(await (await context('own')).json()).toEqual({
+    base: realm.base, scenario: 'Вечер.', entries: [], playerPersona: { name: persona.name, description: persona.description },
+  });
+  expect(await (await request(`${contextPath}?start=escape`, { cookie })).json())
+    .toMatchObject({ playerPersona: { description: 'Уходит от погони.' } });
+  const denied = await context('escape', foreignPersona.id);
+  expect(denied.status).toBe(404);
+  expect(await denied.json()).toEqual({ code: 'persona_not_found' });
+
+  const instructions = '/settings/instructions';
+  const text = `{{ world(world().id, world().starts[0].id, "${persona.id}").context }}`;
+  const preview = (text: string) => request(`${instructions}/preview`, {
+    method: 'POST', cookie, body: { text, worldId: saved.id },
+  });
+  expect(await (await preview('{{ world().starts[1].player_persona.name }}')).json()).toEqual({ text: 'Рей' });
+  expect((await preview(text.replace(persona.id, foreignPersona.id))).status).toBe(422);
+  const withRole = 'Крепость\n\nВорота закрыты.\n\nНочь.\n\nPlayer persona\nЛина\nСобирает карты.\n\nУходит от погони.';
+  expect(await (await preview(text)).json()).toEqual({ text: withRole });
+  expect((await request(`${instructions}/presets`, {
+    method: 'POST', cookie, body: { name: 'Побег', text, worldId: saved.id },
+  })).status).toBe(201);
+  const chat = await (await request('/chats', { method: 'POST', cookie })).json() as SavedChat;
+  expect(await (await request(`${instructions}/active?chat=${chat.id}`, { cookie })).json()).toMatchObject({ text: withRole });
+});
+
 test('validates, searches, sorts and edits private realms without overwriting newer revisions', async () => {
   await register('realm-owner');
   await register('realm-other');

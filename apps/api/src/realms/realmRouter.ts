@@ -1,11 +1,12 @@
 import { errorBody } from '@kuroko/contracts/errors';
+import { isPersonaId, type SavedPersona } from '@kuroko/contracts/personas';
 import { resolveRealmContext } from '@kuroko/contracts/realmContext';
 import { readRealm, readRealmAvatar, realmPageSize, realmSearchMaxLength, realmSorts, realmStartsFilters,
   type RealmListQuery } from '@kuroko/contracts/realms';
 import { Router } from 'express';
 import type { createRealmStore } from './realmStore';
 
-export function createRealmRouter(store: ReturnType<typeof createRealmStore>) {
+export function createRealmRouter(store: ReturnType<typeof createRealmStore>, findPersona: (userId: number, id: string) => SavedPersona | undefined) {
   const router = Router();
 
   router.get('/', (request, response) => {
@@ -36,19 +37,32 @@ export function createRealmRouter(store: ReturnType<typeof createRealmStore>) {
   });
 
   router.get('/:id/context', (request, response) => {
-    const startId = request.query.start;
+    const { start: startId, persona: personaId } = request.query;
     if (startId !== undefined && (typeof startId !== 'string' || !startId)) {
       response.status(400).json(errorBody('invalid_request', 'start'));
       return;
     }
-    const saved = store.find(response.locals.user.id, request.params.id);
+    if (personaId !== undefined && !isPersonaId(personaId)) {
+      response.status(400).json(errorBody('invalid_request', 'persona'));
+      return;
+    }
+    const userId: number = response.locals.user.id;
+    const saved = store.find(userId, request.params.id);
     if (!saved) {
       response.status(404).json(errorBody('realm_not_found'));
       return;
     }
     const start = saved.realm.starts?.find(({ id }) => id === startId);
-    if (startId !== undefined && !start) response.status(404).json(errorBody('realm_start_not_found'));
-    else response.json(resolveRealmContext(saved.realm, start));
+    if (startId !== undefined && !start) {
+      response.status(404).json(errorBody('realm_start_not_found'));
+      return;
+    }
+    const persona = personaId === undefined ? undefined : findPersona(userId, personaId);
+    if (personaId !== undefined && !persona) {
+      response.status(404).json(errorBody('persona_not_found'));
+      return;
+    }
+    response.json(resolveRealmContext(saved.realm, start, persona));
   });
 
   router.get('/:id', (request, response) => {
