@@ -41,6 +41,7 @@ export function chatReplyPrompt(messages: readonly ChatMessage[], replaceId?: nu
 }
 
 export type ChatSummary = { id: string; title: string; updatedAt: number; realmId?: string };
+export type ChatListItem = ChatSummary & { realmTitle?: string; realmHasAvatar?: true };
 export type ChatCreateRequest = {
   realmId: string;
   /** Reuse this client-generated ID when retrying creation. */

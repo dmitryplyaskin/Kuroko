@@ -1,8 +1,9 @@
-import { Bot, Globe, MessageSquare, NotebookText, Palette, PanelsTopLeft, Plug, Settings, UserRound, Wrench } from 'lucide-react';
+import { Bot, Globe, House, MessageSquare, NotebookText, Palette, PanelsTopLeft, Plug, Settings, UserRound, Wrench } from 'lucide-react';
 import type { ModuleIconName } from './contracts';
 
 const icons = {
   panels: PanelsTopLeft,
+  home: House,
   globe: Globe,
   message: MessageSquare,
   settings: Settings,

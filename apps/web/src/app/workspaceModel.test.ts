@@ -18,7 +18,7 @@ const notesScreen = {
   kind: 'workspace.screen',
   id: 'test.notes.index',
   route: '#notes',
-  label: 'scenes.label',
+  label: 'home.label',
   order: 20,
 } as const;
 
@@ -26,7 +26,7 @@ const notesTab = {
   kind: 'settings.tab',
   id: 'test.notes.preferences',
   key: 'notes',
-  label: 'scenes.label',
+  label: 'home.label',
   order: 20,
 } as const;
 
@@ -49,7 +49,7 @@ test('a module outside the core bundle adds a lazy screen and a selectable setti
   const scope = fork();
 
   assert.deepEqual(registry.screens.map(({ route }) => route),
-    ['#scenes', '#realms', '#personas', '#chat', '#notes', '#instructions', '#tools', '#agents', '#settings']);
+    ['#home', '#realms', '#personas', '#chat', '#notes', '#instructions', '#tools', '#agents', '#settings']);
   assert.deepEqual(registry.settingsTabs.map(({ key }) => key), ['appearance', 'chat', 'notes', 'connection']);
 
   await allSettled(workspace.workspaceHashChanged, { scope, params: '#notes' });
@@ -80,7 +80,12 @@ test('unknown addresses fall back and legacy aliases retain their existing setti
   assert.equal(scope.getState(workspace.$settingsTab), 'chat');
 
   await allSettled(workspace.workspaceHashChanged, { scope, params: '#unknown' });
-  assert.equal(scope.getState(workspace.$screen).route, '#scenes');
+  assert.equal(scope.getState(workspace.$screen).route, '#home');
+  await allSettled(workspace.workspaceHashChanged, { scope, params: '#scenes' });
+  assert.equal(scope.getState(workspace.$screen).route, '#home');
+  await allSettled(workspace.workspaceHashChanged, { scope, params: '#settings/connection' });
+  assert.equal(scope.getState(workspace.$screen).route, '#settings');
+  assert.equal(scope.getState(workspace.$settingsTab), 'connection');
   await allSettled(workspace.workspaceHashChanged, { scope, params: '#instructions' });
   assert.equal(scope.getState(workspace.$screen).id, 'kuroko.instructions.index');
   await allSettled(workspace.workspaceHashChanged, { scope, params: '#chat' });

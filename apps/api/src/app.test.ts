@@ -1671,7 +1671,7 @@ test('opens chats from owned realms and keeps the selected start with the conver
     messages: [{ id: 1, role: 'assistant', text: 'Добро пожаловать в Остров.', realmStart: { id: 'port', title: 'Порт' } }],
   });
   expect(await (await request('/chats', { cookie })).json()).toEqual([
-    { id: chat.id, title: realm.title, updatedAt: chat.updatedAt, realmId: savedRealm.id },
+    { id: chat.id, title: realm.title, updatedAt: chat.updatedAt, realmId: savedRealm.id, realmTitle: realm.title, realmHasAvatar: true },
   ]);
   expect(await (await createChat(body)).json()).toEqual(chat);
   expect(await (await request(`/settings/instructions/active?chat=${chat.id}`, { cookie })).json()).toMatchObject({
@@ -1724,6 +1724,9 @@ test('opens chats from owned realms and keeps the selected start with the conver
   expect(updated.status).toBe(200);
   const reopened = await (await request(path, { cookie })).json() as SavedChat;
   expect(reopened.realm).toEqual({ id: savedRealm.id, title: 'Каменный остров' });
+  expect(await (await request('/chats', { cookie })).json()).toEqual([
+    { id: chat.id, title: reopened.title, updatedAt: reopened.updatedAt, realmId: savedRealm.id, realmTitle: 'Каменный остров' },
+  ]);
   const renamed = await request(`${path}/title`, { method: 'PUT', cookie, body: { title: 'Укрытие' } });
   expect(renamed.status).toBe(200);
   expect(await renamed.json()).toEqual({ id: chat.id, title: 'Укрытие', updatedAt: reopened.updatedAt, realmId: savedRealm.id });

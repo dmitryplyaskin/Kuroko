@@ -316,6 +316,7 @@ sample({
 export const $realmEditorDirty = $realmEditor.map((view) => view?.status === 'ready' && editorDirty(view));
 export const $realmEditorHasUnsavedChanges = $realmEditor.map((view) =>
   view?.status === 'ready' && (Boolean(view.imported && !view.saved) || editorDirty(view)));
+export const $realmEditorBusy = $realmEditor.map((view) => view?.status === 'ready' && !canEdit(view));
 
 const editorCreated = sample({
   clock: realmEditorCreated,

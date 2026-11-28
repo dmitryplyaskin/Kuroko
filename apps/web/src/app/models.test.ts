@@ -1108,6 +1108,27 @@ test('new chats inherit the current realm while the library can select a differe
   }
 });
 
+test('opening a specific chat before visiting the chat screen also loads the saved chat menu', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = withSavedChats(async () => { throw new Error('Unexpected generation'); });
+  try {
+    const existing = await openChat();
+    const first = existing.getState($chatId);
+    await allSettled(chatCreateRequested, { scope: existing });
+    const second = existing.getState($chatId);
+
+    const scope = fork();
+    await allSettled(sessionUserReceived, { scope, params: user });
+    scopeBind(chatOpenRequested, { scope })(first);
+    await allSettled(chatShown, { scope });
+
+    assert.equal(scope.getState($chatId), first);
+    assert.deepEqual(new Set(scope.getState($savedChatList).map(({ id }) => id)), new Set([first, second]));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('chat recovers a send to a deleted conversation and keeps its text when opening another chat', async () => {
   const originalFetch = globalThis.fetch;
   let deleted: string | undefined;

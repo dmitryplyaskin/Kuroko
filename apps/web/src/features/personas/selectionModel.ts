@@ -10,7 +10,11 @@ type SelectionState = { selected?: PersonaSelectionResult; pending?: true; savin
 export const personaSelectionRequested = createEvent<string>();
 export const personaSelectionOpened = createEvent();
 
-const readFx = personaEffect(({ session }: { session: ActiveSession }) => sessionRequest<PersonaSelectionResult>(session, path));
+export function requestPersonaSelection(session: ActiveSession, signal?: AbortSignal) {
+  return sessionRequest<PersonaSelectionResult>(session, path, { signal });
+}
+
+const readFx = personaEffect(({ session }: { session: ActiveSession }) => requestPersonaSelection(session));
 const writeFx = personaEffect(({ session, id }: PersonaSelection & { session: ActiveSession; targetId: string }) =>
   sessionRequest<PersonaSelectionResult>(session, path, { method: 'PUT', body: { id } }));
 

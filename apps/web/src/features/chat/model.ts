@@ -23,7 +23,7 @@ type Reply = {
   activeSubagents?: readonly ActiveSubagent[];
   reasoningActive?: boolean;
 };
-type Navigation = { session: ActiveSession; action: 'initial' | 'create' | 'open'; id?: string; keepDraft?: boolean; realm?: ChatCreateRequest };
+type Navigation = { session: ActiveSession; action: 'initial' | 'create' | 'open'; id?: string; keepDraft?: boolean; loadList?: boolean; realm?: ChatCreateRequest };
 type Save = { session: ActiveSession; id: string; revision: number } & (
   (Omit<ChatSnapshot, 'revision'> & { reply?: Reply; draftToRecover?: string; selection?: never }) |
   { reply?: never; selection: ChatReplyVariantSelection }
@@ -58,12 +58,15 @@ export const replyVariantRequested = createEvent<ChatReplyVariantSelection>();
 export const reasoningToggled = createEvent<{ id: number; afterToolCallId: string | undefined; open: boolean }>();
 
 export const $chatVisible = createStore(false).on(chatShown, () => true).reset(chatHidden, sessionEnded);
-const navigateFx = createEffect(async ({ session, action, id, realm }: Navigation) => {
+const navigateFx = createEffect(async ({ session, action, id, realm, loadList }: Navigation) => {
   if (action === 'create') {
     const chats = realm ? await chatApi.list(session) : undefined;
     return { chat: await chatApi.create(session, realm), chats };
   }
-  if (action === 'open' && id) return { chat: await chatApi.open(session, id) };
+  if (action === 'open' && id) {
+    const [chat, chats] = await Promise.all([chatApi.open(session, id), loadList ? chatApi.list(session) : undefined]);
+    return { chat, chats };
+  }
   const chats = await chatApi.list(session);
   const chat = chats[0] ? await chatApi.open(session, chats[0].id) : await chatApi.create(session);
   return { chat, chats };
@@ -284,7 +287,7 @@ sample({
   clock: chatOpenRequested,
   source: $chatNavigation,
   filter: ({ session, locked, current }, id) => session !== null && !locked && id !== current,
-  fn: ({ session, current }, id): Navigation => ({ session: session!, action: 'open', id, keepDraft: !current }),
+  fn: ({ session, current }, id): Navigation => ({ session: session!, action: 'open', id, keepDraft: !current, loadList: !current }),
   target: navigateFx,
 });
 

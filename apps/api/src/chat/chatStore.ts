@@ -1,5 +1,5 @@
 import {
-  chatReplyPrompt, chatTitleLimit, type ChatActivityEntry, type ChatCreateRequest, type ChatMessage, type ChatRealm, type ChatReplyVariantSelection,
+  chatReplyPrompt, chatTitleLimit, type ChatActivityEntry, type ChatCreateRequest, type ChatListItem, type ChatMessage, type ChatRealm, type ChatReplyVariantSelection,
   type ChatSnapshot, type ChatSummary, type ChatToolCall, type SavedChat,
 } from '@kuroko/contracts/chat';
 import type { LlmAssistantMessage } from '@kuroko/contracts/llm';
@@ -9,9 +9,9 @@ import { randomUUID } from 'node:crypto';
 import { PromptTemplateError, type createPromptRenderer } from '../instructions/promptTemplate';
 
 type SummaryRow = Omit<ChatSummary, 'realmId'> & { realmId: string | null };
-type Row = SummaryRow & {
+type ListRow = SummaryRow & { realmTitle: string | null; realmHasAvatar: 0 | 1 };
+type Row = ListRow & {
   revision: number; messagesJson: string; gmMode: 0 | 1; customTitle: string | null;
-  realmTitle: string | null; realmHasAvatar: 0 | 1;
 };
 export type PrivateTurn = {
   notes?: string;
@@ -22,9 +22,12 @@ type ReplyVersion = { message: ChatMessage; activity?: ChatActivityEntry[]; priv
 export function createChatStore(
   db: Database, findRealm: (userId: number, id: string) => SavedRealm | null, renderPrompt: ReturnType<typeof createPromptRenderer>,
 ) {
-  const list = db.query<SummaryRow, [number]>(`
-    SELECT id, coalesce(custom_title, title) AS title, updated_at AS updatedAt, realm_id AS realmId
-    FROM chats WHERE user_id = ? ORDER BY updated_at DESC, id
+  const list = db.query<ListRow, [number]>(`
+    SELECT chats.id, coalesce(chats.custom_title, chats.title) AS title, chats.updated_at AS updatedAt, chats.realm_id AS realmId,
+      realms.title AS realmTitle,
+      json_type(realms.document_json, '$.avatar') IS NOT NULL AS realmHasAvatar
+    FROM chats LEFT JOIN realms ON realms.id = chats.realm_id AND realms.user_id = chats.user_id
+    WHERE chats.user_id = ? ORDER BY chats.updated_at DESC, chats.id
   `);
   const find = db.query<Row, [number, string]>(`
     SELECT chats.id, chats.title, chats.updated_at AS updatedAt, chats.revision, messages_json AS messagesJson,
@@ -270,7 +273,11 @@ export function createChatStore(
   });
 
   return {
-    list: (userId: number) => list.all(userId).map(readSummary),
+    list: (userId: number): ChatListItem[] => list.all(userId).map(({ realmTitle, realmHasAvatar, ...row }) => ({
+      ...readSummary(row),
+      ...(realmTitle !== null && { realmTitle }),
+      ...(realmHasAvatar ? { realmHasAvatar: true } : {}),
+    })),
     find(userId: number, id: string) {
       const row = find.get(userId, id);
       return row && readChat(row);

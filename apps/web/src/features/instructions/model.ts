@@ -16,7 +16,11 @@ const presetsPath = `${path}/presets`;
 export const instructionsOpened = createEvent();
 export const instructionDraftChanged = createEvent<Partial<Draft>>();
 
-const loadFx = createEffect((session: ActiveSession) => sessionRequest<InstructionSettings>(session, path));
+export function requestInstructionSettings(session: ActiveSession, signal?: AbortSignal) {
+  return sessionRequest<InstructionSettings>(session, path, { signal });
+}
+
+const loadFx = createEffect((session: ActiveSession) => requestInstructionSettings(session));
 const saveFx = createEffect(({ session, change, draft, revision }: { session: ActiveSession; change: Change; draft?: InstructionDraft; revision?: number }) => {
   switch (change.kind) {
     case 'create':
