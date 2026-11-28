@@ -1,5 +1,6 @@
 import {
-  personaPageSize, type PersonaDraft, type PersonaForPrompt, type PersonaListQuery, type PersonaSummary, type SavedPersona,
+  personaPageSize, type PersonaDraft, type PersonaForPrompt, type PersonaIdentity, type PersonaListQuery, type PersonaSelectionResult,
+  type PersonaSummary, type SavedPersona,
 } from '@kuroko/contracts/personas';
 import type { Database } from 'bun:sqlite';
 
@@ -43,11 +44,15 @@ export function createPersonaStore(db: Database) {
   `);
   const remove = db.query('DELETE FROM personas WHERE user_id = ? AND id = ? AND revision = ?');
   const favorite = db.query('UPDATE personas SET favorite = ? WHERE user_id = ? AND id = ?');
-  const activeId = db.query<{ id: string }, [number]>('SELECT persona_id AS id FROM active_personas WHERE user_id = ?');
-  const activePersona = db.query<Omit<PersonaForPrompt, 'variables'> & { variablesJson: string }, [number]>(`
-    SELECT p.id, p.name, p.description, p.variables_json AS variablesJson
+  const activeSource = `
     FROM active_personas AS a JOIN personas AS p ON p.user_id = a.user_id AND p.id = a.persona_id
     WHERE a.user_id = ?
+  `;
+  const activeIdentity = db.query<Omit<PersonaIdentity, 'hasAvatar'> & { hasAvatar: number }, [number]>(`
+    SELECT p.id, p.name, p.revision, p.avatar IS NOT NULL AS hasAvatar ${activeSource}
+  `);
+  const activePersona = db.query<Omit<PersonaForPrompt, 'variables'> & { variablesJson: string }, [number]>(`
+    SELECT p.id, p.name, p.description, p.variables_json AS variablesJson ${activeSource}
   `);
   const activate = db.query(`
     INSERT INTO active_personas (user_id, persona_id)
@@ -97,7 +102,10 @@ export function createPersonaStore(db: Database) {
 
   return {
     list,
-    activeId: (userId: number) => activeId.get(userId)?.id ?? null,
+    selection(userId: number): PersonaSelectionResult {
+      const selected = activeIdentity.get(userId);
+      return selected ? { ...selected, hasAvatar: Boolean(selected.hasAvatar) } : { id: null };
+    },
     active(userId: number): PersonaForPrompt | undefined {
       const row = activePersona.get(userId);
       if (!row) return;

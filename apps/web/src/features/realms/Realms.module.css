@@ -1,4 +1,5 @@
 .realms-page { min-inline-size: 0; }
+.realms-start-chat { --ai-radius: var(--kr-radius-control); color: var(--kr-accent); }
 .realms-heading {
   display: flex;
   align-items: start;

@@ -3,6 +3,7 @@ import {
   type ChatActivityEntry, type ChatActivityTurn, type ChatMessage, type ChatReasoningBlock, type ChatSnapshot, type ChatToolCall,
 } from '@kuroko/contracts/chat';
 import { errorBody } from '@kuroko/contracts/errors';
+import { isWorldBinding } from '@kuroko/contracts/instructions';
 import { Router } from 'express';
 import { PromptTemplateError } from '../instructions/promptTemplate';
 import { jsonObject, jsonValue, record } from '../llm/json';
@@ -15,7 +16,18 @@ export function createChatRouter(store: ReturnType<typeof createChatStore>, gmRe
   const router = Router();
   const activeGmTurns = new Set<string>();
   router.get('/', (_request, response) => { response.json(store.list(response.locals.user.id)); });
-  router.post('/', (_request, response) => { response.status(201).json(store.create(response.locals.user.id)); });
+  router.post('/', (request, response) => {
+    const { realmId, id } = record(request.body) ?? {};
+    if ((realmId !== undefined && (typeof realmId !== 'string' || !isWorldBinding(realmId))) ||
+        (id !== undefined && (typeof id !== 'string' || !/^[a-f0-9]{32}$/.test(id) || realmId === undefined))) {
+      response.status(400).json(errorBody('invalid_request'));
+      return;
+    }
+    const chat = store.create(response.locals.user.id, realmId === undefined ? undefined : { realmId, id });
+    if (chat === 'missing') response.status(404).json(errorBody('realm_not_found'));
+    else if (chat === 'conflict') response.status(409).json(errorBody('chat_conflict'));
+    else response.status(201).json(chat);
+  });
   router.get('/:id', (request, response) => {
     const chat = store.open(response.locals.user.id, request.params.id);
     if (chat) response.json(chat);

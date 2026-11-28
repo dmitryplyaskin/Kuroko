@@ -3,7 +3,7 @@ import type { Database } from 'bun:sqlite';
 import { createHash } from 'node:crypto';
 import { realmFilterKey, realmTagKeys } from '../realms/realmFilterKeys';
 
-const latestVersion = 24;
+const latestVersion = 25;
 
 const initialSchema = `
   CREATE TABLE vault_settings (
@@ -355,6 +355,11 @@ export function migrateDatabase(db: Database, vaultKey: Buffer) {
         persona_id TEXT NOT NULL,
         FOREIGN KEY (user_id, persona_id) REFERENCES personas(user_id, id) ON DELETE CASCADE
       ) STRICT;
+    `);
+
+    if (version < 25) db.exec(`
+      ALTER TABLE chats ADD COLUMN realm_id TEXT REFERENCES realms(id) ON DELETE SET NULL;
+      CREATE INDEX chats_realm ON chats (realm_id) WHERE realm_id IS NOT NULL;
     `);
 
     if (version < latestVersion) db.exec(`PRAGMA user_version = ${latestVersion}`);

@@ -1,12 +1,13 @@
 import type { MessageKey } from '../../shared/i18n/i18n';
 import { combine, createEffect, createEvent, createStore, sample, scopeBind, type StoreValue } from 'effector';
 import {
-  chatReplyPrompt, readChatTitle, type ChatActivityEntry, type ChatActivityTurn, type ChatReasoningBlock, type ChatReplyVariantSelection,
+  chatReplyPrompt, readChatTitle, type ChatActivityEntry, type ChatActivityTurn, type ChatCreateRequest, type ChatReasoningBlock, type ChatReplyVariantSelection,
   type ChatReplyVariants, type ChatSnapshot, type ChatSummary, type ChatToolCall, type SavedChat,
 } from '@kuroko/contracts/chat';
 import type { ToolId } from '@kuroko/contracts/tools';
 import { createChatActivity } from '@kuroko/tool-runtime/chatActivity';
 import { abortFx } from '../../shared/async/abort';
+import { newLocalId } from '../../shared/browser/id';
 import { ApiError, errorCode, type ErrorCode } from '../../shared/http/api';
 import { inActiveSession, $activeSession, protectedRequestFailed, sessionEnded, type ActiveSession } from '../../platform/session/model';
 import { $enabledTools, $toolSettingsReady } from '../tools/model';
@@ -22,7 +23,7 @@ type Reply = {
   activeSubagents?: readonly ActiveSubagent[];
   reasoningActive?: boolean;
 };
-type Navigation = { session: ActiveSession; action: 'initial' | 'create' | 'open'; id?: string; keepDraft?: boolean };
+type Navigation = { session: ActiveSession; action: 'initial' | 'create' | 'open'; id?: string; keepDraft?: boolean; realm?: ChatCreateRequest };
 type Save = { session: ActiveSession; id: string; revision: number } & (
   (Omit<ChatSnapshot, 'revision'> & { reply?: Reply; draftToRecover?: string; selection?: never }) |
   { reply?: never; selection: ChatReplyVariantSelection }
@@ -35,6 +36,7 @@ export const chatDraftChanged = createEvent<string>();
 export const chatSendRequested = createEvent();
 export const chatStopRequested = createEvent();
 export const chatCreateRequested = createEvent();
+export const realmChatCreateRequested = createEvent<string>();
 export const chatOpenRequested = createEvent<string>();
 type ManagementDialog = { kind: 'list' } | { kind: 'rename' | 'delete'; chat: ChatSummary };
 const chatManagementRequested = createEvent<ChatManagement>();
@@ -56,8 +58,11 @@ export const replyVariantRequested = createEvent<ChatReplyVariantSelection>();
 export const reasoningToggled = createEvent<{ id: number; afterToolCallId: string | undefined; open: boolean }>();
 
 export const $chatVisible = createStore(false).on(chatShown, () => true).reset(chatHidden, sessionEnded);
-const navigateFx = createEffect(async ({ session, action, id }: Navigation) => {
-  if (action === 'create') return { chat: await chatApi.create(session) };
+const navigateFx = createEffect(async ({ session, action, id, realm }: Navigation) => {
+  if (action === 'create') {
+    const chats = realm ? await chatApi.list(session) : undefined;
+    return { chat: await chatApi.create(session, realm), chats };
+  }
   if (action === 'open' && id) return { chat: await chatApi.open(session, id) };
   const chats = await chatApi.list(session);
   const chat = chats[0] ? await chatApi.open(session, chats[0].id) : await chatApi.create(session);
@@ -109,6 +114,8 @@ const $saved = createStore<SavedChat | null>(null)
   .reset(activeChatDeleted, chatMissing, sessionEnded);
 export const $chatId = $saved.map((chat) => chat?.id ?? '');
 export const $chatTitle = $saved.map((chat) => chat?.title ?? '');
+export const $chatRealm = $saved.map((chat) => chat?.realm ?? null);
+const $chatRealmId = $saved.map((chat) => chat?.realmId ?? null);
 export const $chatGmMode = $saved.map((chat) => chat?.gmMode ?? false);
 const noVariants: Record<number, ChatReplyVariants> = {};
 export const $chatReplyVariants = $saved.map((chat) => chat?.replyVariants ?? noVariants);
@@ -122,8 +129,13 @@ export const $chats = createStore<ChatSummary[]>([])
     ? chats.filter(({ id }) => id !== params.id) : chats)
   .reset(sessionEnded);
 
-function updateChatList(chats: ChatSummary[], { id, title, updatedAt }: ChatSummary) {
-  return [{ id, title, updatedAt }, ...chats.filter((chat) => chat.id !== id)]
+export const $savedChatList = combine($chats, $chatId, $chatRealmId, (chats, currentId, currentRealmId) =>
+  currentId ? chats.filter(({ realmId }) => (realmId ?? null) === currentRealmId) : chats);
+export const $unlinkedChat = combine($chats, $chatRealmId, (chats, realmId) =>
+  realmId ? chats.find((chat) => !chat.realmId) ?? null : null);
+
+function updateChatList(chats: ChatSummary[], { id, title, updatedAt, realmId }: ChatSummary) {
+  return [{ id, title, updatedAt, ...(realmId && { realmId }) }, ...chats.filter((chat) => chat.id !== id)]
     .sort((a, b) => b.updatedAt - a.updatedAt || a.id.localeCompare(b.id));
 }
 
@@ -146,8 +158,8 @@ const $saving = createStore(false).on(saveChatFx, () => true).reset(saveSucceede
 const $navigation = combine({ session: $activeSession, busy: $chatLoading, current: $chatId });
 sample({
   clock: chatShown,
-  source: { navigation: $navigation, missing: $chatMissing },
-  filter: ({ navigation: { session, busy, current }, missing }) => session !== null && !busy && !current && !missing,
+  source: { navigation: $navigation, missing: $chatMissing, failure: $loadError },
+  filter: ({ navigation: { session, busy, current }, missing, failure }) => session !== null && !busy && !current && !missing && !failure,
   fn: ({ navigation: { session } }): Navigation => ({ session: session!, action: 'initial' }),
   target: navigateFx,
 });
@@ -256,10 +268,16 @@ sample({
   target: manageChatFx,
 });
 sample({
-  clock: chatCreateRequested,
-  source: $chatNavigation,
-  filter: ({ session, locked }) => session !== null && !locked,
-  fn: ({ session, current }): Navigation => ({ session: session!, action: 'create', keepDraft: !current }),
+  clock: [chatCreateRequested.map(() => undefined), realmChatCreateRequested],
+  source: { navigation: $chatNavigation, chat: $saved },
+  filter: ({ navigation: { session, locked } }) => session !== null && !locked,
+  fn: ({ navigation: { session, current }, chat }, requestedRealmId): Navigation => {
+    const realmId = requestedRealmId ?? chat?.realmId;
+    return {
+      session: session!, action: 'create', keepDraft: !current && requestedRealmId === undefined,
+      realm: realmId ? { realmId, id: newLocalId() } : undefined,
+    };
+  },
   target: navigateFx,
 });
 sample({

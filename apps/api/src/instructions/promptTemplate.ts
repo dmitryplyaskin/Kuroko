@@ -63,13 +63,14 @@ export function createPromptRenderer(
   findPersona: (userId: number, id: string) => PersonaForPrompt | undefined,
   findActivePersona: (userId: number) => PersonaForPrompt | undefined,
 ) {
-  return (userId: number, context: Context, worldId?: string | null) => {
+  return (userId: number, context: Context, worldId?: string | null, currentStartId?: string) => {
     const worlds = new Map<string, WorldFields>();
     const realms = new Map<string, SavedRealm>();
     const pending = new Set<() => unknown>();
+    const currentWorld = memo(() => getWorld(worldId, currentStartId, undefined, true));
     const readActivePersona = memo(() => {
       const source = findActivePersona(userId);
-      return source ? personaTemplate(source, () => getWorld(worldId)).fields : null;
+      return source ? personaTemplate(source, currentWorld).fields : null;
     });
 
     function memo<T>(read: () => T): () => T {
@@ -100,7 +101,8 @@ export function createPromptRenderer(
           if (!world) throw new Error('World not found');
           return world;
         });
-        const result = engine.renderStr(text, { ...context, vars, persona: readPersona() });
+        const persona = readPersona();
+        const result = engine.renderStr(text, { ...context, vars, persona, user: persona?.name ?? '' });
         if (result.length > 64_000) throw new PromptTemplateError();
         return result;
       });
@@ -128,7 +130,7 @@ export function createPromptRenderer(
       return { fields, description };
     }
 
-    function getWorld(id?: string | null, startId?: string, personaId?: string): WorldFields | null {
+    function getWorld(id?: string | null, startId?: string, personaId?: string, allowMissingStart = false): WorldFields | null {
       if (!id) return null;
       const key = JSON.stringify([id, startId, personaId]);
       const cached = worlds.get(key);
@@ -138,7 +140,10 @@ export function createPromptRenderer(
       realms.set(id, saved);
       const { realm } = saved;
       const start = realm.starts?.find((candidate) => candidate.id === startId);
-      if (startId !== undefined && !start) throw new Error('World start not found');
+      if (startId !== undefined && !start) {
+        if (allowMissingStart) return getWorld(id);
+        throw new Error('World start not found');
+      }
       const persona = personaId === undefined ? undefined : findPersona(userId, personaId);
       if (personaId !== undefined && !persona) throw new Error('Persona not found');
       const explicit = persona ? personaTemplate(persona, () => world) : undefined;
@@ -196,8 +201,8 @@ export function createPromptRenderer(
 
     return (text: string) => {
       if (!hasTemplateSyntax(text)) return text;
-      const world = getWorld(worldId);
-      return evaluate(text, (world?.vars as WorldFields | undefined) ?? {}, () => world);
+      const world = currentWorld();
+      return evaluate(text, (world?.vars as WorldFields | undefined) ?? {}, currentWorld);
     };
   };
 }

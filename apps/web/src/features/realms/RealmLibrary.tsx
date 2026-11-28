@@ -3,13 +3,14 @@ import { useDebouncedValue } from '@mantine/hooks';
 import { defaultRealmFilters, realmPageSize, realmSearchMaxLength, realmSorts, type RealmFilters,
   type RealmSort, type RealmSummary } from '@kuroko/contracts/realms';
 import { useUnit } from 'effector-react';
-import { Plus, Search, SlidersHorizontal, Star, Upload } from 'lucide-react';
+import { MessageSquare, Plus, Search, SlidersHorizontal, Star, Upload } from 'lucide-react';
 import { useEffect, useId, useRef, useState } from 'react';
 import type { ActiveSession } from '../../platform/session/model';
 import { useI18n } from '../../shared/i18n/i18n';
 import { LibraryPagination, LibraryViewSwitch } from '../../shared/library/LibraryControls';
 import { LibraryItem } from '../../shared/library/LibraryItem';
 import library from '../../shared/library/Library.module.css';
+import { $chatLocked, realmChatCreateRequested } from '../chat/model';
 import { $realmFavoriteError, $realmList, listRealmsFx } from './model';
 import { $realmImport, realmImportConflictClosed, realmImportCopyRequested, realmImportPicked } from './libraryModel';
 import { realmLibraryView } from './module';
@@ -28,9 +29,10 @@ export function RealmLibrary({ session, criteria, onCriteria, onOpen, onCreate }
   onCreate: () => void;
 }) {
   const { t, number } = useI18n();
-  const { state, list, importState, pick, saveCopy, closeCopy, favoriteError } = useUnit({
+  const { state, list, importState, pick, saveCopy, closeCopy, favoriteError, chatLocked, createChat } = useUnit({
     state: $realmList, list: listRealmsFx, importState: $realmImport, pick: realmImportPicked,
     saveCopy: realmImportCopyRequested, closeCopy: realmImportConflictClosed, favoriteError: $realmFavoriteError,
+    chatLocked: $chatLocked, createChat: realmChatCreateRequested,
   });
   const { pending: importing, issue: importIssue, copy } = importState;
   const [view, changeView] = useUnit([realmLibraryView.$value, realmLibraryView.changed]);
@@ -136,7 +138,10 @@ export function RealmLibrary({ session, criteria, onCriteria, onOpen, onCreate }
             <>
               <ul className={library['library-list']} data-view={view} aria-label={t('realms.label')}>
                 {data.items.map((item) => <RealmLibraryItem key={item.id} item={item} disabled={importing}
-                  onOpen={() => onOpen(item.id)} />)}
+                  chatLocked={chatLocked} onOpen={() => onOpen(item.id)} onChat={() => {
+                    createChat(item.id);
+                    window.location.hash = '#chat';
+                  }} />)}
               </ul>
               <LibraryPagination label={t('realms.pagination')} offset={offset} visible={data.items.length} total={data.total}
                 pageSize={realmPageSize} onPage={(next) => onCriteria({ ...criteria, offset: next })} />
@@ -157,10 +162,12 @@ export function RealmLibrary({ session, criteria, onCriteria, onOpen, onCreate }
   );
 }
 
-function RealmLibraryItem({ item, disabled, onOpen }: {
+function RealmLibraryItem({ item, disabled, chatLocked, onOpen, onChat }: {
   item: RealmSummary;
   disabled: boolean;
+  chatLocked: boolean;
   onOpen: () => void;
+  onChat: () => void;
 }) {
   const { t, number, locale } = useI18n();
   const modified = new Date(item.updatedAt);
@@ -173,5 +180,12 @@ function RealmLibraryItem({ item, disabled, onOpen }: {
       </span>
       <time dateTime={modified.toISOString()}>{new Intl.DateTimeFormat(locale, { dateStyle: 'medium' }).format(modified)}</time>
     </>}
-    actions={<RealmFavoriteButton id={item.id} title={item.title} favorite={Boolean(item.favorite)} disabled={disabled} />} />;
+    actions={<>
+      <ActionIcon type="button" variant="subtle" size={44} className={classes['realms-start-chat']}
+        disabled={disabled || chatLocked} aria-label={t('realms.startChatNamed', { title: item.title })}
+        title={t('realms.startChat')} onClick={onChat}>
+        <MessageSquare size={19} aria-hidden="true" />
+      </ActionIcon>
+      <RealmFavoriteButton id={item.id} title={item.title} favorite={Boolean(item.favorite)} disabled={disabled} />
+    </>} />;
 }

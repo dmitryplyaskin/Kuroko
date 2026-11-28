@@ -63,6 +63,7 @@ const worlds: Reference[] = [
 ];
 const personas: Reference[] = [
   ['persona.name, persona.description', 'templates.help.activePersona'],
+  ['{{user}}', 'templates.help.userAlias'],
   ['persona.vars.rank', 'templates.help.personaVars'],
   ['world(id, startId, persona.id).player_persona', 'templates.help.activePlayerRole'],
 ];

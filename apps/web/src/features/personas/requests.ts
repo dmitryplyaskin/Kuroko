@@ -3,6 +3,7 @@ import { inActiveSession, protectedRequestFailed, type ActiveSession } from '../
 
 export const personasPath = '/personas';
 export const personaPath = (id: string) => `${personasPath}/${encodeURIComponent(id)}`;
+export const personaAvatarUrl = (id: string, revision: number) => `/api${personaPath(id)}/avatar?v=${revision}`;
 
 export function personaEffect<Params extends { session: ActiveSession }, Result>(request: (params: Params) => Promise<Result>) {
   const effect = createEffect(request);

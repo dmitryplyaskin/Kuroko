@@ -1,28 +1,41 @@
 import {
-  chatReplyPrompt, chatTitleLimit, type ChatActivityEntry, type ChatMessage, type ChatReplyVariantSelection,
+  chatReplyPrompt, chatTitleLimit, type ChatActivityEntry, type ChatCreateRequest, type ChatMessage, type ChatRealm, type ChatReplyVariantSelection,
   type ChatSnapshot, type ChatSummary, type ChatToolCall, type SavedChat,
 } from '@kuroko/contracts/chat';
 import type { LlmAssistantMessage } from '@kuroko/contracts/llm';
+import { orderedRealmRecords, type SavedRealm } from '@kuroko/contracts/realms';
 import type { Database } from 'bun:sqlite';
 import { randomUUID } from 'node:crypto';
+import { PromptTemplateError, type createPromptRenderer } from '../instructions/promptTemplate';
 
-type Row = ChatSummary & { revision: number; messagesJson: string; gmMode: 0 | 1; customTitle: string | null };
+type SummaryRow = Omit<ChatSummary, 'realmId'> & { realmId: string | null };
+type Row = SummaryRow & {
+  revision: number; messagesJson: string; gmMode: 0 | 1; customTitle: string | null;
+  realmTitle: string | null; realmHasAvatar: 0 | 1;
+};
 export type PrivateTurn = {
   notes?: string;
   rounds: { assistant: LlmAssistantMessage; calls: ChatToolCall[] }[];
 };
 type ReplyVersion = { message: ChatMessage; activity?: ChatActivityEntry[]; privateTurn?: PrivateTurn };
 
-export function createChatStore(db: Database) {
-  const list = db.query<ChatSummary, [number]>(`
-    SELECT id, coalesce(custom_title, title) AS title, updated_at AS updatedAt FROM chats WHERE user_id = ? ORDER BY updated_at DESC, id
+export function createChatStore(
+  db: Database, findRealm: (userId: number, id: string) => SavedRealm | null, renderPrompt: ReturnType<typeof createPromptRenderer>,
+) {
+  const list = db.query<SummaryRow, [number]>(`
+    SELECT id, coalesce(custom_title, title) AS title, updated_at AS updatedAt, realm_id AS realmId
+    FROM chats WHERE user_id = ? ORDER BY updated_at DESC, id
   `);
   const find = db.query<Row, [number, string]>(`
-    SELECT id, title, updated_at AS updatedAt, revision, messages_json AS messagesJson, gm_mode AS gmMode, custom_title AS customTitle
-    FROM chats WHERE user_id = ? AND id = ?
+    SELECT chats.id, chats.title, chats.updated_at AS updatedAt, chats.revision, messages_json AS messagesJson,
+      gm_mode AS gmMode, custom_title AS customTitle, realm_id AS realmId, realms.title AS realmTitle,
+      json_type(realms.document_json, '$.avatar') IS NOT NULL AS realmHasAvatar
+    FROM chats LEFT JOIN realms ON realms.id = chats.realm_id AND realms.user_id = chats.user_id
+    WHERE chats.user_id = ? AND chats.id = ?
   `);
   const insert = db.query(`
-    INSERT INTO chats (id, user_id, title, updated_at, revision, messages_json) VALUES (?, ?, '', ?, 0, '[]')
+    INSERT INTO chats (id, user_id, title, updated_at, revision, messages_json, realm_id) VALUES (?, ?, ?, ?, 0, ?, ?)
+    ON CONFLICT (id) DO NOTHING
   `);
   const update = db.query(`
     UPDATE chats SET title = ?, updated_at = ?, revision = revision + 1, messages_json = ?, gm_mode = ?
@@ -39,9 +52,9 @@ export function createChatStore(db: Database) {
   const deletePrivate = db.query(`
     DELETE FROM chat_private_turns WHERE chat_id = ? AND (reply_id = ? OR prompt_id = ?)
   `);
-  const rename = db.query<ChatSummary, [string, number, string]>(`
+  const rename = db.query<SummaryRow, [string, number, string]>(`
     UPDATE chats SET custom_title = ? WHERE user_id = ? AND id = ?
-    RETURNING id, custom_title AS title, updated_at AS updatedAt
+    RETURNING id, custom_title AS title, updated_at AS updatedAt, realm_id AS realmId
   `);
   const remove = db.query('DELETE FROM chats WHERE user_id = ? AND id = ?');
   const listActivity = db.query<{ promptId: number; entriesJson: string }, [string]>(`
@@ -121,20 +134,56 @@ export function createChatStore(db: Database) {
     upsertVariants.run(id, replyId, variants.index, JSON.stringify(archived));
   }
 
+  const create = db.transaction((userId: number, request?: ChatCreateRequest) => {
+    const id = request?.id ?? randomUUID();
+    if (request?.id) {
+      const existing = find.get(userId, id);
+      if (existing) return existing.realmId === request.realmId ? withActivity(withVariants(readChat(existing))) : 'conflict';
+    }
+    const savedRealm = request && findRealm(userId, request.realmId);
+    if (request && !savedRealm) return 'missing';
+    const realmId = savedRealm?.id;
+    const title = automaticTitle(savedRealm?.realm.title ?? '');
+    const updatedAt = Date.now();
+    const starts = orderedRealmRecords(savedRealm?.realm.starts ?? []).map(({ record }): ChatMessage => {
+      const render = renderPrompt(userId, { chat: { title, gm_mode: false } }, realmId, record.id);
+      const source = [record.greeting, record.scenario].find((text) => text?.trim()) ?? record.title;
+      let text = source;
+      try {
+        const rendered = render(source);
+        if (rendered.trim()) text = rendered;
+      } catch (error) {
+        if (!(error instanceof PromptTemplateError)) throw error;
+        // Keep the opening available for editing when its template cannot be evaluated.
+      }
+      return { id: 1, role: 'assistant', text, time: updatedAt, realmStart: { id: record.id, title: record.title } };
+    });
+    const [opening, ...alternatives] = starts;
+    const messages = opening ? [opening] : [];
+    if (!insert.run(id, userId, title, updatedAt, JSON.stringify(messages), realmId ?? null).changes) return 'conflict';
+    if (alternatives.length) upsertVariants.run(id, 1, 0, JSON.stringify(alternatives.map((message) => ({ message }))));
+    return withVariants({ id, title, updatedAt, revision: 0, messages, gmMode: false,
+      ...(savedRealm && realmMetadata(savedRealm.id, savedRealm.realm.title, Boolean(savedRealm.realm.avatar))) });
+  });
+
   const save = db.transaction((userId: number, id: string, { revision, messages, gmMode, activity, replaceId }: ChatSnapshot) => {
     const row = find.get(userId, id);
     if (!row) return 'missing';
+    const chat = readChat(row);
+    const opening = chat.messages[0];
+    const first = messages[0];
+    if (opening?.realmStart && first?.id === opening.id && first.role === 'assistant') first.realmStart = opening.realmStart;
     const messagesJson = JSON.stringify(messages);
     const mode = gmMode ?? Boolean(row.gmMode);
     const entriesJson = activity && JSON.stringify(activity.entries);
     if (row.revision === revision + 1 && row.messagesJson === messagesJson && mode === Boolean(row.gmMode) &&
-        (!activity || findActivity.get(id, activity.promptId)?.entriesJson === entriesJson)) return withVariants(readChat(row));
+        (!activity || findActivity.get(id, activity.promptId)?.entriesJson === entriesJson)) return withVariants(chat);
     if (row.revision !== revision) return 'conflict';
-    const firstPrompt = messages.find(({ role }) => role === 'user')?.text ?? '';
-    const title = Array.from(firstPrompt.replace(/\s+/g, ' ').trim()).slice(0, chatTitleLimit).join('');
+    const firstPrompt = messages.find(({ role }) => role === 'user')?.text;
+    const title = automaticTitle(firstPrompt ?? row.realmTitle ?? '');
     const updatedAt = Date.now();
     if (replaceId !== undefined) {
-      const previous = readChat(row).messages;
+      const previous = chat.messages;
       const prompt = chatReplyPrompt(previous, replaceId);
       const reply = messages.at(-1);
       if (mode || !prompt || reply?.role !== 'assistant' || reply.id !== prompt.id + 1 || (activity && activity.promptId !== prompt.id) ||
@@ -142,7 +191,7 @@ export function createChatStore(db: Database) {
       archiveReply(id, previous.at(-1)!, reply.id, prompt.id);
     } else if (row.messagesJson !== messagesJson) {
       const current = new Map(messages.map((message, position) => [message.id, { message, position }]));
-      const previousMessages = readChat(row).messages;
+      const previousMessages = chat.messages;
       for (const [position, previous] of previousMessages.entries()) {
         const next = current.get(previous.id);
         const removed = next?.message.role !== previous.role;
@@ -165,7 +214,7 @@ export function createChatStore(db: Database) {
     }
     update.run(title, updatedAt, messagesJson, Number(mode), userId, id);
     if (activity && entriesJson) insertActivity.run(id, activity.promptId, entriesJson);
-    return withVariants({ id, title: row.customTitle ?? title, updatedAt, revision: revision + 1, messages, gmMode: mode });
+    return withVariants({ ...chat, title: row.customTitle ?? title, updatedAt, revision: revision + 1, messages, gmMode: mode });
   });
 
   const publish = db.transaction((
@@ -221,7 +270,7 @@ export function createChatStore(db: Database) {
   });
 
   return {
-    list: (userId: number) => list.all(userId),
+    list: (userId: number) => list.all(userId).map(readSummary),
     find(userId: number, id: string) {
       const row = find.get(userId, id);
       return row && readChat(row);
@@ -230,14 +279,12 @@ export function createChatStore(db: Database) {
       const row = find.get(userId, id);
       if (row) return withActivity(withVariants(readChat(row)));
     }),
-    rename: (userId: number, id: string, title: string) => rename.get(title, userId, id),
-    remove: (userId: number, id: string) => remove.run(userId, id).changes > 0,
-    create(userId: number): SavedChat {
-      const id = randomUUID();
-      const updatedAt = Date.now();
-      insert.run(id, userId, updatedAt);
-      return { id, title: '', updatedAt, revision: 0, messages: [], gmMode: false };
+    rename(userId: number, id: string, title: string) {
+      const row = rename.get(title, userId, id);
+      return row && readSummary(row);
     },
+    remove: (userId: number, id: string) => remove.run(userId, id).changes > 0,
+    create: create.immediate,
     save: save.immediate,
     publish: publish.immediate,
     selectVariant: selectVariant.immediate,
@@ -246,6 +293,19 @@ export function createChatStore(db: Database) {
   };
 }
 
-function readChat({ messagesJson, gmMode, customTitle, ...row }: Row): SavedChat {
-  return { ...row, title: customTitle ?? row.title, gmMode: Boolean(gmMode), messages: JSON.parse(messagesJson) as ChatMessage[] };
+function readSummary({ realmId, ...row }: SummaryRow): ChatSummary {
+  return { ...row, ...(realmId && { realmId }) };
+}
+
+function readChat({ messagesJson, gmMode, customTitle, realmId, realmTitle, realmHasAvatar, ...row }: Row): SavedChat {
+  return { ...row, title: customTitle ?? row.title, gmMode: Boolean(gmMode), messages: JSON.parse(messagesJson) as ChatMessage[],
+    ...(realmId && realmTitle !== null && realmMetadata(realmId, realmTitle, Boolean(realmHasAvatar))) };
+}
+
+function realmMetadata(id: string, title: string, hasAvatar: boolean): { realmId: string; realm: ChatRealm } {
+  return { realmId: id, realm: { id, title, ...(hasAvatar && { hasAvatar: true }) } };
+}
+
+function automaticTitle(text: string) {
+  return Array.from(text.replace(/\s+/g, ' ').trim()).slice(0, chatTitleLimit).join('');
 }

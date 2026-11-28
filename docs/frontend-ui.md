@@ -40,8 +40,8 @@
 | Элемент | Атрибуты или переменные |
 | --- | --- |
 | Контейнер чата или предпросмотра | `data-user-side="left"` и `data-user-side="right"` задают сторону пользовательских сообщений. `--chat-column` и `--chat-text-size` задают ширину колонки и размер текста. |
-| Сообщение | `data-author="user"` или `data-author="assistant"` задаёт автора. `data-chat-content` отмечает контейнер содержимого. |
-| Текст Markdown | `data-chat-markdown="user"` сохраняет переносы в пользовательском тексте. Значение `assistant` включает обычное отображение Markdown. `data-chat-speech` отмечает прямую речь. |
+| Сообщение | `data-author="user"` или `data-author="assistant"` задаёт автора. `data-chat-content` отмечает контейнер содержимого. Текст обоих участников занимает общую центральную колонку, а аватары стоят в боковых колонках. |
+| Текст Markdown | `data-chat-markdown="user"` сохраняет переносы в пользовательском тексте. Значение `assistant` включает обычное отображение Markdown. `data-chat-speech` отмечает прямую речь. Встроенные изображения занимают ширину содержимого сообщения и сохраняют пропорции. |
 | Цвет текста | `--chat-color-text`, `--chat-color-speech`, `--chat-color-emphasis` и `--chat-color-quote` задают пользовательские цвета. При отсутствии значения применяется тема. |
 
 [Стили чата](../apps/web/src/features/chat/Chat.module.css) · [Разметка Markdown](../apps/web/src/features/chat/ChatText.tsx) · [Переменные чата](../apps/web/src/features/chat/chatDisplayStyle.ts)

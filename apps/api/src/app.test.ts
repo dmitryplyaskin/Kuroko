@@ -146,13 +146,14 @@ test('persists an account’s selected persona and renders it only where prompts
   const other = sessionCookie(await login('active-persona-other')).token;
   const persona: CreatePersona = {
     id: '5'.repeat(32), name: 'Лина', description: 'Ранг {{ persona.vars.rank }}. {{ persona.vars.details.label }}.',
+    avatar: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACklEQVR42mMAAQAABQABoIJXOAAAAABJRU5ErkJggg==',
     variables: [
       { name: 'rank', value: 3 },
       { name: 'details', value: { label: '{{ persona.name }} в {{ vars.city }}', tags: ['картограф'] } },
       { name: 'loop', value: '{{ persona.vars.loop }}' },
     ],
   };
-  const next: CreatePersona = { ...persona, id: '6'.repeat(32), name: 'Рей', description: 'Страж.', variables: [] };
+  const next: CreatePersona = { id: '6'.repeat(32), name: 'Рей', description: 'Страж.', variables: [] };
   const foreign: CreatePersona = { ...next, id: '7'.repeat(32), name: 'Другой игрок' };
   for (const [body, owner] of [[persona, cookie], [next, cookie], [foreign, other]] as const) {
     expect((await request('/personas', { method: 'POST', cookie: owner, body })).status).toBe(201);
@@ -160,12 +161,13 @@ test('persists an account’s selected persona and renders it only where prompts
   const path = '/personas/active';
   const readSelection = async (owner = cookie) => (await request(path, { cookie: owner })).json();
   const select = (id: string | null) => request(path, { method: 'PUT', cookie, body: { id } });
+  const identity = { id: persona.id, name: persona.name, revision: 0, hasAvatar: true };
   expect((await request(path)).status).toBe(401);
   expect(await readSelection()).toEqual({ id: null });
-  expect(await (await select(persona.id)).json()).toEqual({ id: persona.id });
+  expect(await (await select(persona.id)).json()).toEqual(identity);
   expect((await select(foreign.id)).status).toBe(404);
   const resumed = sessionCookie(await login('active-persona-owner')).token;
-  expect(await readSelection(resumed)).toEqual({ id: persona.id });
+  expect(await readSelection(resumed)).toEqual(identity);
   expect(await readSelection(other)).toEqual({ id: null });
 
   const realm: Realm = {
@@ -183,6 +185,8 @@ test('persists an account’s selected persona and renders it only where prompts
   expect(await (await preview('{{ world().starts[0].context }}')).json()).toEqual({ text: plainWorld });
   expect(await (await preview('{{ persona.name }}. {{ persona.description }} {{ persona.vars.details.tags[0] }}.')).json())
     .toEqual({ text: 'Лина. Ранг 3. Лина в Ривене. картограф.' });
+  expect(await (await preview('{{user}} / {{ persona.name }}')).json()).toEqual({ text: 'Лина / Лина' });
+  expect(await (await preview('Имя [{{user}}]', other)).json()).toEqual({ text: 'Имя []' });
   expect(await (await preview('{{ "empty" if persona is none else persona.name }}', other)).json()).toEqual({ text: 'empty' });
   expect((await preview('{{ persona.vars.loop }}')).status).toBe(422);
   const text = '{{ world(world().id, world().starts[0].id, persona.id).context }}';
@@ -194,11 +198,11 @@ test('persists an account’s selected persona and renders it only where prompts
   const chat = await (await request('/chats', { method: 'POST', cookie })).json() as SavedChat;
   expect(await (await request(`${prefix}/active?chat=${chat.id}`, { cookie })).json()).toMatchObject({ text: expected });
 
-  expect(await (await select(next.id)).json()).toEqual({ id: next.id });
+  expect(await (await select(next.id)).json()).toEqual({ id: next.id, name: next.name, revision: 0, hasAvatar: false });
   expect(await (await preview('{{ persona.name }}')).json()).toEqual({ text: 'Рей' });
   expect((await request(`/personas/${next.id}`, { method: 'DELETE', cookie, body: { revision: 0 } })).status).toBe(204);
   expect(await readSelection()).toEqual({ id: null });
-  expect(await (await select(persona.id)).json()).toEqual({ id: persona.id });
+  expect(await (await select(persona.id)).json()).toEqual(identity);
   expect(await (await select(null)).json()).toEqual({ id: null });
   expect(await (await preview('{{ "empty" if persona is none else persona.name }}')).json()).toEqual({ text: 'empty' });
 });
@@ -1638,6 +1642,88 @@ test('restores a named GM subagent’s private history across published scenes',
   } finally {
     mock.mockRestore();
   }
+});
+
+test('opens chats from owned realms and keeps the selected start with the conversation', async () => {
+  await register('realm-chat-owner');
+  await register('realm-chat-other');
+  const cookie = sessionCookie(await login('realm-chat-owner')).token;
+  const other = sessionCookie(await login('realm-chat-other')).token;
+  const realm: Realm = {
+    specVersion: '0.1.0', id: 'island', title: 'Остров', base: 'Город на берегу',
+    avatar: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACklEQVR42mMAAQAABQABoIJXOAAAAABJRU5ErkJggg==',
+    starts: [
+      { id: 'storm', title: 'Шторм', order: 2, scenario: 'Волны бьют о берег.' },
+      { id: 'port', title: 'Порт', order: 1, greeting: 'Добро пожаловать в {{ world().title }}.' },
+    ],
+  };
+  const createRealm = async (body: Realm) => (await (await request('/realms', { cookie, method: 'POST', body })).json()) as SavedRealm;
+  const savedRealm = await createRealm(realm);
+  const body = { realmId: savedRealm.id, id: '1'.repeat(32) };
+  const createChat = (body: object, owner = cookie) => request('/chats', { method: 'POST', cookie: owner, body });
+  expect((await createChat({ realmId: savedRealm.id }, other)).status).toBe(404);
+  const created = await createChat(body);
+  expect(created.status).toBe(201);
+  const chat = await created.json() as SavedChat;
+  const path = `/chats/${chat.id}`;
+  expect(chat).toMatchObject({ id: body.id, realmId: savedRealm.id, title: realm.title, replyVariants: { 1: { index: 0, total: 2 } },
+    realm: { id: savedRealm.id, title: realm.title, hasAvatar: true },
+    messages: [{ id: 1, role: 'assistant', text: 'Добро пожаловать в Остров.', realmStart: { id: 'port', title: 'Порт' } }],
+  });
+  expect(await (await request('/chats', { cookie })).json()).toEqual([
+    { id: chat.id, title: realm.title, updatedAt: chat.updatedAt, realmId: savedRealm.id },
+  ]);
+  expect(await (await createChat(body)).json()).toEqual(chat);
+  expect(await (await request(`/settings/instructions/active?chat=${chat.id}`, { cookie })).json()).toMatchObject({
+    text: 'Остров\n\nГород на берегу\n\nOpening message:\nДобро пожаловать в Остров.', messages: [],
+  });
+
+  const selected = await request(`${path}/reply-variant`, { method: 'PUT', cookie, body: { revision: chat.revision, replyId: 1, index: 1 } });
+  expect(selected.status).toBe(200);
+  const second = await selected.json() as SavedChat;
+  expect(second).toMatchObject({ realmId: savedRealm.id, replyVariants: { 1: { index: 1, total: 2 } },
+    messages: [{ id: 1, role: 'assistant', text: 'Волны бьют о берег.', realmStart: { id: 'storm', title: 'Шторм' } }],
+  });
+  const saved = await request(path, { method: 'PUT', cookie, body: { revision: second.revision, messages: [
+    { ...second.messages[0]!, realmStart: { id: 'port', title: 'Подмена' } },
+    { id: 2, role: 'user', text: 'Я ищу укрытие.', time: 2 },
+  ] } });
+  expect(saved.status).toBe(200);
+  const continued = await saved.json() as SavedChat;
+  expect(continued).toMatchObject({ realmId: savedRealm.id, messages: [second.messages[0]!, { id: 2, role: 'user' }] });
+  expect(await (await request(path, { cookie })).json()).toEqual(continued);
+  expect(await (await request(`/settings/instructions/active?chat=${chat.id}`, { cookie })).json()).toMatchObject({
+    text: 'Остров\n\nГород на берегу\n\nВолны бьют о берег.\n\nOpening message:\nВолны бьют о берег.',
+    messages: [{ role: 'user', content: 'Я ищу укрытие.' }],
+  });
+
+  const realmPath = `/realms/${savedRealm.id}`;
+  const updated = await request(realmPath, { method: 'PUT', cookie, body: {
+    realm: { ...realm, title: 'Каменный остров', avatar: undefined, starts: [realm.starts![1]] }, revision: savedRealm.revision,
+  } });
+  expect(updated.status).toBe(200);
+  const reopened = await (await request(path, { cookie })).json() as SavedChat;
+  expect(reopened.realm).toEqual({ id: savedRealm.id, title: 'Каменный остров' });
+  const renamed = await request(`${path}/title`, { method: 'PUT', cookie, body: { title: 'Укрытие' } });
+  expect(renamed.status).toBe(200);
+  expect(await renamed.json()).toEqual({ id: chat.id, title: 'Укрытие', updatedAt: reopened.updatedAt, realmId: savedRealm.id });
+  expect(await (await request(`/settings/instructions/active?chat=${chat.id}`, { cookie })).json()).toMatchObject({
+    text: 'Каменный остров\n\nГород на берегу\n\nOpening message:\nВолны бьют о берег.',
+  });
+  expect((await request(realmPath, { method: 'DELETE', cookie })).status).toBe(204);
+  const detached = await (await request(path, { cookie })).json() as SavedChat;
+  expect(detached.realmId).toBeUndefined();
+  expect(detached.realm).toBeUndefined();
+  expect(await (await request('/chats', { cookie })).json()).toEqual([
+    { id: detached.id, title: detached.title, updatedAt: detached.updatedAt },
+  ]);
+  expect(detached.messages).toEqual(continued.messages);
+  expect(detached.replyVariants).toEqual(continued.replyVariants);
+
+  const emptyRealm = await createRealm({ ...realm, id: 'empty-island', starts: undefined });
+  const empty = await (await createChat({ realmId: emptyRealm.id })).json() as SavedChat;
+  expect(empty).toMatchObject({ realmId: emptyRealm.id, title: realm.title, messages: [] });
+  expect(empty.replyVariants).toBeUndefined();
 });
 
 test('publishes only the player scene and can retrieve a private roll in a later GM turn', async () => {

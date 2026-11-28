@@ -8,7 +8,7 @@ import { openDatabase } from './database';
 import { createProviderKeyStore } from '../connection/providerKeyStore';
 import { createPersonaStore } from '../personas/personaStore';
 
-test.each([1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23])('upgrades a version %i SQLite database without losing user data', (version) => {
+test.each([1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24])('upgrades a version %i SQLite database without losing user data', (version) => {
   const directory = mkdtempSync(join(tmpdir(), 'kuroko-sqlite-test-'));
   const path = join(directory, 'test.sqlite');
   const vaultKey = randomBytes(32);
@@ -23,7 +23,8 @@ test.each([1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 2
   try {
     const old = openDatabase(path, vaultKey);
     try {
-      old.exec('DROP TABLE active_personas');
+      old.exec('DROP INDEX chats_realm; ALTER TABLE chats DROP COLUMN realm_id');
+      if (version < 24) old.exec('DROP TABLE active_personas');
       if (version < 22) old.exec('DROP TABLE personas');
       else if (version === 22) old.exec('ALTER TABLE personas DROP COLUMN variable_count');
       if (version < 21) old.exec(`
@@ -88,9 +89,9 @@ test.each([1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 2
 
     const migrated = openDatabase(path, vaultKey);
     try {
-      expect(migrated.query('PRAGMA user_version').get()).toEqual({ user_version: 24 });
+      expect(migrated.query('PRAGMA user_version').get()).toEqual({ user_version: 25 });
       const personas = createPersonaStore(migrated);
-      expect(personas.activeId(1)).toBeNull();
+      expect(personas.selection(1)).toEqual({ id: null });
       const library = personas.list(1, { ...defaultPersonaQuery, variables: 'with', favorites: true });
       expect(library).toEqual(version < 22 ? { items: [], total: 0, offset: 0 } : { total: 1, offset: 0, items: [
         { id: personaId, name: 'Лина', revision: 2, excerpt: 'Штурман', favorite: true, hasAvatar: false, variableCount: 1 },
@@ -99,7 +100,7 @@ test.each([1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 2
         expect(personas.find(1, personaId)).toMatchObject({ name: 'Лина', description: 'Штурман', revision: 2, variables });
         expect(personas.list(1, { ...defaultPersonaQuery, variables: 'without' }).total).toBe(0);
         expect(personas.select(1, personaId)).toBe(true);
-        expect(personas.activeId(1)).toBe(personaId);
+        expect(personas.selection(1)).toEqual({ id: personaId, name: 'Лина', revision: 2, hasAvatar: false });
       }
       expect(migrated.query('SELECT * FROM instruction_presets').all()).toEqual(version < 17 ? [] : [
         { id: 'old-instruction', user_id: 1, name: 'Стиль', text: '{{ literal }}', active: 1, world_id: null, revision: 0 },
@@ -113,7 +114,7 @@ test.each([1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 2
       expect(migrated.query('SELECT username FROM users').all()).toEqual([{ username: 'Лина' }]);
       expect(migrated.query('SELECT settings_json FROM chat_settings').all()).toEqual(version === 1 ? [] : [{ settings_json: '{"fontSize":20}' }]);
       expect(migrated.query('SELECT * FROM connection_presets').all()).toEqual([]);
-      expect(migrated.query('SELECT id, gm_mode FROM chats').all()).toEqual(version >= 5 ? [{ id: 'old-chat', gm_mode: 0 }] : []);
+      expect(migrated.query('SELECT id, gm_mode, realm_id FROM chats').all()).toEqual(version >= 5 ? [{ id: 'old-chat', gm_mode: 0, realm_id: null }] : []);
       expect(migrated.query('SELECT * FROM chat_private_turns').all()).toEqual([]);
       expect(migrated.query('SELECT * FROM chat_activity').all()).toEqual([]);
       expect(migrated.query('SELECT * FROM enabled_tools ORDER BY tool_id').all()).toEqual(version < 6 ? [] : [

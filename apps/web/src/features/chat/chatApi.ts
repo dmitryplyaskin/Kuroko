@@ -1,5 +1,5 @@
 import { isLlmErrorCode } from '@kuroko/contracts/errors';
-import type { ChatActivityEntry, ChatReasoningBlock, ChatReplyVariantSelection, ChatSnapshot, ChatSummary, ChatToolCall, SavedChat } from '@kuroko/contracts/chat';
+import type { ChatActivityEntry, ChatCreateRequest, ChatReasoningBlock, ChatReplyVariantSelection, ChatSnapshot, ChatSummary, ChatToolCall, SavedChat } from '@kuroko/contracts/chat';
 import type { ActiveChatInstruction } from '@kuroko/contracts/instructions';
 import type { LlmAssistantPart, LlmCompletion, LlmEvent, LlmRequest, LlmTextDelta, LlmToolCall } from '@kuroko/contracts/llm';
 import { readSubagentResultName, type DelegateTaskEvent, type DelegateTaskRequest, type DelegateTaskResult, type ToolId } from '@kuroko/contracts/tools';
@@ -13,7 +13,7 @@ import type { ActiveSubagent } from './message';
 
 export const chatApi = {
   list: (session: ActiveSession) => sessionRequest<ChatSummary[]>(session, '/chats'),
-  create: (session: ActiveSession) => sessionRequest<SavedChat>(session, '/chats', { method: 'POST' }),
+  create: (session: ActiveSession, body?: ChatCreateRequest) => sessionRequest<SavedChat>(session, '/chats', { method: 'POST', body }),
   open: (session: ActiveSession, id: string) => sessionRequest<SavedChat>(session, `/chats/${encodeURIComponent(id)}`),
   rename: (session: ActiveSession, id: string, title: string) =>
     sessionRequest<ChatSummary>(session, `/chats/${encodeURIComponent(id)}/title`, { method: 'PUT', body: { title } }),

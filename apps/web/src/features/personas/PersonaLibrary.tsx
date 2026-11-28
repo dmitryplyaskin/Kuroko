@@ -15,7 +15,7 @@ import {
   $personaCriteria, $personaFavorite, $personaList, listPersonasFx, personaCriteriaChanged, personaFavoriteChanged, personaPageChanged,
 } from './libraryModel';
 import { personaLibraryView } from './module';
-import { personaPath } from './requests';
+import { personaAvatarUrl } from './requests';
 import { $personaSelection, personaSelectionOpened, personaSelectionRequested } from './selectionModel';
 import classes from './Personas.module.css';
 
@@ -105,10 +105,10 @@ export function PersonaLibrary({ session }: { session: ActiveSession }) {
         {data && data.items.length > 0 && <>
           <ul className={library['library-list']} data-view={view} aria-label={t('personas.label')}>
             {data.items.map(({ id, revision, name, excerpt, hasAvatar, variableCount, favorite: starred }) => {
-              const active = selection.id === id;
+              const active = selection.selected?.id === id;
               return <LibraryItem key={id} title={name} excerpt={excerpt} openLabel={t('personas.openNamed', { name })} onOpen={() => open(id)}
                 avatar={<LibraryAvatar lazy placeholder={<UserRound size={20} />}
-                  src={hasAvatar ? `/api${personaPath(id)}/avatar?v=${revision}` : undefined} />}
+                  src={hasAvatar ? personaAvatarUrl(id, revision) : undefined} />}
                 metadata={<>
                   {active && <span className={classes.activeIndicator}>{t('personas.active')}</span>}
                   <span>{t(`personas.variableCount.${plural.select(variableCount)}`, { count: number.format(variableCount) })}</span>
@@ -116,7 +116,7 @@ export function PersonaLibrary({ session }: { session: ActiveSession }) {
                 actions={<>
                   <ActionIcon type="button" variant="subtle" size={44} className={classes.personaAction} aria-pressed={active}
                     aria-label={t('personas.selectNamed', { name })} title={t(active ? 'personas.clearSelection' : 'personas.select')}
-                    loading={selection.savingId === id} disabled={selection.id === undefined || Boolean(selection.pending && selection.savingId !== id)}
+                    loading={selection.savingId === id} disabled={selection.selected === undefined || Boolean(selection.pending && selection.savingId !== id)}
                     onClick={() => selectPersona(id)}>
                     {active ? <Check size={19} aria-hidden="true" /> : <Play size={18} aria-hidden="true" />}
                   </ActionIcon>

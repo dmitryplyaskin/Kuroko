@@ -13,11 +13,13 @@ import { ChatMenu } from './ChatMenu';
 import { ChatHistory, type ChatHistoryHandle } from './ChatHistory';
 import { ChatMessage, ChatPicture } from './ChatMessage';
 import { $activeSession } from '../../platform/session/model';
+import { personaAvatarUrl } from '../personas/requests';
+import { $selectedPersona, personaSelectionOpened } from '../personas/selectionModel';
 import { chatDisplayStyle } from './chatDisplayStyle';
 import type { ChatImage, Message } from './message';
 import {
   $activeSubagents, $chatAnnouncement, $chatRows, $chatVisible, $expandedReasoning, $messageEditor, $replyId, $replyPhase,
-  $chatActivity, $chatGmMode, $chatId, $chatLoadError, $chatLoading, $chatLocked, $chatMissing, $chatMessages, $chatRegenerateId, $chatReplyVariants, $chatSaveError,
+  $chatActivity, $chatGmMode, $chatId, $chatLoadError, $chatLoading, $chatLocked, $chatMissing, $chatMessages, $chatRealm, $chatRegenerateId, $chatReplyVariants, $chatSaveError,
   chatLoadRetryRequested, chatSaveRetryRequested,
   chatHidden, chatShown, keepHistoryAtEndRequested, messageDeleteRequested, messageEditCancelled,
   messageEditChanged, messageEditRequested, messageEditSubmitted, messageRegenerateRequested, messageSent, reasoningToggled, replyVariantRequested,
@@ -33,13 +35,13 @@ export default function Chat() {
   const { t } = useI18n();
   const scheme = useComputedColorScheme('light');
   const [dialog, setDialog] = useState<Preview | Delete>();
-  const [tab, setTab] = useState<string | null>('chat');
+  const [selectedTab, setSelectedTab] = useState<{ chatId: string; value: string | null }>();
   const [agentView, setAgentView] = useState<{ chatId: string; key: string }>();
   const scope = useProvidedScope();
   const {
     session, settings, rows, replyId, replyPhase, activeSubagents, announcement, editor, expandedReasoning, show, hide, openEditor,
     changeDraft, closeEditor, saveEdit, remove, regenerateId, requestRegeneration, variants, selectVariant, toggleReasoning,
-    activity, messages, chatId, gmMode, loading, locked, loadError, saveError, missing, visible, retryLoad, retrySave,
+    activity, messages, chatId, realm, persona, readPersona, gmMode, loading, locked, loadError, saveError, missing, visible, retryLoad, retrySave,
   } = useUnit({
     session: $activeSession, settings: $appliedChatSettings,
     rows: $chatRows, replyId: $replyId, replyPhase: $replyPhase, activeSubagents: $activeSubagents, announcement: $chatAnnouncement,
@@ -48,11 +50,13 @@ export default function Chat() {
     saveEdit: messageEditSubmitted, remove: messageDeleteRequested, toggleReasoning: reasoningToggled,
     regenerateId: $chatRegenerateId, requestRegeneration: messageRegenerateRequested,
     variants: $chatReplyVariants, selectVariant: replyVariantRequested,
-    activity: $chatActivity, messages: $chatMessages, chatId: $chatId, gmMode: $chatGmMode,
+    activity: $chatActivity, messages: $chatMessages, chatId: $chatId, realm: $chatRealm, gmMode: $chatGmMode,
+    persona: $selectedPersona, readPersona: personaSelectionOpened,
     loading: $chatLoading, locked: $chatLocked, loadError: $chatLoadError, saveError: $chatSaveError, missing: $chatMissing, visible: $chatVisible,
     retryLoad: chatLoadRetryRequested, retrySave: chatSaveRetryRequested,
   });
-  const username = session?.user.username ?? '';
+  const username = persona?.name ?? session?.user.username ?? '';
+  const userAvatar = persona?.hasAvatar ? personaAvatarUrl(persona.id, persona.revision) : undefined;
   const title = useRef<HTMLHeadingElement>(null);
   const chatTab = useRef<HTMLButtonElement>(null);
   const logTab = useRef<HTMLButtonElement>(null);
@@ -61,6 +65,7 @@ export default function Chat() {
   const jumpOnSend = useRef(false);
   const focusAfterDelete = useRef(false);
   const { entries, agents } = useMemo(() => chatActivityView(activity, messages), [activity, messages]);
+  const tab = selectedTab?.chatId === chatId ? selectedTab.value : 'chat';
   const activeTab = tab === 'agents' && !agents.length ? 'chat' : tab;
   const currentAgentView = agentView?.chatId === chatId ? agentView : undefined;
   const agent = currentAgentView && agents.find(({ key }) => key === currentAgentView.key);
@@ -70,7 +75,7 @@ export default function Chat() {
   const agentTurns = useMemo(() => agentTasks ? agentLogTurns(agentTasks) : [], [agentTasks]);
   const selectAgent = useCallback((key: string) => {
     setAgentView({ chatId, key });
-    setTab('chat');
+    setSelectedTab({ chatId, value: 'chat' });
   }, [chatId]);
 
   function backFromAgent() {
@@ -100,14 +105,15 @@ export default function Chat() {
     requestRegeneration(id);
   }, [requestRegeneration]);
   const renderMessage = useCallback((message: Message) => (
-    <ChatMessage message={message} username={username} phase={message.id === replyId && replyPhase ? replyPhase : undefined} locked={locked}
+    <ChatMessage message={message} username={username} userAvatar={userAvatar} realm={realm ?? undefined}
+      phase={message.id === replyId && replyPhase ? replyPhase : undefined} locked={locked}
       activeSubagents={message.id === replyId ? activeSubagents : undefined}
       editor={editor?.id === message.id ? editor : undefined}
       expandedReasoning={expandedReasoning.get(message.id)} onToggleReasoning={setReasoningOpen}
       onEdit={openEditor} onDraftChange={updateMessageDraft} onCancelEdit={closeEditor} onSaveEdit={saveEdit}
       onRegenerate={message.id === regenerateId ? regenerate : undefined} variants={variants[message.id]} onSelectVariant={selectVariant}
       onDelete={openDelete} onPreview={openPreview} />
-  ), [username, replyId, replyPhase, activeSubagents, locked, editor, expandedReasoning, setReasoningOpen, openEditor, updateMessageDraft,
+  ), [username, userAvatar, realm, replyId, replyPhase, activeSubagents, locked, editor, expandedReasoning, setReasoningOpen, openEditor, updateMessageDraft,
     closeEditor, saveEdit, regenerateId, regenerate, variants, selectVariant, openDelete, openPreview]);
 
   useEffect(() => {
@@ -122,6 +128,13 @@ export default function Chat() {
     };
   }, [scope, show, hide]);
 
+  useEffect(() => {
+    if (!session) return;
+    readPersona();
+    window.addEventListener('focus', readPersona);
+    return () => window.removeEventListener('focus', readPersona);
+  }, [session, readPersona]);
+
   useLayoutEffect(() => {
     if (!jumpOnSend.current) return;
     jumpOnSend.current = false;
@@ -135,7 +148,8 @@ export default function Chat() {
   }
 
   return (
-    <Tabs className={chatClasses['chat-panel']} data-user-side={settings.userSide} value={activeTab} onChange={setTab}
+    <Tabs className={chatClasses['chat-panel']} data-user-side={settings.userSide} value={activeTab}
+      onChange={(value) => setSelectedTab({ chatId, value })}
       keepMountedMode="display-none" variant="unstyled" style={chatDisplayStyle(settings, scheme)}>
       <h1 className={chatClasses['chat-sr-only']} id="chat-title" ref={title} tabIndex={-1}>{t('chat.title')}</h1>
       <header className={chatClasses['chat-workspace-header']}>

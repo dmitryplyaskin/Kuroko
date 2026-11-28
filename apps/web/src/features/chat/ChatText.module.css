@@ -63,4 +63,4 @@
   outline-color: rgb(255 255 255 / .1);
 }
 
-[data-chat-markdown] img { inline-size: min(100%, var(--chat-picture-width)); aspect-ratio: 3 / 2; object-fit: contain; }
+[data-chat-markdown] img { inline-size: 100%; aspect-ratio: auto 3 / 2; }

@@ -1,8 +1,8 @@
 import { useI18n } from '../../shared/i18n/i18n';
-import type { ChatReplyVariants, ChatReplyVariantSelection, ChatToolCall } from '@kuroko/contracts/chat';
+import type { ChatRealm, ChatReplyVariants, ChatReplyVariantSelection, ChatToolCall } from '@kuroko/contracts/chat';
 import { isSubagentTool, readSubagentName, readSubagentResultName } from '@kuroko/contracts/tools';
 import { Button, Menu } from '@mantine/core';
-import { Bot, ChevronLeft, ChevronRight, Copy, Ellipsis, LoaderCircle, Pencil, RotateCw, Trash2 } from 'lucide-react';
+import { Bot, ChevronLeft, ChevronRight, Copy, Ellipsis, Globe, LoaderCircle, Pencil, RotateCw, Trash2 } from 'lucide-react';
 import { memo, useCallback, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { useModuleExtensions } from '../../modules/ModuleExtensions';
 import { notify } from '../../shared/notifications/notifications';
@@ -11,21 +11,27 @@ import { displayMessageBlocks, type ActiveSubagent, type ChatImage, type Message
 import type { MessageAction, MessageActionContext } from './messageActions';
 import chatClasses from './Chat.module.css';
 
-export function ChatMessageFrame({ role, author, time, edited, image, actions, heading: Heading = 'h2', children }: {
-  role: Message['role']; author: string; time: number; edited?: boolean; image?: boolean;
-  actions?: ReactNode; heading?: 'h2' | 'h3'; children: ReactNode;
+export function ChatMessageFrame({ role, author, avatar, avatarFallback, startTitle, time, edited, image, actions, heading: Heading = 'h2', children }: {
+  role: Message['role']; author: string; avatar?: string; avatarFallback?: ReactNode; startTitle?: string;
+  time: number; edited?: boolean; image?: boolean; actions?: ReactNode; heading?: 'h2' | 'h3'; children: ReactNode;
 }) {
   const { locale, t, clock, date } = useI18n();
   const title = useId();
+  const [failedAvatar, setFailedAvatar] = useState<string>();
+  const fallback = avatarFallback ?? (role === 'assistant' ? <Bot size={19} strokeWidth={1.8} /> : Array.from(author)[0]?.toLocaleUpperCase(locale));
+  const timestamp = <time dateTime={new Date(time).toISOString()} title={date.format(time)}>{clock.format(time)}</time>;
   return (
     <article className={chatClasses['chat-message']} data-author={role} data-image={image || undefined} aria-labelledby={title}>
       <span className={['icon-tile', 'account-avatar', chatClasses['chat-avatar']].join(' ')} aria-hidden="true">
-        {role === 'assistant' ? <Bot size={19} strokeWidth={1.8} /> : Array.from(author)[0]?.toLocaleUpperCase(locale)}
+        {avatar && avatar !== failedAvatar ? <img src={avatar} alt="" loading="lazy" decoding="async" onError={() => setFailedAvatar(avatar)} />
+          : fallback}
       </span>
       <div className={chatClasses['chat-message-body']}>
         <header className={chatClasses['chat-message-header']}>
+          {role === 'user' && timestamp}
           <Heading id={title}><bdi>{author}</bdi></Heading>
-          <time dateTime={new Date(time).toISOString()} title={date.format(time)}>{clock.format(time)}</time>
+          {role === 'assistant' && timestamp}
+          {startTitle && <bdi className={chatClasses['chat-start-title']}>{startTitle}</bdi>}
           {edited && <span className={chatClasses['chat-edited']}>{t('chat.edited')}</span>}
         </header>
         <div data-chat-content>{children}</div>
@@ -83,15 +89,15 @@ function ToolCalls({ calls }: { calls: ChatToolCall[] }) {
   );
 }
 
-function ReplyVariants({ variants: { index, total }, locked, select }: {
-  variants: ChatReplyVariants; locked?: boolean; select: (index: number) => void;
+function ReplyVariants({ variants: { index, total }, locked, realmStart, select }: {
+  variants: ChatReplyVariants; locked?: boolean; realmStart?: boolean; select: (index: number) => void;
 }) {
   const { t, number } = useI18n();
   const label = { current: number.format(index + 1), total: number.format(total) };
   const previousDisabled = Boolean(locked || index === 0);
   const nextDisabled = Boolean(locked || index === total - 1);
-  const previous = t('chat.previousReplyVariant');
-  const next = t('chat.nextReplyVariant');
+  const previous = t(realmStart ? 'chat.previousRealmStart' : 'chat.previousReplyVariant');
+  const next = t(realmStart ? 'chat.nextRealmStart' : 'chat.nextReplyVariant');
   return (
     <span className={chatClasses['chat-reply-variants']}>
       <button type="button" className="icon-button" aria-label={previous} title={previous} aria-disabled={previousDisabled}
@@ -99,7 +105,7 @@ function ReplyVariants({ variants: { index, total }, locked, select }: {
         <ChevronLeft size={16} aria-hidden="true" />
       </button>
       <span aria-hidden="true">{label.current} / {label.total}</span>
-      <output className={chatClasses['chat-sr-only']}>{t('chat.replyVariantPosition', label)}</output>
+      <output className={chatClasses['chat-sr-only']}>{t(realmStart ? 'chat.realmStartPosition' : 'chat.replyVariantPosition', label)}</output>
       <button type="button" className="icon-button" aria-label={next} title={next} aria-disabled={nextDisabled}
         onClick={() => { if (!nextDisabled) select(index + 1); }}>
         <ChevronRight size={16} aria-hidden="true" />
@@ -111,6 +117,8 @@ function ReplyVariants({ variants: { index, total }, locked, select }: {
 type Props = {
   message: Message;
   username: string;
+  userAvatar?: string;
+  realm?: ChatRealm;
   phase?: ReplyPhase;
   activeSubagents?: readonly ActiveSubagent[];
   locked?: boolean;
@@ -129,13 +137,14 @@ type Props = {
 };
 
 export const ChatMessage = memo(function ChatMessage({
-  message, username, phase, activeSubagents, locked, editor, expandedReasoning, onToggleReasoning,
+  message, username, userAvatar, realm, phase, activeSubagents, locked, editor, expandedReasoning, onToggleReasoning,
   onEdit, onDraftChange, onSaveEdit, onCancelEdit, onRegenerate, variants, onSelectVariant, onDelete, onPreview,
 }: Props) {
   const { t, number } = useI18n();
   const { id, text, time, image, edited } = message;
   const assistant = message.role === 'assistant';
-  const author = assistant ? t('common.model') : username;
+  const author = assistant ? realm?.title ?? t('common.model') : username;
+  const realmAvatar = realm?.hasAvatar ? `/api/realms/${encodeURIComponent(realm.id)}/avatar` : undefined;
   const editing = editor !== undefined;
   const actions = useModuleExtensions('chat.message.actions');
   const actionContext: MessageActionContext = { text };
@@ -246,7 +255,9 @@ export const ChatMessage = memo(function ChatMessage({
   const ellipsis = <Ellipsis size={17} aria-hidden="true" />;
 
   return (
-    <ChatMessageFrame role={message.role} author={author} time={time} edited={edited} image={Boolean(image)}
+    <ChatMessageFrame role={message.role} author={author} avatar={assistant ? realmAvatar : userAvatar}
+      avatarFallback={assistant && realm ? <Globe size={19} strokeWidth={1.8} /> : undefined} startTitle={message.realmStart?.title}
+      time={time} edited={edited} image={Boolean(image)}
       actions={editor ? (
         <form id={editFormId} className={chatClasses['chat-editor-actions']} onSubmit={(event) => {
           event.preventDefault();
@@ -291,7 +302,7 @@ export const ChatMessage = memo(function ChatMessage({
               </Menu.Dropdown>
             </Menu>
           ) : <button type="button" className="icon-button" aria-label={t('chat.moreActions')} title={t('chat.moreActions')} disabled>{ellipsis}</button>}
-          {variants && onSelectVariant && <ReplyVariants variants={variants} locked={locked}
+          {variants && onSelectVariant && <ReplyVariants variants={variants} locked={locked} realmStart={Boolean(message.realmStart)}
             select={(index) => onSelectVariant({ replyId: id, index })} />}
         </div>
       )}>

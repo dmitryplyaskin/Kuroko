@@ -12,6 +12,8 @@ export type PersonaSelection = { id: string | null };
 export type PersonaForPrompt = Pick<SavedPersona, 'id' | 'name' | 'description' | 'variables'>;
 export type PersonaSummary = Pick<SavedPersona, 'id' | 'name' | 'revision'> &
   PersonaFavorite & { excerpt: string; hasAvatar: boolean; variableCount: number };
+export type PersonaIdentity = Pick<PersonaSummary, 'id' | 'name' | 'revision' | 'hasAvatar'>;
+export type PersonaSelectionResult = PersonaIdentity | { id: null };
 
 export const personaSorts = ['updated', 'created', 'name-asc', 'name-desc'] as const;
 export const personaVariableFilters = ['any', 'with', 'without'] as const;

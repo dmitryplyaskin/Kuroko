@@ -6,7 +6,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useI18n } from '../../shared/i18n/i18n';
 import { TemplateGuideModal } from '../../shared/prompt-templates/TemplateHelp';
 import {
-  $chatGmMode, $chatId, $chatLocked, $chatManagementError, $chatManager, $chatManaging, $chatTitle, $chats,
+  $chatGmMode, $chatId, $chatLocked, $chatManagementError, $chatManager, $chatManaging, $chatTitle, $savedChatList, $unlinkedChat,
   chatCreateRequested, chatDeleteConfirmed, chatGmModeChanged, chatManagementDialogClosed,
   chatManagementDialogOpened, chatOpenRequested, chatRenameChanged, chatRenameSubmitted,
 } from './model';
@@ -21,10 +21,10 @@ export function ChatMenu({ hasMessages, scrollToStart, scrollToEnd }: {
   const [guideOpened, setGuideOpened] = useState(false);
   const titleInput = useRef<HTMLInputElement>(null);
   const {
-    id, title, locked, gmMode, chats, managing, error, create, open, changeGmMode, show, close, confirmDelete, rename, changeTitle,
+    id, title, locked, gmMode, chats, unlinkedChat, managing, error, create, open, changeGmMode, show, close, confirmDelete, rename, changeTitle,
     manager: { dialog, draft, invalid },
   } = useUnit({
-    id: $chatId, title: $chatTitle, locked: $chatLocked, gmMode: $chatGmMode, chats: $chats,
+    id: $chatId, title: $chatTitle, locked: $chatLocked, gmMode: $chatGmMode, chats: $savedChatList, unlinkedChat: $unlinkedChat,
     managing: $chatManaging, error: $chatManagementError, create: chatCreateRequested, open: chatOpenRequested,
     changeGmMode: chatGmModeChanged, manager: $chatManager, show: chatManagementDialogOpened, close: chatManagementDialogClosed,
     confirmDelete: chatDeleteConfirmed, rename: chatRenameSubmitted, changeTitle: chatRenameChanged,
@@ -49,6 +49,8 @@ export function ChatMenu({ hasMessages, scrollToStart, scrollToEnd }: {
           {id && <Menu.Label className={chatClasses['chat-menu-title']}><bdi>{title || t('chat.untitled')}</bdi></Menu.Label>}
           <Menu.Item leftSection={<Plus size={16} aria-hidden="true" />} disabled={locked} onClick={create}>{t('chat.new')}</Menu.Item>
           <Menu.Item leftSection={<List size={16} aria-hidden="true" />} onClick={() => show({ kind: 'list' })}>{t('chat.savedChats')}</Menu.Item>
+          {unlinkedChat && <Menu.Item leftSection={<ChevronRight size={16} aria-hidden="true" />} disabled={locked}
+            onClick={() => open(unlinkedChat.id)}>{t('chat.openUnlinked')}</Menu.Item>}
           <Menu.Divider />
           <Menu.CheckboxItem checked={gmMode} onChange={changeGmMode} disabled={!id || locked}
             title={t('chat.gmModeDescription')}>{t('chat.gmMode')}</Menu.CheckboxItem>

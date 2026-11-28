@@ -1,4 +1,5 @@
 import type { JsonObject, JsonValue } from './llm';
+import type { RealmSummary } from './realms';
 
 export type ChatToolCall = {
   id: string;
@@ -29,6 +30,7 @@ export type ChatMessage = {
   time: number;
   edited?: boolean;
   toolCalls?: ChatToolCall[];
+  realmStart?: { id: string; title: string };
 };
 
 export function chatReplyPrompt(messages: readonly ChatMessage[], replaceId?: number): ChatMessage | undefined {
@@ -38,7 +40,12 @@ export function chatReplyPrompt(messages: readonly ChatMessage[], replaceId?: nu
   if (prompt?.role === 'user' && prompt.id < Number.MAX_SAFE_INTEGER - 2) return prompt;
 }
 
-export type ChatSummary = { id: string; title: string; updatedAt: number };
+export type ChatSummary = { id: string; title: string; updatedAt: number; realmId?: string };
+export type ChatCreateRequest = {
+  realmId: string;
+  /** Reuse this client-generated ID when retrying creation. */
+  id?: string;
+};
 export const chatTitleLimit = 64;
 
 export function readChatTitle(value: unknown): string | undefined {
@@ -63,8 +70,10 @@ export type ChatActivityTurn = { promptId: number; entries: ChatActivityEntry[] 
 export type ChatReplyVariants = { index: number; total: number };
 export type ChatReplyVariantSelection = { replyId: number; index: number };
 export type ChatSnapshot = { revision: number; messages: ChatMessage[]; gmMode?: boolean; activity?: ChatActivityTurn; replaceId?: number };
+export type ChatRealm = Pick<RealmSummary, 'id' | 'title' | 'hasAvatar'>;
 export type SavedChat = ChatSummary & Omit<ChatSnapshot, 'gmMode' | 'activity' | 'replaceId'> & {
   gmMode: boolean;
+  realm?: ChatRealm;
   activity?: ChatActivityTurn[];
   replyVariants?: Record<number, ChatReplyVariants>;
 };

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { allSettled, createWatch, fork, scopeBind } from 'effector';
-import type { ChatMessage, ChatReplyVariantSelection, ChatSnapshot, SavedChat } from '@kuroko/contracts/chat';
+import type { ChatCreateRequest, ChatMessage, ChatReplyVariantSelection, ChatSnapshot, SavedChat } from '@kuroko/contracts/chat';
 import type { SavedAgent } from '@kuroko/contracts/agents';
 import type { SavedRealm } from '@kuroko/contracts/realms';
 import { defaultChatSettings } from '@kuroko/contracts/chatSettings';
@@ -35,10 +35,10 @@ import {
 } from '../features/tools/model';
 import {
   $activeSubagents, $chatActivity, $chatAnnouncement, $chatDraft, $chatError, $chatGmMode, $chatId, $chatRegenerateId, $chatReplyVariants,
-  $chatCanSend, $chatLocked, $chatMissing, $chatRows, $chats, $replyId, $replyPhase,
+  $chatCanSend, $chatLocked, $chatMissing, $chatRows, $chats, $replyId, $replyPhase, $savedChatList, $unlinkedChat,
   chatCreateRequested, chatDraftChanged, chatGmModeChanged, chatHidden,
   chatOpenRequested, chatSendRequested, chatShown, chatStopRequested,
-  messageDeleteRequested, messageEditChanged, messageEditRequested, messageEditSubmitted, messageRegenerateRequested, replyVariantRequested,
+  messageDeleteRequested, messageEditChanged, messageEditRequested, messageEditSubmitted, messageRegenerateRequested, realmChatCreateRequested, replyVariantRequested,
 } from '../features/chat/model';
 
 const user = { id: 1, username: 'Лина' };
@@ -329,9 +329,11 @@ function withSavedChats(
       return Response.json({ enabled: [...enabled] });
     }
     if (input === '/api/chats') {
-      if (init?.method === 'GET') return Response.json(chats.map(({ id, title, updatedAt }) => ({ id, title, updatedAt })));
+      if (init?.method === 'GET') return Response.json(chats.map(({ id, title, updatedAt, realmId }) => ({ id, title, updatedAt, realmId })));
       assert.equal(init?.method, 'POST');
-      const chat = { id: String(chats.length + 1), title: '', updatedAt: Date.now(), revision: 0, messages: [], gmMode: false };
+      const body = init.body ? JSON.parse(String(init.body)) as ChatCreateRequest : undefined;
+      const chat: SavedChat = { id: body?.id ?? String(chats.length + 1), title: '', updatedAt: Date.now(), revision: 0,
+        messages: [], gmMode: false, ...(body && { realmId: body.realmId }) };
       chats.unshift(chat);
       return Response.json(chat, { status: 201 });
     }
@@ -1066,6 +1068,41 @@ test('chat keeps text typed during initial loading and waits for a successful to
     await allSettled(chatSendRequested, { scope });
     assert.equal(requests, 1);
     assert.deepEqual(scope.getState($chatRows).map(({ text }) => text), ['Черновик до загрузки', 'Ответ']);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('new chats inherit the current realm while the library can select a different realm', async () => {
+  const originalFetch = globalThis.fetch;
+  const requests: (ChatCreateRequest | undefined)[] = [];
+  const saved = withSavedChats(async () => { throw new Error('Unexpected generation'); });
+  globalThis.fetch = ((input, init) => {
+    if (input === '/api/chats' && init?.method === 'POST') {
+      requests.push(init.body ? JSON.parse(String(init.body)) as ChatCreateRequest : undefined);
+    }
+    return saved(input, init);
+  }) as typeof fetch;
+  try {
+    const scope = await openChat();
+    const plain = scope.getState($chatId);
+    await allSettled(realmChatCreateRequested, { scope, params: 'first-realm' });
+    const first = scope.getState($chatId);
+    await allSettled(chatCreateRequested, { scope });
+    const next = scope.getState($chatId);
+    assert.notEqual(next, first);
+    assert.equal(requests.at(-1)?.id, next);
+    assert.deepEqual(new Set(scope.getState($savedChatList).map(({ id }) => id)), new Set([first, next]));
+    assert.equal(scope.getState($unlinkedChat)?.id, plain);
+
+    await allSettled(realmChatCreateRequested, { scope, params: 'second-realm' });
+    const secondRealmChat = scope.getState($chatId);
+    assert.deepEqual(scope.getState($savedChatList).map(({ id }) => id), [secondRealmChat]);
+    await allSettled(chatOpenRequested, { scope, params: plain });
+    assert.deepEqual(scope.getState($savedChatList).map(({ id }) => id), [plain]);
+    assert.equal(scope.getState($unlinkedChat), null);
+    await allSettled(chatCreateRequested, { scope });
+    assert.deepEqual(requests.map((body) => body?.realmId), [undefined, 'first-realm', 'first-realm', 'second-realm', undefined]);
   } finally {
     globalThis.fetch = originalFetch;
   }
