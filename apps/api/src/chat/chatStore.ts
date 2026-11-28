@@ -1,11 +1,13 @@
 import {
-  chatReplyPrompt, chatTitleLimit, type ChatActivityEntry, type ChatCreateRequest, type ChatListItem, type ChatMessage, type ChatRealm, type ChatReplyVariantSelection,
+  chatMessageText, chatReplyPrompt, chatTitleLimit, type ChatActivityEntry, type ChatCreateRequest, type ChatListItem, type ChatMessage, type ChatRealm, type ChatReplyVariantSelection,
   type ChatSnapshot, type ChatSummary, type ChatToolCall, type SavedChat,
 } from '@kuroko/contracts/chat';
+import { hasTemplateSyntax } from '@kuroko/contracts/instructions';
 import type { LlmAssistantMessage } from '@kuroko/contracts/llm';
 import { orderedRealmRecords, type SavedRealm } from '@kuroko/contracts/realms';
 import type { Database } from 'bun:sqlite';
 import { randomUUID } from 'node:crypto';
+import type { createChatTemplate } from '../instructions/chatPrompt';
 import { PromptTemplateError, type createPromptRenderer } from '../instructions/promptTemplate';
 
 type SummaryRow = Omit<ChatSummary, 'realmId'> & { realmId: string | null };
@@ -21,6 +23,7 @@ type ReplyVersion = { message: ChatMessage; activity?: ChatActivityEntry[]; priv
 
 export function createChatStore(
   db: Database, findRealm: (userId: number, id: string) => SavedRealm | null, renderPrompt: ReturnType<typeof createPromptRenderer>,
+  chatTemplate: ReturnType<typeof createChatTemplate>,
 ) {
   const list = db.query<ListRow, [number]>(`
     SELECT chats.id, coalesce(chats.custom_title, chats.title) AS title, chats.updated_at AS updatedAt, chats.realm_id AS realmId,
@@ -172,18 +175,37 @@ export function createChatStore(
   const save = db.transaction((userId: number, id: string, { revision, messages, gmMode, activity, replaceId }: ChatSnapshot) => {
     const row = find.get(userId, id);
     if (!row) return 'missing';
+    if (row.revision !== revision && row.revision !== revision + 1) return 'conflict';
     const chat = readChat(row);
     const opening = chat.messages[0];
     const first = messages[0];
     if (opening?.realmStart && first?.id === opening.id && first.role === 'assistant') first.realmStart = opening.realmStart;
-    const messagesJson = JSON.stringify(messages);
     const mode = gmMode ?? Boolean(row.gmMode);
+    const previousMessages = new Map(chat.messages.map((message) => [message.id, message]));
+    let render: ((text: string) => string) | undefined;
+    for (const message of messages) {
+      if (message.role !== 'user') continue;
+      const previous = previousMessages.get(message.id);
+      if (previous?.role === 'user' && previous.text === message.text) {
+        message.renderedText = previous.renderedText;
+      } else if (row.revision === revision && hasTemplateSyntax(message.text)) {
+        render ??= chatTemplate(userId, { ...chat, messages, gmMode: mode }).render;
+        try {
+          const rendered = render(message.text);
+          if (rendered.trim()) message.renderedText = rendered;
+        } catch (error) {
+          if (!(error instanceof PromptTemplateError)) throw error;
+          // Keep the source editable and let prompt preparation report the template error.
+        }
+      }
+    }
+    const messagesJson = JSON.stringify(messages);
     const entriesJson = activity && JSON.stringify(activity.entries);
     if (row.revision === revision + 1 && row.messagesJson === messagesJson && mode === Boolean(row.gmMode) &&
         (!activity || findActivity.get(id, activity.promptId)?.entriesJson === entriesJson)) return withVariants(chat);
     if (row.revision !== revision) return 'conflict';
-    const firstPrompt = messages.find(({ role }) => role === 'user')?.text;
-    const title = automaticTitle(firstPrompt ?? row.realmTitle ?? '');
+    const firstPrompt = messages.find(({ role }) => role === 'user');
+    const title = automaticTitle(firstPrompt ? chatMessageText(firstPrompt) : row.realmTitle ?? '');
     const updatedAt = Date.now();
     if (replaceId !== undefined) {
       const previous = chat.messages;

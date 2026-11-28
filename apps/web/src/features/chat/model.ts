@@ -202,7 +202,7 @@ const $nextId = createStore(1)
   .reset(sessionEnded);
 $messages
   .on(chatOpened, (_, { result }) => result.chat.messages)
-  .on(variantSelected, (_, { result }) => result.messages);
+  .on(saveSucceeded, (_, { result }) => result.messages);
 
 export const $chatLocked = combine($chatLoading, $saving, $saveError, $reply, $chatManaging,
   (loading, saving, failure, reply, managing) => loading || saving || failure !== null || reply !== null || managing);

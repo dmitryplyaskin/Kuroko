@@ -1,4 +1,4 @@
-import type { ChatMessage } from '@kuroko/contracts/chat';
+import { chatMessageText, type ChatMessage } from '@kuroko/contracts/chat';
 import type { JsonValue } from '@kuroko/contracts/llm';
 import { messageBlocks } from '@kuroko/tool-runtime/chatHistory';
 import { activityModelText, activityObject, activityToolDetails, type ActivityEntry, type AgentTask } from './ChatActivity';
@@ -18,7 +18,7 @@ export type LogRow = {
 export type LogTurn = { id: number; number?: number; rows: LogRow[] };
 type Turn = { user: ChatMessage; replies: ChatMessage[] };
 
-function messageRow(message: ChatMessage, text = message.text, key = `message-${message.id}`): LogRow {
+function messageRow(message: ChatMessage, text = chatMessageText(message), key = `message-${message.id}`): LogRow {
   return { key, kind: message.role, time: message.time, text };
 }
 

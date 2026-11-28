@@ -1,5 +1,5 @@
 import { useI18n } from '../../shared/i18n/i18n';
-import type { ChatRealm, ChatReplyVariants, ChatReplyVariantSelection, ChatToolCall } from '@kuroko/contracts/chat';
+import { chatMessageText, type ChatRealm, type ChatReplyVariants, type ChatReplyVariantSelection, type ChatToolCall } from '@kuroko/contracts/chat';
 import { isSubagentTool, readSubagentName, readSubagentResultName } from '@kuroko/contracts/tools';
 import { Button, Menu } from '@mantine/core';
 import { Bot, ChevronLeft, ChevronRight, Copy, Ellipsis, Globe, LoaderCircle, Pencil, RotateCw, Trash2 } from 'lucide-react';
@@ -141,7 +141,8 @@ export const ChatMessage = memo(function ChatMessage({
   onEdit, onDraftChange, onSaveEdit, onCancelEdit, onRegenerate, variants, onSelectVariant, onDelete, onPreview,
 }: Props) {
   const { t, number } = useI18n();
-  const { id, text, time, image, edited } = message;
+  const { id, time, image, edited } = message;
+  const text = chatMessageText(message);
   const assistant = message.role === 'assistant';
   const author = assistant ? realm?.title ?? t('common.model') : username;
   const realmAvatar = realm?.hasAvatar ? `/api/realms/${encodeURIComponent(realm.id)}/avatar` : undefined;

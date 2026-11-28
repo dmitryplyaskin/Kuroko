@@ -196,10 +196,30 @@ test('persists an account’s selected persona and renders it only where prompts
     method: 'POST', cookie, body: { name: 'Побег', text, worldId: world.id },
   })).status).toBe(201);
   const chat = await (await request('/chats', { method: 'POST', cookie })).json() as SavedChat;
-  expect(await (await request(`${prefix}/active?chat=${chat.id}`, { cookie })).json()).toMatchObject({ text: expected });
+  const promptPath = `${prefix}/active?chat=${chat.id}`;
+  expect(await (await request(promptPath, { cookie })).json()).toMatchObject({ text: expected });
+  const chatPath = `/chats/${chat.id}`;
+  const messages: ChatMessage[] = [{
+    id: 1, role: 'user', text: '{{user}} в {{ vars.city }}. {% raw %}{{user}}{% endraw %}', time: 1, renderedText: 'Подменённый текст',
+  }];
+  const save = (revision: number, messages: ChatMessage[]) => request(chatPath, { method: 'PUT', cookie, body: { revision, messages } });
+  const savedResponse = await save(chat.revision, messages);
+  expect(savedResponse.status).toBe(200);
+  const saved = await savedResponse.json() as SavedChat;
+  const renderedText = 'Лина в Ривене. {{user}}';
+  expect(saved.messages).toEqual([{ ...messages[0]!, renderedText }]);
+  expect(saved.title).toBe(renderedText);
+  expect(await (await request(promptPath, { cookie })).json()).toMatchObject({ messages: [{ role: 'user', content: renderedText }] });
 
   expect(await (await select(next.id)).json()).toEqual({ id: next.id, name: next.name, revision: 0, hasAvatar: false });
   expect(await (await preview('{{ persona.name }}')).json()).toEqual({ text: 'Рей' });
+  expect(await (await save(chat.revision, messages)).json()).toEqual(saved);
+  expect(await (await request(chatPath, { cookie })).json()).toEqual(saved);
+  expect(await (await request(promptPath, { cookie })).json()).toMatchObject({ messages: [{ role: 'user', content: renderedText }] });
+  const edited = { ...saved.messages[0]!, edited: true, text: 'Я — {{user}}.' };
+  const editedResponse = await save(saved.revision, [edited]);
+  expect(editedResponse.status).toBe(200);
+  expect(await editedResponse.json()).toMatchObject({ messages: [{ ...edited, renderedText: 'Я — Рей.' }] });
   expect((await request(`/personas/${next.id}`, { method: 'DELETE', cookie, body: { revision: 0 } })).status).toBe(204);
   expect(await readSelection()).toEqual({ id: null });
   expect(await (await select(persona.id)).json()).toEqual(identity);
@@ -1217,6 +1237,7 @@ test('uses saved world variables and start context in chat and game master instr
   const chatPath = `/chats/${chat.id}`;
   const messages: ChatMessage[] = [{ id: 1, role: 'user', text: 'Вхожу в город. {{ vars.difficulty + 1 }}', time: 1 }];
   const ordinary = await (await request(chatPath, { method: 'PUT', cookie, body: { revision: chat.revision, messages } })).json() as SavedChat;
+  expect(ordinary.messages).toEqual([{ ...messages[0]!, renderedText: 'Вхожу в город. 4' }]);
   const renderPath = `${path}/active?chat=${chat.id}`;
   const active = await (await request(renderPath, { cookie })).json() as { text: string; messages: LlmRequest['messages'] };
   expect(active.text).toEqual(`Чат · ${ordinary.title} · 8\n${expectedWorld}`);

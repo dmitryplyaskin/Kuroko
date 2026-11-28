@@ -1,4 +1,5 @@
 import { useI18n } from '../../shared/i18n/i18n';
+import { chatMessageText } from '@kuroko/contracts/chat';
 import { observeElementRect, useVirtualizer, type VirtualizerOptions } from '@tanstack/react-virtual';
 import { memo, useCallback, useImperativeHandle, useLayoutEffect, useRef, type ReactNode, type Ref } from 'react';
 import type { Message } from './message';
@@ -45,7 +46,7 @@ export const ChatHistory = memo(function ChatHistory({ messages, renderMessage, 
     estimateSize: (index) => {
       const message = messages[index]!;
       const reasoningCount = message.reasoningBlocks?.length ?? (message.reasoning ? 1 : 0);
-      return 85 + 24 * Math.floor(message.text.length / 90) + (message.image ? 255 : 0) + 44 * reasoningCount;
+      return 85 + 24 * Math.floor(chatMessageText(message).length / 90) + (message.image ? 255 : 0) + 44 * reasoningCount;
     },
     anchorTo: 'end',
     followOnAppend: true,

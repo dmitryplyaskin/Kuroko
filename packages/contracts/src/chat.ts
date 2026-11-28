@@ -24,6 +24,8 @@ export type ChatMessage = {
   id: number;
   role: 'user' | 'assistant';
   text: string;
+  /** Server-rendered text for a player message. The editable source remains in text. */
+  renderedText?: string;
   /** Older messages store their reasoning in a single block. */
   reasoning?: string;
   reasoningBlocks?: ChatReasoningBlock[];
@@ -32,6 +34,10 @@ export type ChatMessage = {
   toolCalls?: ChatToolCall[];
   realmStart?: { id: string; title: string };
 };
+
+export function chatMessageText({ text, renderedText }: ChatMessage): string {
+  return renderedText ?? text;
+}
 
 export function chatReplyPrompt(messages: readonly ChatMessage[], replaceId?: number): ChatMessage | undefined {
   const last = messages.at(-1);

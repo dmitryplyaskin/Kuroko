@@ -20,7 +20,9 @@ export const chatApi = {
   remove: (session: ActiveSession, id: string) =>
     sessionRequest<void>(session, `/chats/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   save: (session: ActiveSession, id: string, body: ChatSnapshot) =>
-    sessionRequest<SavedChat>(session, `/chats/${encodeURIComponent(id)}`, { method: 'PUT', body }),
+    sessionRequest<SavedChat>(session, `/chats/${encodeURIComponent(id)}`, {
+      method: 'PUT', body: { ...body, messages: body.messages.map(({ renderedText: _renderedText, ...message }) => message) },
+    }),
   selectVariant: (session: ActiveSession, id: string, body: ChatReplyVariantSelection & { revision: number }) =>
     sessionRequest<SavedChat>(session, `/chats/${encodeURIComponent(id)}/reply-variant`, { method: 'PUT', body }),
   gmReply: (session: ActiveSession, { id, revision }: SavedChat, signal: AbortSignal, replaceId?: number) =>

@@ -1,4 +1,4 @@
-import type { ChatMessage, ChatToolCall } from '@kuroko/contracts/chat';
+import { chatMessageText, type ChatMessage, type ChatToolCall } from '@kuroko/contracts/chat';
 import type { LlmMessage } from '@kuroko/contracts/llm';
 import { isSubagentTool } from '@kuroko/contracts/tools';
 import { toolHistoryResult } from './getRollDetails';
@@ -9,7 +9,9 @@ export function hasMessageContent({ text, toolCalls }: ChatMessage) {
 
 type MessageBlock = { kind: 'text'; text: string } | { kind: 'tools'; calls: ChatToolCall[] };
 
-export function messageBlocks({ text, toolCalls }: ChatMessage): MessageBlock[] {
+export function messageBlocks(message: ChatMessage): MessageBlock[] {
+  const text = chatMessageText(message);
+  const { toolCalls } = message;
   const blocks: MessageBlock[] = [];
   let position = 0;
   for (const call of toolCalls ?? []) {
@@ -32,7 +34,7 @@ export function toLlmMessages(
     const { role, text } = message;
     if (!hasMessageContent(message)) continue;
     if (role === 'user') {
-      const content = render(text);
+      const content = message.renderedText ?? render(text);
       if (content.trim()) history.push({ role, content });
     } else {
       // Earlier calls travel as text so the conversation can continue with a different provider or with tools disabled.

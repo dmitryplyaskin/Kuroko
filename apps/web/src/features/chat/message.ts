@@ -50,6 +50,7 @@ export function displayMessageBlocks(message: Message): DisplayBlock[] {
 }
 
 export function messageDraftTexts(message: Message): string[] {
+  if (message.role === 'user') return [message.text];
   const texts = displayMessageBlocks(message).flatMap((block) => block.kind === 'text' ? [block.text] : []);
   return texts.length ? texts : [''];
 }
@@ -58,6 +59,7 @@ export function editMessageText(message: Message, texts: readonly string[]): Mes
   const draft = texts.join('');
   const text = draft.trim();
   const edited = { ...message, text, edited: true };
+  if (message.role === 'user') return { ...edited, renderedText: undefined };
   if (!message.toolCalls?.length && !message.reasoningBlocks?.length) return edited;
 
   const leadingWhitespace = draft.length - draft.trimStart().length;
