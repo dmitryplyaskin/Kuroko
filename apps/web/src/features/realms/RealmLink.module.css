@@ -1,0 +1,21 @@
+.link {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  min-inline-size: 0;
+  max-inline-size: 100%;
+  min-block-size: 24px;
+  color: var(--kr-text);
+  font-size: .875rem;
+  font-weight: 400;
+  overflow-wrap: anywhere;
+  text-align: start;
+  text-decoration: underline;
+  text-decoration-color: var(--kr-muted);
+  text-underline-offset: 3px;
+}
+
+.link:enabled { cursor: pointer; }
+.link:enabled:hover { text-decoration-color: currentColor; }
+.link:disabled { opacity: .65; cursor: default; }

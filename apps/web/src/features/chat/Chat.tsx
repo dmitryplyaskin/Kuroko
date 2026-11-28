@@ -1,5 +1,5 @@
 import { useI18n } from '../../shared/i18n/i18n';
-import { Button, Group, Modal, Tabs, useComputedColorScheme } from '@mantine/core';
+import { Anchor, Button, Group, Modal, Tabs, useComputedColorScheme } from '@mantine/core';
 import { createWatch } from 'effector';
 import { useProvidedScope, useUnit } from 'effector-react';
 import { Bot, List, MessageSquare } from 'lucide-react';
@@ -10,17 +10,21 @@ import { ChatComposer } from './ChatComposer';
 import { ChatLog, ChatLogView } from './ChatLog';
 import { agentLogTurns } from './chatLogActivity';
 import { ChatMenu } from './ChatMenu';
+import { ChatActions } from './ChatActions';
+import { ChatManagementDialog } from './ChatManagementDialog';
 import { ChatHistory, type ChatHistoryHandle } from './ChatHistory';
 import { ChatMessage, ChatPicture } from './ChatMessage';
 import { $activeSession } from '../../platform/session/model';
+import { DiscardChangesDialog } from '../../shared/dialogs/DiscardChangesDialog';
 import { personaAvatarUrl } from '../personas/requests';
 import { $selectedPersona, personaSelectionOpened } from '../personas/selectionModel';
+import { useRealmNavigation } from '../realms/useRealmNavigation';
 import { chatDisplayStyle } from './chatDisplayStyle';
 import type { ChatImage, Message } from './message';
 import {
   $activeSubagents, $chatAnnouncement, $chatRows, $chatVisible, $expandedReasoning, $messageEditor, $replyId, $replyPhase,
-  $chatActivity, $chatGmMode, $chatId, $chatLoadError, $chatLoading, $chatLocked, $chatMissing, $chatMessages, $chatRealm, $chatRegenerateId, $chatReplyVariants, $chatSaveError,
-  chatLoadRetryRequested, chatSaveRetryRequested,
+  $chatActivity, $chatEntry, $chatGmMode, $chatId, $chatLoadError, $chatLoading, $chatLocked, $chatMissing, $chatMessages, $chatRealm, $chatRegenerateId, $chatReplyVariants, $chatSaveError, $chatSummary,
+  chatLoadRetryRequested, chatLogOpenRequested, chatSaveRetryRequested, type ChatEntry,
   chatHidden, chatShown, keepHistoryAtEndRequested, messageDeleteRequested, messageEditCancelled,
   messageEditChanged, messageEditRequested, messageEditSubmitted, messageRegenerateRequested, messageSent, reasoningToggled, replyVariantRequested,
 } from './model';
@@ -35,13 +39,14 @@ export default function Chat() {
   const { t } = useI18n();
   const scheme = useComputedColorScheme('light');
   const [dialog, setDialog] = useState<Preview | Delete>();
-  const [selectedTab, setSelectedTab] = useState<{ chatId: string; value: string | null }>();
-  const [agentView, setAgentView] = useState<{ chatId: string; key: string }>();
+  const [selectedTab, setSelectedTab] = useState<{ entry: ChatEntry | null; value: string | null }>();
+  const [agentView, setAgentView] = useState<{ entry: ChatEntry | null; key: string }>();
   const scope = useProvidedScope();
+  const realms = useRealmNavigation();
   const {
     session, settings, rows, replyId, replyPhase, activeSubagents, announcement, editor, expandedReasoning, show, hide, openEditor,
     changeDraft, closeEditor, saveEdit, remove, regenerateId, requestRegeneration, variants, selectVariant, toggleReasoning,
-    activity, messages, chatId, realm, persona, readPersona, gmMode, loading, locked, loadError, saveError, missing, visible, retryLoad, retrySave,
+    activity, messages, chatId, chat, entry, openLog, realm, persona, readPersona, gmMode, loading, locked, loadError, saveError, missing, visible, retryLoad, retrySave,
   } = useUnit({
     session: $activeSession, settings: $appliedChatSettings,
     rows: $chatRows, replyId: $replyId, replyPhase: $replyPhase, activeSubagents: $activeSubagents, announcement: $chatAnnouncement,
@@ -50,7 +55,8 @@ export default function Chat() {
     saveEdit: messageEditSubmitted, remove: messageDeleteRequested, toggleReasoning: reasoningToggled,
     regenerateId: $chatRegenerateId, requestRegeneration: messageRegenerateRequested,
     variants: $chatReplyVariants, selectVariant: replyVariantRequested,
-    activity: $chatActivity, messages: $chatMessages, chatId: $chatId, realm: $chatRealm, gmMode: $chatGmMode,
+    activity: $chatActivity, messages: $chatMessages, chatId: $chatId, chat: $chatSummary, entry: $chatEntry, openLog: chatLogOpenRequested,
+    realm: $chatRealm, gmMode: $chatGmMode,
     persona: $selectedPersona, readPersona: personaSelectionOpened,
     loading: $chatLoading, locked: $chatLocked, loadError: $chatLoadError, saveError: $chatSaveError, missing: $chatMissing, visible: $chatVisible,
     retryLoad: chatLoadRetryRequested, retrySave: chatSaveRetryRequested,
@@ -65,22 +71,22 @@ export default function Chat() {
   const jumpOnSend = useRef(false);
   const focusAfterDelete = useRef(false);
   const { entries, agents } = useMemo(() => chatActivityView(activity, messages), [activity, messages]);
-  const tab = selectedTab?.chatId === chatId ? selectedTab.value : 'chat';
+  const tab = selectedTab?.entry === entry ? selectedTab.value : entry?.tab ?? 'chat';
   const activeTab = tab === 'agents' && !agents.length ? 'chat' : tab;
-  const currentAgentView = agentView?.chatId === chatId ? agentView : undefined;
+  const currentAgentView = agentView?.entry === entry ? agentView : undefined;
   const agent = currentAgentView && agents.find(({ key }) => key === currentAgentView.key);
   const logVisible = visible && activeTab === 'log';
   const agentKey = agent?.key;
   const agentTasks = agent?.tasks;
   const agentTurns = useMemo(() => agentTasks ? agentLogTurns(agentTasks) : [], [agentTasks]);
   const selectAgent = useCallback((key: string) => {
-    setAgentView({ chatId, key });
-    setSelectedTab({ chatId, value: 'chat' });
-  }, [chatId]);
+    setAgentView({ entry, key });
+    setSelectedTab({ entry, value: 'chat' });
+  }, [entry]);
 
   function backFromAgent() {
     if (agent?.parentKey) {
-      setAgentView({ chatId, key: agent.parentKey });
+      setAgentView({ entry, key: agent.parentKey });
     } else {
       setAgentView(undefined);
       (activeTab === 'log' ? logTab : chatTab).current?.focus({ preventScroll: true });
@@ -149,10 +155,17 @@ export default function Chat() {
 
   return (
     <Tabs className={chatClasses['chat-panel']} data-user-side={settings.userSide} value={activeTab}
-      onChange={(value) => setSelectedTab({ chatId, value })}
+      onChange={(value) => setSelectedTab({ entry, value })}
       keepMountedMode="display-none" variant="unstyled" style={chatDisplayStyle(settings, scheme)}>
-      <h1 className={chatClasses['chat-sr-only']} id="chat-title" ref={title} tabIndex={-1}>{t('chat.title')}</h1>
       <header className={chatClasses['chat-workspace-header']}>
+        <div className={chat && !agent ? chatClasses['chat-context'] : chatClasses['chat-sr-only']}>
+          <div className={chatClasses['chat-context-copy']}>
+            <h1 dir="auto" id="chat-title" ref={title} tabIndex={-1}>{chat?.title || t('chat.title')}</h1>
+            {realm && !agent && <Anchor component="button" type="button" size="sm" c="var(--kr-accent)" underline="always" dir="auto"
+              disabled={realms.disabled(realm.id)} onClick={() => realms.open(realm.id)}>{realm.title}</Anchor>}
+          </div>
+          {chat && !agent && <ChatActions chat={chat} locked={locked} surface="chat" onOpenLog={() => openLog(chat.id)} />}
+        </div>
         {agent && <AgentToolbar agent={agent} heading={agentHeading} onBack={backFromAgent} />}
         <Tabs.List className={chatClasses['chat-tabs']} aria-labelledby={agent ? 'chat-agent-title' : 'chat-title'}>
           <Tabs.Tab ref={chatTab} className={chatClasses['chat-tab']} value="chat" leftSection={<MessageSquare size={15} aria-hidden="true" />}>
@@ -202,6 +215,9 @@ export default function Chat() {
         </Tabs.Panel>
       )}
       <output className={chatClasses['chat-sr-only']}>{announcement && t(announcement)}</output>
+
+      <ChatManagementDialog surface="chat" />
+      <DiscardChangesDialog {...realms.confirmation} />
 
       <Modal opened={Boolean(dialog)} onClose={() => setDialog(undefined)} onExitTransitionEnd={() => {
         if (!focusAfterDelete.current) return;

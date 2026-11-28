@@ -40,7 +40,7 @@ function forLocale(locale: Locale) {
   return { locale, t, number, plural, clock, clockWithSeconds, date, decimalSeparator };
 }
 
-const i18n = { ru: forLocale('ru'), en: forLocale('en') } satisfies Record<Locale, ReturnType<typeof forLocale>>;
+export const i18n = { ru: forLocale('ru'), en: forLocale('en') } satisfies Record<Locale, ReturnType<typeof forLocale>>;
 
 export function useI18n() {
   return i18n[useUnit($locale)];

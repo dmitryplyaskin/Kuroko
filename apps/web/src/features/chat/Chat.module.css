@@ -28,6 +28,22 @@
 
 .chat-tabs { align-self: end; gap: 3px; padding-block-start: var(--chat-tab-inset); }
 
+.chat-context {
+  display: flex;
+  flex: 1 1 19rem;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-inline-size: 0;
+  padding-block: 8px;
+}
+.chat-context-copy { min-inline-size: 0; }
+.chat-context h1 { font: 600 1.125rem / 1.3 var(--kr-font-story); overflow-wrap: anywhere; }
+.chat-context-copy button { max-inline-size: 100%; overflow-wrap: anywhere; text-align: start; }
+.chat-context-copy button:enabled { cursor: pointer; }
+.chat-context-copy button:disabled { opacity: .6; cursor: default; }
+.chat-actions { display: flex; flex: none; align-items: center; gap: 4px; }
+
 .chat-tab {
   min-block-size: 38px;
   margin-block-end: -1px;
@@ -137,8 +153,7 @@
 
 .chat-menu-title { overflow-wrap: anywhere; }
 .chat-manager-list { display: grid; gap: 4px; max-block-size: min(55dvh, 30rem); overflow: auto; padding: 3px; }
-.chat-manager-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 4px; }
-.chat-manager-row :global(.icon-button) { min-inline-size: 36px; min-block-size: 40px; }
+.chat-manager-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 4px; }
 .chat-manager-error { margin-block-start: 6px; color: var(--kr-danger); }
 
 @media (hover: hover) {

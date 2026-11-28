@@ -11,10 +11,18 @@ export const chatModule = {
     label: 'chat.label',
     title: 'chat.title',
     icon: 'message',
-    order: 20,
+    order: 11,
     layout: 'viewport',
     retainAfterVisit: true,
     loadingLabel: 'chat.loading',
+  }, {
+    kind: 'workspace.screen',
+    id: 'kuroko.chat.history',
+    route: '#history',
+    label: 'chatHistory.label',
+    icon: 'history',
+    order: 12,
+    loadingLabel: 'chatHistory.loading',
   }, {
     kind: 'settings.tab',
     id: 'kuroko.chat.preferences',
@@ -27,6 +35,7 @@ export const chatModule = {
   }],
   views: {
     'kuroko.chat.index': () => import('./Chat'),
+    'kuroko.chat.history': () => import('./history/ChatHistoryPage'),
     'kuroko.chat.preferences': () => import('./settings/ChatPreferences'),
   },
 } satisfies WebModule;

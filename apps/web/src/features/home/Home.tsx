@@ -1,6 +1,6 @@
 import type { ChatListItem } from '@kuroko/contracts/chat';
 import { providers } from '@kuroko/contracts/connectionSettings';
-import { Button, UnstyledButton } from '@mantine/core';
+import { Button, Text, UnstyledButton } from '@mantine/core';
 import { useUnit } from 'effector-react';
 import { ArrowRight, ArrowUpRight, ChevronRight, Globe, MessageSquare, NotebookText, Plug, UserRound } from 'lucide-react';
 import { useEffect, useState, type MouseEvent, type ReactNode } from 'react';
@@ -10,7 +10,8 @@ import { useI18n } from '../../shared/i18n/i18n';
 import { LibraryAvatar } from '../../shared/library/LibraryItem';
 import { $chatLocked, chatOpenRequested } from '../chat/model';
 import { personaAvatarUrl } from '../personas/requests';
-import { $realmEditor, $realmEditorBusy, $realmEditorHasUnsavedChanges, realmEditorClosed, realmEditorOpened } from '../realms/model';
+import { RealmLink } from '../realms/RealmLink';
+import { useRealmNavigation } from '../realms/useRealmNavigation';
 import {
   $activeConnection, $activeInstruction, $activePersona, $recentChats, $recentRealms,
   homeClosed, homeOpened, homeRetryRequested, recentLimit, type HomeQuery,
@@ -48,8 +49,8 @@ function PanelHeading({ id, title, link }: {
   </header>;
 }
 
-function RecentRow({ title, avatar, metadata, disabled, onOpen }: {
-  title: string; avatar: ReactNode; metadata: ReactNode; disabled: boolean; onOpen: () => void;
+function RecentRow({ title, avatar, metadata, preview, disabled, onOpen }: {
+  title: string; avatar: ReactNode; metadata: ReactNode; preview?: string; disabled: boolean; onOpen: () => void;
 }) {
   return <li className={classes.recentRow}>
     {avatar}
@@ -57,6 +58,7 @@ function RecentRow({ title, avatar, metadata, disabled, onOpen }: {
       <UnstyledButton className={classes.rowOpen} type="button" disabled={disabled} onClick={onOpen}>
         <strong dir="auto">{title}</strong>
       </UnstyledButton>
+      {preview && <Text dir="auto" size="sm" c="var(--kr-muted)" truncate>{preview}</Text>}
       {metadata}
     </div>
     <ChevronRight className={classes.muted} size={16} aria-hidden="true" />
@@ -80,14 +82,11 @@ export default function Home() {
   const { t, locale } = useI18n();
   const {
     chats, realms, connection, persona, instruction, enter, leave, retry, openChat, chatLocked,
-    openRealm, closeRealm, realmEditor, realmBusy, realmDirty,
   } = useUnit({
     chats: $recentChats, realms: $recentRealms, connection: $activeConnection, persona: $activePersona, instruction: $activeInstruction,
     enter: homeOpened, leave: homeClosed, retry: homeRetryRequested, openChat: chatOpenRequested, chatLocked: $chatLocked,
-    openRealm: realmEditorOpened, closeRealm: realmEditorClosed, realmEditor: $realmEditor,
-    realmBusy: $realmEditorBusy, realmDirty: $realmEditorHasUnsavedChanges,
   });
-  const [pendingRealm, setPendingRealm] = useState<{ id?: string } | null>(null);
+  const realmsNavigation = useRealmNavigation();
   const [failedCover, setFailedCover] = useState<string>();
 
   useEffect(() => {
@@ -101,8 +100,6 @@ export default function Home() {
   const realmCover = realmAvatarSrc(latest?.realmId, latest?.realmHasAvatar);
   const showRealmCover = realmCover !== undefined && realmCover !== failedCover;
   const needsConnection = connection.status === 'ready' && (!connection.data || connection.data.needsKey);
-  const editedRealmId = realmEditor?.status === 'ready' ? realmEditor.saved?.id
-    : realmEditor?.status === 'loading' ? realmEditor.request.id : realmEditor?.id;
   const activity = [
     ...chatItems.map((chat) => ({ ...chat, label: 'home.chatUpdated' as const })),
     ...realmItems.map((realm) => ({ ...realm, label: realm.updatedAt === realm.createdAt ? 'home.realmCreated' as const : 'home.realmUpdated' as const })),
@@ -115,10 +112,8 @@ export default function Home() {
 
   function chatMetadata({ updatedAt, realmId, realmTitle }: ChatListItem) {
     return <span className={classes.chatMetadata}>
-      {realmId && realmTitle && <UnstyledButton type="button" className={`${classes.panelLink} ${classes.realmLink}`}
-        onClick={() => pickRealm(realmId)} disabled={realmBusy && editedRealmId !== realmId}>
-        {t('home.chatRealm', { title: realmTitle })}
-      </UnstyledButton>}
+      {realmId && realmTitle && <RealmLink title={realmTitle}
+        onClick={() => realmsNavigation.open(realmId)} disabled={realmsNavigation.disabled(realmId)} />}
       {time(updatedAt)}
     </span>;
   }
@@ -128,27 +123,6 @@ export default function Home() {
     window.location.assign('#chat');
   }
 
-  function goToRealms(id?: string) {
-    if (id === undefined || editedRealmId !== id) {
-      if (realmBusy) return;
-      closeRealm();
-      if (id !== undefined) openRealm(id);
-    }
-    setPendingRealm(null);
-    window.location.assign('#realms');
-  }
-
-  function pickRealm(id: string) {
-    if (realmDirty && editedRealmId !== id) setPendingRealm({ id });
-    else goToRealms(id);
-  }
-
-  function browseRealms(event: MouseEvent<HTMLAnchorElement>) {
-    if (!realmEditor || realmBusy || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
-    event.preventDefault();
-    if (realmDirty) setPendingRealm({});
-    else goToRealms();
-  }
 
   return <>
     <header className="page-heading">
@@ -159,6 +133,9 @@ export default function Home() {
       <div className={classes.featureCopy}>
         <p className={classes.featureLabel}>{t(latest ? 'home.lastChat' : 'home.roleplay')}</p>
         <h2 id="home-feature" dir="auto">{latest ? chatName(latest.title) : t('home.startTitle')}</h2>
+        {latest?.lastMessage && <Text className={classes.featurePreview} dir="auto" size="sm" c="var(--kr-muted)" lineClamp={2}>
+          {latest.lastMessage}
+        </Text>}
         {latest && chatMetadata(latest)}
         <div className={classes.featureActions}>
           {latest ? <Button type="button" disabled={chatLocked} onClick={() => goToChat(latest.id)}
@@ -167,7 +144,7 @@ export default function Home() {
               {t(chats.status === 'ready' ? 'home.startChat' : 'home.openChat')}
             </Button>}
           {needsConnection ? <Button component="a" href="#settings/connection" variant="default">{t('home.configureConnection')}</Button>
-            : <Button component="a" href="#realms" onClick={browseRealms} variant="default">{t('home.browseRealms')}</Button>}
+            : <Button component="a" href="#realms" onClick={realmsNavigation.browse} variant="default">{t('home.browseRealms')}</Button>}
         </div>
       </div>
       <img className={showRealmCover ? `${classes.featureArt} ${classes.realmCover}` : classes.featureArt}
@@ -178,20 +155,20 @@ export default function Home() {
     <div className={classes.columns}>
       <div className={classes.column}>
         <section className={classes.panel} aria-labelledby="home-recent-chats">
-          <PanelHeading id="home-recent-chats" title={t('home.recentChats')} link={{ href: '#chat', label: t('home.openChat') }} />
+          <PanelHeading id="home-recent-chats" title={t('home.recentChats')} link={{ href: '#history', label: t('home.allChats') }} />
           <QueryContent query={chats} retry={() => retry('chats')}>{(items) => items.length ? <ul className={classes.rows}>
             {items.map((chat) => <RecentRow key={chat.id} title={chatName(chat.title)} disabled={chatLocked} onOpen={() => goToChat(chat.id)}
               avatar={<LibraryAvatar className={classes.icon} src={realmAvatarSrc(chat.realmId, chat.realmHasAvatar)}
                 placeholder={<MessageSquare size={18} />} lazy />}
-              metadata={chatMetadata(chat)} />)}
+              metadata={chatMetadata(chat)} preview={chat.lastMessage} />)}
           </ul> : <p className={classes.muted}>{t('home.noChats')}</p>}</QueryContent>
         </section>
         <section className={classes.panel} aria-labelledby="home-recent-realms">
           <PanelHeading id="home-recent-realms" title={t('home.recentRealms')}
-            link={{ href: '#realms', label: t('home.allRealms'), onClick: browseRealms }} />
+            link={{ href: '#realms', label: t('home.allRealms'), onClick: realmsNavigation.browse }} />
           <QueryContent query={realms} retry={() => retry('realms')}>{(items) => items.length ? <ul className={classes.rows}>
             {items.map(({ id, title, hasAvatar, updatedAt }) => <RecentRow key={id} title={title}
-              disabled={realmBusy && editedRealmId !== id} onOpen={() => pickRealm(id)} metadata={time(updatedAt)}
+              disabled={realmsNavigation.disabled(id)} onOpen={() => realmsNavigation.open(id)} metadata={time(updatedAt)}
               avatar={<LibraryAvatar className={classes.icon} src={realmAvatarSrc(id, hasAvatar)}
                 placeholder={<Globe size={18} />} lazy />} />)}
           </ul> : <p className={classes.muted}>{t('home.noRealms')}</p>}</QueryContent>
@@ -246,7 +223,6 @@ export default function Home() {
       </div>
     </div>
 
-    <DiscardChangesDialog opened={pendingRealm !== null} onClose={() => setPendingRealm(null)}
-      onDiscard={() => { if (pendingRealm) goToRealms(pendingRealm.id); }} />
+    <DiscardChangesDialog {...realmsNavigation.confirmation} />
   </>;
 }

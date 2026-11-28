@@ -1,14 +1,17 @@
-import type { MessageKey } from '../../shared/i18n/i18n';
+import { $locale, i18n, type MessageKey } from '../../shared/i18n/i18n';
+import { notifications } from '@mantine/notifications';
 import { combine, createEffect, createEvent, createStore, sample, scopeBind, type StoreValue } from 'effector';
 import {
-  chatReplyPrompt, readChatTitle, type ChatActivityEntry, type ChatActivityTurn, type ChatCreateRequest, type ChatReasoningBlock, type ChatReplyVariantSelection,
+  chatReplyPrompt, chatTitleLimit, readChatTitle, type ChatActivityEntry, type ChatActivityTurn, type ChatCopyRequest, type ChatCreateRequest, type ChatReasoningBlock, type ChatReplyVariantSelection,
   type ChatReplyVariants, type ChatSnapshot, type ChatSummary, type ChatToolCall, type SavedChat,
 } from '@kuroko/contracts/chat';
 import type { ToolId } from '@kuroko/contracts/tools';
 import { createChatActivity } from '@kuroko/tool-runtime/chatActivity';
 import { abortFx } from '../../shared/async/abort';
+import { downloadFile } from '../../shared/browser/download';
 import { newLocalId } from '../../shared/browser/id';
 import { ApiError, errorCode, type ErrorCode } from '../../shared/http/api';
+import { notify } from '../../shared/notifications/notifications';
 import { inActiveSession, $activeSession, protectedRequestFailed, sessionEnded, type ActiveSession } from '../../platform/session/model';
 import { $enabledTools, $toolSettingsReady } from '../tools/model';
 import { chatApi, streamChatReply, type ChatReplyDelta } from './chatApi';
@@ -23,12 +26,14 @@ type Reply = {
   activeSubagents?: readonly ActiveSubagent[];
   reasoningActive?: boolean;
 };
-type Navigation = { session: ActiveSession; action: 'initial' | 'create' | 'open'; id?: string; keepDraft?: boolean; loadList?: boolean; realm?: ChatCreateRequest };
+export type ChatEntry = { id: string; tab: 'chat' | 'log' };
+type Navigation = { session: ActiveSession; action: 'initial' | 'create' | 'open'; id?: string; tab?: ChatEntry['tab']; keepDraft?: boolean; loadList?: boolean; realm?: ChatCreateRequest };
 type Save = { session: ActiveSession; id: string; revision: number } & (
   (Omit<ChatSnapshot, 'revision'> & { reply?: Reply; draftToRecover?: string; selection?: never }) |
   { reply?: never; selection: ChatReplyVariantSelection }
 );
-type ChatManagement = { id: string; action: 'rename'; title: string } | { id: string; action: 'delete' };
+type ChatManagement = { id: string; action: 'rename'; title: string } | { id: string; action: 'delete' | 'export' } |
+  { id: string; action: 'copy'; request: ChatCopyRequest };
 
 export const chatShown = createEvent();
 export const chatHidden = createEvent();
@@ -38,8 +43,14 @@ export const chatStopRequested = createEvent();
 export const chatCreateRequested = createEvent();
 export const realmChatCreateRequested = createEvent<string>();
 export const chatOpenRequested = createEvent<string>();
-type ManagementDialog = { kind: 'list' } | { kind: 'rename' | 'delete'; chat: ChatSummary };
+export const chatLogOpenRequested = createEvent<string>();
+export type ChatManagementSurface = 'chat' | 'history';
+type ManagementDialog = { kind: 'list' } | {
+  kind: 'rename' | 'delete'; chat: ChatSummary; surface?: ChatManagementSurface; fromList?: boolean;
+};
 const chatManagementRequested = createEvent<ChatManagement>();
+export const chatCopyRequested = createEvent<ChatSummary>();
+export const chatExportRequested = createEvent<string>();
 export const chatManagementDialogOpened = createEvent<ManagementDialog>();
 export const chatManagementDialogClosed = createEvent();
 export const chatRenameChanged = createEvent<string>();
@@ -79,6 +90,14 @@ const saveChatFx = createEffect((change: Save) => {
 });
 const manageChatFx = createEffect(async ({ session, change }: { session: ActiveSession; current: string; change: ChatManagement }) => {
   if (change.action === 'rename') return { summary: await chatApi.rename(session, change.id, change.title) };
+  if (change.action === 'copy') return { copied: await chatApi.copy(session, change.id, change.request) };
+  if (change.action === 'export') {
+    const chat = await chatApi.open(session, change.id);
+    session.signal.throwIfAborted();
+    const data = new Blob([JSON.stringify(chat, null, 2)], { type: 'application/json' });
+    downloadFile(data, `chat-${chat.id}.json`);
+    return {};
+  }
   try {
     await chatApi.remove(session, change.id);
   } catch (error) {
@@ -101,8 +120,30 @@ sample({
 });
 const chatManagementSucceeded = inActiveSession(manageChatFx.done, ({ session }) => session);
 const managementFailed = inActiveSession(manageChatFx.fail, ({ session }) => session);
+export const chatListChanged = chatManagementSucceeded.filterMap(({ result }) =>
+  result.summary || result.copied || result.deleted ? result : undefined);
 const chatDeleted = chatManagementSucceeded.filterMap(({ result }) => result.deleted);
-const activeChatDeleted = chatManagementSucceeded.filter({ fn: ({ params, result }) => result.deleted === params.current });
+const activeChatDeleted = chatManagementSucceeded.filter({ fn: ({ params, result }) => Boolean(result.deleted && result.deleted === params.current) });
+
+const notifyManagementFx = createEffect(({ id, notice }: { id: string; notice?: Parameters<typeof notify>[0] }) => {
+  notifications.hide(id);
+  if (notice) notify({ ...notice, id });
+});
+sample({
+  clock: chatManagementSucceeded,
+  filter: ({ params }) => params.change.action === 'copy' || params.change.action === 'export',
+  fn: ({ params: { change }, result }) => ({ id: `chat-${change.action}-${change.id}`,
+    notice: result.copied ? { tone: 'success' as const, message: 'chat.copySucceeded' as const } : undefined }),
+  target: notifyManagementFx,
+});
+sample({
+  clock: managementFailed,
+  filter: ({ params }) => params.change.action === 'copy' || params.change.action === 'export',
+  fn: ({ params: { change }, error }) => ({ id: `chat-${change.action}-${change.id}`,
+    notice: { tone: 'error' as const, message: `error.${errorCode(error)}` as const,
+      title: change.action === 'copy' ? 'chat.copyFailed' as const : 'chat.exportFailed' as const } }),
+  target: notifyManagementFx,
+});
 
 export const $chatManaging = createStore(false).on(manageChatFx, () => true)
   .reset(chatManagementSucceeded, managementFailed, sessionEnded);
@@ -117,6 +158,8 @@ const $saved = createStore<SavedChat | null>(null)
   .reset(activeChatDeleted, chatMissing, sessionEnded);
 export const $chatId = $saved.map((chat) => chat?.id ?? '');
 export const $chatTitle = $saved.map((chat) => chat?.title ?? '');
+export const $chatSummary = $saved.map((chat): ChatSummary | null => chat &&
+  { id: chat.id, title: chat.title, realmId: chat.realmId, createdAt: chat.createdAt, updatedAt: chat.updatedAt });
 export const $chatRealm = $saved.map((chat) => chat?.realm ?? null);
 const $chatRealmId = $saved.map((chat) => chat?.realmId ?? null);
 export const $chatGmMode = $saved.map((chat) => chat?.gmMode ?? false);
@@ -125,7 +168,10 @@ export const $chatReplyVariants = $saved.map((chat) => chat?.replyVariants ?? no
 export const $chats = createStore<ChatSummary[]>([])
   .on(chatOpened, (chats, { result }) => updateChatList(result.chats ?? chats, result.chat))
   .on(saveSucceeded, (chats, { result }) => updateChatList(chats, result))
-  .on(chatManagementSucceeded, (chats, { result: { summary } }) => summary ? updateChatList(chats, summary) : chats)
+  .on(chatManagementSucceeded, (chats, { result: { summary, copied } }) => {
+    const chat = summary ?? copied;
+    return chat ? updateChatList(chats, chat) : chats;
+  })
   .on(chatDeleted, (chats, id) => chats.filter((chat) => chat.id !== id))
   .on(chatMissing, (chats, { id }) => chats.filter((chat) => chat.id !== id))
   .on(openFailed, (chats, { params, error }) => errorCode(error) === 'chat_not_found'
@@ -137,14 +183,14 @@ export const $savedChatList = combine($chats, $chatId, $chatRealmId, (chats, cur
 export const $unlinkedChat = combine($chats, $chatRealmId, (chats, realmId) =>
   realmId ? chats.find((chat) => !chat.realmId) ?? null : null);
 
-function updateChatList(chats: ChatSummary[], { id, title, updatedAt, realmId }: ChatSummary) {
-  return [{ id, title, updatedAt, ...(realmId && { realmId }) }, ...chats.filter((chat) => chat.id !== id)]
+function updateChatList(chats: ChatSummary[], { id, title, createdAt, updatedAt, realmId }: ChatSummary) {
+  return [{ id, title, createdAt, updatedAt, ...(realmId && { realmId }) }, ...chats.filter((chat) => chat.id !== id)]
     .sort((a, b) => b.updatedAt - a.updatedAt || a.id.localeCompare(b.id));
 }
 
 const $loadError = createStore<{ code: ErrorCode; params: Navigation } | null>(null)
   .on(openFailed, (_, { params, error }) => ({ params, code: errorCode(error) }))
-  .reset(navigateFx, sessionEnded);
+  .reset(navigateFx, activeChatDeleted, sessionEnded);
 const $saveError = createStore<{ code: ErrorCode; params: Save } | null>(null)
   .on(saveFailed, (_, { params, error }) => ({ params, code: errorCode(error) }))
   .reset(chatMissing)
@@ -223,9 +269,9 @@ $messages.reset(activeChatDeleted, chatMissing);
 $activity.reset(activeChatDeleted, chatMissing);
 sample({
   clock: activeChatDeleted,
-  source: $activeSession,
-  filter: (session) => session !== null,
-  fn: (session): Navigation => ({ session: session!, action: 'initial' }),
+  source: { session: $activeSession, visible: $chatVisible },
+  filter: ({ session, visible }) => session !== null && visible,
+  fn: ({ session }): Navigation => ({ session: session!, action: 'initial' }),
   target: navigateFx,
 });
 
@@ -234,8 +280,11 @@ const initialManager = { dialog: undefined, draft: '', invalid: false };
 export const $chatManager = createStore<{ dialog?: ManagementDialog; draft: string; invalid: boolean }>(initialManager)
   .on(chatManagementDialogOpened, (_, dialog) => ({ dialog, draft: dialog.kind === 'rename' ? dialog.chat.title : '', invalid: false }))
   .on(chatRenameChanged, (state, draft) => state.dialog?.kind === 'rename' ? { ...state, draft, invalid: false } : state)
-  .on(chatManagementSucceeded, (state) => state.dialog
-    ? { ...initialManager, dialog: { kind: 'list' } } : state)
+  .on(chatManagementSucceeded, (state, { params: { change } }) => {
+    const { dialog } = state;
+    if (!dialog || dialog.kind === 'list' || dialog.kind !== change.action || dialog.chat.id !== change.id) return state;
+    return dialog.fromList ? { ...initialManager, dialog: { kind: 'list' } } : initialManager;
+  })
   .reset(chatManagementDialogClosed, sessionEnded);
 
 const rename = sample({
@@ -248,6 +297,13 @@ const rename = sample({
   },
 });
 $chatManager.on(rename, (state, { valid }) => ({ ...state, invalid: !valid }));
+sample({
+  clock: chatHidden,
+  source: $chatManager,
+  filter: ({ dialog }) => Boolean(dialog && (dialog.kind === 'list' || dialog.surface !== 'history')),
+  fn: () => undefined,
+  target: chatManagementDialogClosed,
+});
 sample({
   clock: rename,
   filter: ({ valid }) => valid,
@@ -264,12 +320,39 @@ sample({
 
 sample({
   clock: chatManagementRequested,
-  source: { navigation: $chatNavigation, chats: $chats },
-  filter: ({ navigation, chats }, change) => navigation.session !== null && !navigation.locked &&
-    chats.some(({ id }) => id === change.id),
-  fn: ({ navigation }, change) => ({ session: navigation.session!, current: navigation.current, change }),
+  source: $chatNavigation,
+  filter: ({ session, locked }) => session !== null && !locked,
+  fn: ({ session, current }, change) => ({ session: session!, current, change }),
   target: manageChatFx,
 });
+
+const $copyRetries = createStore<ReadonlyMap<string, ChatCopyRequest>>(new Map())
+  .on(managementFailed, (retries, { params: { change }, error }) => {
+    if (change.action !== 'copy') return retries;
+    const code = errorCode(error);
+    const next = new Map(retries);
+    if (code === 'chat_not_found' || code === 'chat_conflict' || code === 'chat_title_invalid') next.delete(change.id);
+    else next.set(change.id, change.request);
+    return next;
+  })
+  .on(chatManagementSucceeded, (retries, { params: { change } }) => {
+    if (change.action !== 'copy' || !retries.has(change.id)) return retries;
+    const next = new Map(retries);
+    next.delete(change.id);
+    return next;
+  })
+  .reset(sessionEnded);
+sample({
+  clock: chatCopyRequested,
+  source: { retries: $copyRetries, locale: $locale },
+  fn: ({ retries, locale }, { id, title }): ChatManagement => {
+    const { t } = i18n[locale];
+    const name = Array.from(t('chat.copyTitle', { name: title || t('chat.untitled') })).slice(0, chatTitleLimit).join('').trimEnd();
+    return { id, action: 'copy', request: retries.get(id) ?? { id: newLocalId(), title: name } };
+  },
+  target: chatManagementRequested,
+});
+sample({ clock: chatExportRequested, fn: (id): ChatManagement => ({ id, action: 'export' }), target: chatManagementRequested });
 sample({
   clock: [chatCreateRequested.map(() => undefined), realmChatCreateRequested],
   source: { navigation: $chatNavigation, chat: $saved },
@@ -283,11 +366,26 @@ sample({
   },
   target: navigateFx,
 });
+const chatEntryRequested = [
+  chatOpenRequested.map((id): ChatEntry => ({ id, tab: 'chat' })),
+  chatLogOpenRequested.map((id): ChatEntry => ({ id, tab: 'log' })),
+];
+const currentEntryRequested = sample({
+  clock: chatEntryRequested,
+  source: $chatId,
+  filter: (id, entry) => id === entry.id,
+  fn: (_, entry) => entry,
+});
+export const $chatEntry = createStore<ChatEntry | null>(null)
+  .on(currentEntryRequested, (_, entry) => entry)
+  .on(chatOpened, (entry, { params, result }): ChatEntry =>
+    entry?.id === result.chat.id && !params.tab ? entry : { id: result.chat.id, tab: params.tab ?? 'chat' })
+  .reset(activeChatDeleted, chatMissing, sessionEnded);
 sample({
-  clock: chatOpenRequested,
+  clock: chatEntryRequested,
   source: $chatNavigation,
-  filter: ({ session, locked, current }, id) => session !== null && !locked && id !== current,
-  fn: ({ session, current }, id): Navigation => ({ session: session!, action: 'open', id, keepDraft: !current, loadList: !current }),
+  filter: ({ session, locked, current }, { id }) => session !== null && !locked && id !== current,
+  fn: ({ session, current }, { id, tab }): Navigation => ({ session: session!, action: 'open', id, tab, keepDraft: !current, loadList: !current }),
   target: navigateFx,
 });
 

@@ -329,10 +329,11 @@ function withSavedChats(
       return Response.json({ enabled: [...enabled] });
     }
     if (input === '/api/chats') {
-      if (init?.method === 'GET') return Response.json(chats.map(({ id, title, updatedAt, realmId }) => ({ id, title, updatedAt, realmId })));
+      if (init?.method === 'GET') return Response.json(chats.map(({ id, title, createdAt, updatedAt, realmId }) => ({ id, title, createdAt, updatedAt, realmId })));
       assert.equal(init?.method, 'POST');
       const body = init.body ? JSON.parse(String(init.body)) as ChatCreateRequest : undefined;
-      const chat: SavedChat = { id: body?.id ?? String(chats.length + 1), title: '', updatedAt: Date.now(), revision: 0,
+      const createdAt = Date.now();
+      const chat: SavedChat = { id: body?.id ?? String(chats.length + 1), title: '', createdAt, updatedAt: createdAt, revision: 0,
         messages: [], gmMode: false, ...(body && { realmId: body.realmId }) };
       chats.unshift(chat);
       return Response.json(chat, { status: 201 });

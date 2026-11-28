@@ -46,8 +46,9 @@ export function chatReplyPrompt(messages: readonly ChatMessage[], replaceId?: nu
   if (prompt?.role === 'user' && prompt.id < Number.MAX_SAFE_INTEGER - 2) return prompt;
 }
 
-export type ChatSummary = { id: string; title: string; updatedAt: number; realmId?: string };
-export type ChatListItem = ChatSummary & { realmTitle?: string; realmHasAvatar?: true };
+export type ChatSummary = { id: string; title: string; createdAt: number; updatedAt: number; realmId?: string };
+export type ChatListItem = ChatSummary & { realmTitle?: string; realmHasAvatar?: true; lastMessage?: string };
+export type ChatCopyRequest = { id: string; title?: string };
 export type ChatCreateRequest = {
   realmId: string;
   /** Reuse this client-generated ID when retrying creation. */

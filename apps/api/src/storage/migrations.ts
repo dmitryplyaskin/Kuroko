@@ -1,9 +1,29 @@
 import { CodedError } from '@kuroko/contracts/errors';
+import type { ChatMessage } from '@kuroko/contracts/chat';
 import type { Database } from 'bun:sqlite';
 import { createHash } from 'node:crypto';
 import { realmFilterKey, realmTagKeys } from '../realms/realmFilterKeys';
+import { defaultChatTitle, lastMessagePreview } from '../chat/chatSummary';
 
-const latestVersion = 25;
+const latestVersion = 26;
+
+function migrateChatSummaries(db: Database) {
+  db.exec(`
+    ALTER TABLE chats ADD COLUMN created_at INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE chats ADD COLUMN last_message TEXT NOT NULL DEFAULT '';
+    ALTER TABLE chats ADD COLUMN copied_from TEXT;
+  `);
+  const rows = db.query<{ id: string; updatedAt: number; firstTime: number | null; realmTitle: string | null; lastMessage: string | null }, []>(`
+    SELECT chats.id, chats.updated_at AS updatedAt, json_extract(chats.messages_json, '$[0].time') AS firstTime,
+      realms.title AS realmTitle, json_extract(chats.messages_json, '$[#-1]') AS lastMessage
+    FROM chats LEFT JOIN realms ON realms.id = chats.realm_id AND realms.user_id = chats.user_id
+  `);
+  const update = db.query('UPDATE chats SET created_at = ?, title = ?, last_message = ? WHERE id = ?');
+  for (const { id, updatedAt, firstTime, realmTitle, lastMessage } of rows.iterate()) {
+    const createdAt = typeof firstTime === 'number' && firstTime > 0 && firstTime <= updatedAt ? firstTime : updatedAt;
+    update.run(createdAt, defaultChatTitle(realmTitle, createdAt), lastMessagePreview(lastMessage ? JSON.parse(lastMessage) as ChatMessage : undefined), id);
+  }
+}
 
 const initialSchema = `
   CREATE TABLE vault_settings (
@@ -361,6 +381,8 @@ export function migrateDatabase(db: Database, vaultKey: Buffer) {
       ALTER TABLE chats ADD COLUMN realm_id TEXT REFERENCES realms(id) ON DELETE SET NULL;
       CREATE INDEX chats_realm ON chats (realm_id) WHERE realm_id IS NOT NULL;
     `);
+
+    if (version < 26) migrateChatSummaries(db);
 
     if (version < latestVersion) db.exec(`PRAGMA user_version = ${latestVersion}`);
   }).immediate();

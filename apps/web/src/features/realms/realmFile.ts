@@ -1,4 +1,5 @@
 import { readRealm, realmRequestByteLimit, type Realm } from '@kuroko/contracts/realms';
+import { downloadFile } from '../../shared/browser/download';
 import { ApiError } from '../../shared/http/api';
 import { avatarFileByteLimit, toAvatar } from '../../shared/avatar/avatarFile';
 import { convertSillyTavernCard, isPng, readSillyTavernPng, type ImportLabels } from './sillyTavernCard';
@@ -60,15 +61,5 @@ export function downloadRealmFile(realm: Realm) {
   const blob = realmBlob(realm);
   const safeTitle = realm.title.trim().replace(/[\p{Cc}\p{Cf}<>:"/\\|?*]/gu, '-');
   const name = Array.from(safeTitle).slice(0, 96).join('').replace(/[. ]+$/, '');
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = `realm-${name || 'card'}.json`;
-  document.body.append(link);
-  try {
-    link.click();
-  } finally {
-    link.remove();
-    window.setTimeout(() => URL.revokeObjectURL(url), 10_000);
-  }
+  downloadFile(blob, `realm-${name || 'card'}.json`);
 }

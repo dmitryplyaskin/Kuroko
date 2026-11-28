@@ -8,7 +8,7 @@ import { openDatabase } from './database';
 import { createProviderKeyStore } from '../connection/providerKeyStore';
 import { createPersonaStore } from '../personas/personaStore';
 
-test.each([1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24])('upgrades a version %i SQLite database without losing user data', (version) => {
+test.each([1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25])('upgrades a version %i SQLite database without losing user data', (version) => {
   const directory = mkdtempSync(join(tmpdir(), 'kuroko-sqlite-test-'));
   const path = join(directory, 'test.sqlite');
   const vaultKey = randomBytes(32);
@@ -23,7 +23,8 @@ test.each([1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 2
   try {
     const old = openDatabase(path, vaultKey);
     try {
-      old.exec('DROP INDEX chats_realm; ALTER TABLE chats DROP COLUMN realm_id');
+      old.exec('ALTER TABLE chats DROP COLUMN created_at; ALTER TABLE chats DROP COLUMN last_message; ALTER TABLE chats DROP COLUMN copied_from');
+      if (version < 25) old.exec('DROP INDEX chats_realm; ALTER TABLE chats DROP COLUMN realm_id');
       if (version < 24) old.exec('DROP TABLE active_personas');
       if (version < 22) old.exec('DROP TABLE personas');
       else if (version === 22) old.exec('ALTER TABLE personas DROP COLUMN variable_count');
@@ -76,6 +77,8 @@ test.each([1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 2
       else old.run("INSERT INTO enabled_tools (user_id, tool_id) VALUES (1, 'roll_dice'), (1, ?)", [legacyTool]);
       if (version < 5) old.exec('DROP TABLE chats');
       else old.run("INSERT INTO chats (id, user_id, title, updated_at, revision, messages_json) VALUES ('old-chat', 1, 'Prior conversation', 1, 1, '[]')");
+      if (version === 25) old.run(`UPDATE chats SET realm_id = 'old-realm', custom_title = 'Хроника', updated_at = 5,
+        messages_json = ? WHERE id = 'old-chat'`, [JSON.stringify([{ id: 1, role: 'user', text: 'Глава\nпервая', time: 2 }])]);
       if (version < 4) old.exec('DROP TABLE connection_presets; DROP TABLE provider_keys');
       if (version === 1) {
         old.exec('DROP TABLE chat_settings; PRAGMA user_version = 1');
@@ -89,7 +92,7 @@ test.each([1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 2
 
     const migrated = openDatabase(path, vaultKey);
     try {
-      expect(migrated.query('PRAGMA user_version').get()).toEqual({ user_version: 25 });
+      expect(migrated.query('PRAGMA user_version').get()).toEqual({ user_version: 26 });
       const personas = createPersonaStore(migrated);
       expect(personas.selection(1)).toEqual({ id: null });
       const library = personas.list(1, { ...defaultPersonaQuery, variables: 'with', favorites: true });
@@ -114,7 +117,9 @@ test.each([1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 2
       expect(migrated.query('SELECT username FROM users').all()).toEqual([{ username: 'Лина' }]);
       expect(migrated.query('SELECT settings_json FROM chat_settings').all()).toEqual(version === 1 ? [] : [{ settings_json: '{"fontSize":20}' }]);
       expect(migrated.query('SELECT * FROM connection_presets').all()).toEqual([]);
-      expect(migrated.query('SELECT id, gm_mode, realm_id FROM chats').all()).toEqual(version >= 5 ? [{ id: 'old-chat', gm_mode: 0, realm_id: null }] : []);
+      expect(migrated.query('SELECT id, gm_mode, realm_id, created_at, title, custom_title, last_message FROM chats').all()).toEqual(
+        version === 25 ? [{ id: 'old-chat', gm_mode: 0, realm_id: 'old-realm', created_at: 2, title: 'Остров — 1970-01-01', custom_title: 'Хроника', last_message: 'Глава первая' }]
+          : version >= 5 ? [{ id: 'old-chat', gm_mode: 0, realm_id: null, created_at: 1, title: '1970-01-01', custom_title: null, last_message: '' }] : []);
       expect(migrated.query('SELECT * FROM chat_private_turns').all()).toEqual([]);
       expect(migrated.query('SELECT * FROM chat_activity').all()).toEqual([]);
       expect(migrated.query('SELECT * FROM enabled_tools ORDER BY tool_id').all()).toEqual(version < 6 ? [] : [

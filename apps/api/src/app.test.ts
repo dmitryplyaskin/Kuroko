@@ -3,7 +3,7 @@ import { randomBytes } from 'node:crypto';
 import { once } from 'node:events';
 import type { Server, ServerResponse } from 'node:http';
 import type { AgentDraft, SavedAgent } from '@kuroko/contracts/agents';
-import type { ChatActivityTurn, ChatMessage, ChatSnapshot, ChatToolCall, SavedChat } from '@kuroko/contracts/chat';
+import type { ChatActivityTurn, ChatListItem, ChatMessage, ChatSnapshot, ChatToolCall, SavedChat } from '@kuroko/contracts/chat';
 import { defaultChatSettings } from '@kuroko/contracts/chatSettings';
 import { defaultConnectionSettings, type ConnectionState, type ProviderKey } from '@kuroko/contracts/connectionSettings';
 import { instructionTextLimit, type InstructionSettings } from '@kuroko/contracts/instructions';
@@ -208,7 +208,8 @@ test('persists an account’s selected persona and renders it only where prompts
   const saved = await savedResponse.json() as SavedChat;
   const renderedText = 'Лина в Ривене. {{user}}';
   expect(saved.messages).toEqual([{ ...messages[0]!, renderedText }]);
-  expect(saved.title).toBe(renderedText);
+  expect(saved.title).toBe(chat.title);
+  expect(await (await request('/chats', { cookie })).json()).toMatchObject([{ id: chat.id, lastMessage: renderedText }]);
   expect(await (await request(promptPath, { cookie })).json()).toMatchObject({ messages: [{ role: 'user', content: renderedText }] });
 
   expect(await (await select(next.id)).json()).toEqual({ id: next.id, name: next.name, revision: 0, hasAvatar: false });
@@ -665,12 +666,14 @@ test('stores chats by account and rejects stale writes without losing the saved 
   unknownCall.messages[2]!.reasoningBlocks![1]!.afterToolCallId = 'other-call';
   expect((await save(cookie, unknownCall)).status).toBe(400);
   const stored = await (await save(cookie)).json() as SavedChat;
-  expect(stored).toMatchObject({ revision: 1, title: 'Первая строка вторая строка', messages: snapshot.messages });
+  expect(stored).toMatchObject({ revision: 1, title: new Date(first.createdAt).toISOString().slice(0, 10), createdAt: first.createdAt, messages: snapshot.messages });
   expect(await (await save(cookie)).json()).toEqual(stored);
   expect((await save(cookie, { ...snapshot, messages: [] })).status).toBe(409);
   expect(await (await request(path, { cookie })).json()).toEqual(stored);
   expect(await (await request(`/chats/${second.id}`, { cookie })).json()).toEqual(second);
-  expect(await (await request('/chats', { cookie })).json()).toContainEqual({ id: first.id, title: stored.title, updatedAt: stored.updatedAt });
+  expect(await (await request('/chats', { cookie })).json()).toContainEqual({
+    id: first.id, title: stored.title, createdAt: first.createdAt, updatedAt: stored.updatedAt, lastMessage: '🎲',
+  });
   expect((await request('/auth/account', { method: 'DELETE', cookie, body: { username: 'chat-owner', currentPassword: password } })).status).toBe(204);
   expect(db.query('SELECT id FROM chats').all()).toEqual([]);
 });
@@ -684,6 +687,7 @@ test('renames an owned chat independently of history and deletes its activity wi
   const path = `/chats/${id}`;
   const rename = (cookie: string, title: string) => request(`${path}/title`, { method: 'PUT', cookie, body: { title } });
   const remove = (cookie: string) => request(path, { method: 'DELETE', cookie });
+  const copy = (cookie: string, id: string) => request(`${path}/copy`, { method: 'POST', cookie, body: { id } });
   const snapshot: ChatSnapshot = {
     revision: 0, messages: [{ id: 1, role: 'user', text: 'Первое сообщение', time: 1 }],
     activity: { promptId: 1, entries: [{ id: '1', kind: 'model', time: 2, status: 'failed', details: { error: 'timeout' } }] },
@@ -692,6 +696,8 @@ test('renames an owned chat independently of history and deletes its activity wi
 
   expect((await rename(other, 'Чужой чат')).status).toBe(404);
   expect((await remove(other)).status).toBe(404);
+  expect((await copy(other, '0'.repeat(32))).status).toBe(404);
+  expect((await copy(cookie, 'existing-id')).status).toBe(400);
   for (const title of [' '.repeat(10), 'Первый\tвторой', '\uD800', '🌙'.repeat(65)]) {
     const invalid = await rename(cookie, title);
     expect(invalid.status).toBe(400);
@@ -705,8 +711,20 @@ test('renames an owned chat independently of history and deletes its activity wi
   expect(await (await request(path, { cookie })).json()).toEqual({ ...committed, activity: [snapshot.activity] });
   expect(await (await request('/chats', { cookie })).json()).toMatchObject([{ id, title: 'Хроника' }]);
 
+  const copyId = '0'.repeat(32);
+  const copyResponse = await copy(cookie, copyId);
+  expect(copyResponse.status).toBe(201);
+  const copiedSummary = await copyResponse.json() as ChatListItem;
+  expect(copiedSummary).toMatchObject({ id: copyId, title: 'Хроника', lastMessage: 'Первое сообщение' });
+  expect(await (await copy(cookie, copyId)).json()).toEqual(copiedSummary);
+  expect((await request(`/chats/${copyId}/copy`, { method: 'POST', cookie, body: { id: copyId } })).status).toBe(409);
+
   expect((await remove(cookie)).status).toBe(204);
   expect((await request(path, { cookie })).status).toBe(404);
+  expect(await (await request(`/chats/${copyId}`, { cookie })).json()).toMatchObject({
+    revision: 0, messages: snapshot.messages, activity: [snapshot.activity], createdAt: copiedSummary.createdAt,
+  });
+  expect((await request(`/chats/${copyId}`, { method: 'DELETE', cookie })).status).toBe(204);
   expect(db.query('SELECT * FROM chat_activity').all()).toEqual([]);
 });
 
@@ -1687,12 +1705,14 @@ test('opens chats from owned realms and keeps the selected start with the conver
   expect(created.status).toBe(201);
   const chat = await created.json() as SavedChat;
   const path = `/chats/${chat.id}`;
-  expect(chat).toMatchObject({ id: body.id, realmId: savedRealm.id, title: realm.title, replyVariants: { 1: { index: 0, total: 2 } },
+  const title = `${realm.title} — ${new Date(chat.createdAt).toISOString().slice(0, 10)}`;
+  expect(chat).toMatchObject({ id: body.id, realmId: savedRealm.id, title, replyVariants: { 1: { index: 0, total: 2 } },
     realm: { id: savedRealm.id, title: realm.title, hasAvatar: true },
     messages: [{ id: 1, role: 'assistant', text: 'Добро пожаловать в Остров.', realmStart: { id: 'port', title: 'Порт' } }],
   });
   expect(await (await request('/chats', { cookie })).json()).toEqual([
-    { id: chat.id, title: realm.title, updatedAt: chat.updatedAt, realmId: savedRealm.id, realmTitle: realm.title, realmHasAvatar: true },
+    { id: chat.id, title, createdAt: chat.createdAt, updatedAt: chat.updatedAt, realmId: savedRealm.id, realmTitle: realm.title,
+      realmHasAvatar: true, lastMessage: 'Добро пожаловать в Остров.' },
   ]);
   expect(await (await createChat(body)).json()).toEqual(chat);
   expect(await (await request(`/settings/instructions/active?chat=${chat.id}`, { cookie })).json()).toMatchObject({
@@ -1712,7 +1732,7 @@ test('opens chats from owned realms and keeps the selected start with the conver
   ] } });
   expect(saved.status).toBe(200);
   const continued = await saved.json() as SavedChat;
-  expect(continued).toMatchObject({ realmId: savedRealm.id, messages: [second.messages[0]!, { id: 2, role: 'user' }] });
+  expect(continued).toMatchObject({ title, realmId: savedRealm.id, messages: [second.messages[0]!, { id: 2, role: 'user' }] });
   expect(await (await request(path, { cookie })).json()).toEqual(continued);
   const prepared = await (await request(`/settings/instructions/active?chat=${chat.id}`, { cookie })).json() as {
     text: string; messages: LlmRequest['messages'];
@@ -1746,11 +1766,12 @@ test('opens chats from owned realms and keeps the selected start with the conver
   const reopened = await (await request(path, { cookie })).json() as SavedChat;
   expect(reopened.realm).toEqual({ id: savedRealm.id, title: 'Каменный остров' });
   expect(await (await request('/chats', { cookie })).json()).toEqual([
-    { id: chat.id, title: reopened.title, updatedAt: reopened.updatedAt, realmId: savedRealm.id, realmTitle: 'Каменный остров' },
+    { id: chat.id, title, createdAt: chat.createdAt, updatedAt: reopened.updatedAt, realmId: savedRealm.id, realmTitle: 'Каменный остров',
+      lastMessage: 'Я ищу укрытие.' },
   ]);
   const renamed = await request(`${path}/title`, { method: 'PUT', cookie, body: { title: 'Укрытие' } });
   expect(renamed.status).toBe(200);
-  expect(await renamed.json()).toEqual({ id: chat.id, title: 'Укрытие', updatedAt: reopened.updatedAt, realmId: savedRealm.id });
+  expect(await renamed.json()).toEqual({ id: chat.id, title: 'Укрытие', createdAt: chat.createdAt, updatedAt: reopened.updatedAt, realmId: savedRealm.id });
   expect(await (await request(`/settings/instructions/active?chat=${chat.id}`, { cookie })).json()).toMatchObject({
     text: 'Каменный остров\n\nГород на берегу',
   });
@@ -1759,14 +1780,14 @@ test('opens chats from owned realms and keeps the selected start with the conver
   expect(detached.realmId).toBeUndefined();
   expect(detached.realm).toBeUndefined();
   expect(await (await request('/chats', { cookie })).json()).toEqual([
-    { id: detached.id, title: detached.title, updatedAt: detached.updatedAt },
+    { id: detached.id, title: detached.title, createdAt: chat.createdAt, updatedAt: detached.updatedAt, lastMessage: 'Я ищу укрытие.' },
   ]);
   expect(detached.messages).toEqual(continued.messages);
   expect(detached.replyVariants).toEqual(continued.replyVariants);
 
   const emptyRealm = await createRealm({ ...realm, id: 'empty-island', starts: undefined });
   const empty = await (await createChat({ realmId: emptyRealm.id })).json() as SavedChat;
-  expect(empty).toMatchObject({ realmId: emptyRealm.id, title: realm.title, messages: [] });
+  expect(empty).toMatchObject({ realmId: emptyRealm.id, title: `${realm.title} — ${new Date(empty.createdAt).toISOString().slice(0, 10)}`, messages: [] });
   expect(empty.replyVariants).toBeUndefined();
 });
 
@@ -2020,6 +2041,25 @@ test('regenerates only the latest GM reply and restores its instructions and pri
     expect(restoredChat).toMatchObject({ messages: saved.messages, replyVariants: { 4: { index: 0, total: 2 } } });
     expect(instructionLog(restoredChat)).toEqual(instructionLog(saved));
     expect(readNotes()).toEqual(['Ключ лежит в кармане.', 'По коридору идёт сторож.']);
+
+    const copyId = '9'.repeat(32);
+    const copyResponse = await request(`${path}/copy`, { method: 'POST', cookie, body: { id: copyId } });
+    expect(copyResponse.status).toBe(201);
+    expect(await copyResponse.json()).toMatchObject({ lastMessage: 'Слышны шаги.' });
+    const copyPath = `/chats/${copyId}`;
+    const copy = await (await request(copyPath, { cookie })).json() as SavedChat;
+    expect(copy).toMatchObject({ gmMode: true, revision: 0, messages: restoredChat.messages,
+      activity: restoredChat.activity, replyVariants: restoredChat.replyVariants });
+    expect(JSON.stringify(copy)).not.toContain('По коридору идёт сторож.');
+
+    const copyVariant = await request(`${copyPath}/reply-variant`, { method: 'PUT', cookie, body: { revision: 0, replyId: 4, index: 1 } });
+    expect(copyVariant.status).toBe(200);
+    const variant = await copyVariant.json() as SavedChat;
+    expect(instructionLog(variant)).toEqual(instructionLog(regenerated));
+    const copiedPrivate = db.query<{ turn_json: string }, [string, number]>('SELECT turn_json FROM chat_private_turns WHERE chat_id = ? AND reply_id = ?');
+    expect(JSON.parse(copiedPrivate.get(copyId, 4)!.turn_json).notes).toBe('Окно открыто.');
+    expect(JSON.parse(copiedPrivate.get(restoredChat.id, 4)!.turn_json).notes).toBe('По коридору идёт сторож.');
+    expect(await (await request(path, { cookie })).json()).toEqual(restoredChat);
   } finally {
     mock.mockRestore();
   }

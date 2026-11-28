@@ -28,6 +28,8 @@
   overflow-wrap: anywhere;
 }
 
+.featurePreview { max-inline-size: 100%; overflow-wrap: anywhere; }
+
 .featureActions {
   display: flex;
   flex-wrap: wrap;
@@ -125,18 +127,7 @@
   content: '';
 }
 
-.rowOpen:disabled,
-.realmLink:disabled { opacity: .65; }
-
-.chatMetadata .realmLink {
-  position: relative;
-  z-index: 1;
-  min-inline-size: 0;
-  min-block-size: 24px;
-  font-weight: 400;
-}
-
-.chatMetadata .realmLink:not(:disabled) { cursor: pointer; }
+.rowOpen:disabled { opacity: .65; }
 
 .icon,
 .personaAvatar {

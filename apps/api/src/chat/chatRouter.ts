@@ -33,6 +33,22 @@ export function createChatRouter(store: ReturnType<typeof createChatStore>, gmRe
     if (chat) response.json(chat);
     else response.status(404).json(errorBody('chat_not_found'));
   });
+  router.post('/:id/copy', (request, response) => {
+    const { id, title: name } = record(request.body) ?? {};
+    if (typeof id !== 'string' || !/^[a-f0-9]{32}$/.test(id)) {
+      response.status(400).json(errorBody('invalid_request'));
+      return;
+    }
+    const title = readChatTitle(name);
+    if (name !== undefined && !title) {
+      response.status(400).json(errorBody('chat_title_invalid', 'title'));
+      return;
+    }
+    const chat = store.copy(response.locals.user.id, request.params.id, { id, title });
+    if (chat === 'missing') response.status(404).json(errorBody('chat_not_found'));
+    else if (chat === 'conflict') response.status(409).json(errorBody('chat_conflict'));
+    else response.status(201).json(chat);
+  });
   router.put('/:id/title', (request, response) => {
     const title = readChatTitle(record(request.body)?.title);
     if (!title) {

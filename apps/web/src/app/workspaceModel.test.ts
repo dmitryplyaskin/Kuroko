@@ -49,7 +49,7 @@ test('a module outside the core bundle adds a lazy screen and a selectable setti
   const scope = fork();
 
   assert.deepEqual(registry.screens.map(({ route }) => route),
-    ['#home', '#realms', '#personas', '#chat', '#notes', '#instructions', '#tools', '#agents', '#settings']);
+    ['#home', '#chat', '#history', '#realms', '#personas', '#notes', '#instructions', '#tools', '#agents', '#settings']);
   assert.deepEqual(registry.settingsTabs.map(({ key }) => key), ['appearance', 'chat', 'notes', 'connection']);
 
   await allSettled(workspace.workspaceHashChanged, { scope, params: '#notes' });
