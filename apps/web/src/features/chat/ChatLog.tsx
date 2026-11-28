@@ -1,12 +1,15 @@
-import { Button, Tabs, TextInput } from '@mantine/core';
-import { ArrowDownRight, Bot, CircleAlert, Cpu, Layers, MessageSquare, NotebookText, Search, UserRound, Wrench, X } from 'lucide-react';
-import { memo, useId, useLayoutEffect, useMemo, useRef, useState, type Ref } from 'react';
+import { Button, Modal, Tabs, TextInput } from '@mantine/core';
+import { useUnit } from 'effector-react';
+import { ArrowDownRight, Bot, CircleAlert, Code, Cpu, Layers, MessageSquare, NotebookText, Search, UserRound, Wrench, X } from 'lucide-react';
+import { memo, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type Ref } from 'react';
 import type { ChatMessage } from '@kuroko/contracts/chat';
 import type { JsonValue } from '@kuroko/contracts/llm';
 import { useI18n } from '../../shared/i18n/i18n';
 import { activityObject, ActivityStatus, type ActivityEntry } from './ChatActivity';
+import { chatPromptMessages } from './chatApi';
 import { chatLogTurns, logRowPreview, withLiveLogReply, type LogRow, type LogTurn } from './chatLogActivity';
 import { ChatText } from './ChatText';
+import { $promptPreview, promptPreviewHidden, promptPreviewRequested } from './promptPreview';
 import logClasses from './ChatLog.module.css';
 import chatClasses from './Chat.module.css';
 
@@ -43,8 +46,13 @@ function RawDetail({ value, limit }: { value: JsonValue; limit?: number }) {
   return <pre className={logClasses['chat-log-raw']}>{limit && text.length > limit ? `${text.slice(0, limit)}…` : text}</pre>;
 }
 
+function LogSectionTitle({ turn }: { turn?: number }) {
+  const { t, number } = useI18n();
+  return turn === undefined ? t('chat.logSceneStart') : t('chat.logTurn', { number: number.format(turn) });
+}
+
 function LogInspector({ row, turn, source, heading, id, onClose, onSource, onOpenAgent }: {
-  row: LogRow; turn: number; source?: LogRow; heading: Ref<HTMLHeadingElement>; id: string;
+  row: LogRow; turn?: number; source?: LogRow; heading: Ref<HTMLHeadingElement>; id: string;
   onClose: () => void; onSource: () => void; onOpenAgent: (key: string) => void;
 }) {
   const { t, date, number } = useI18n();
@@ -59,7 +67,7 @@ function LogInspector({ row, turn, source, heading, id, onClose, onSource, onOpe
   const metadata = [
     [t('common.model'), model],
     [t('chat.logProvider'), typeof completion?.provider === 'string' ? completion.provider : undefined],
-    [t('chat.logStarted'), date.format(row.time)],
+    [t('chat.logStarted'), row.kind === 'instruction' && !event ? undefined : date.format(row.time)],
     [t('chat.logDuration'), event?.duration === undefined ? undefined
       : t('chat.logSeconds', { time: number.format(event.duration / 1000) })],
     [t('chat.logInputTokens'), typeof usage?.inputTokens === 'number' ? number.format(usage.inputTokens) : undefined],
@@ -110,7 +118,7 @@ function LogInspector({ row, turn, source, heading, id, onClose, onSource, onOpe
       }}>
       <header className={logClasses['chat-log-inspector-header']}>
         <div>
-          <span className={logClasses['chat-log-turn-number']}>{t('chat.logTurn', { number: number.format(turn) })}</span>
+          <span className={logClasses['chat-log-turn-number']}><LogSectionTitle turn={turn} /></span>
           <h2 id={titleId} ref={heading} tabIndex={-1}>
             {event?.name ? <bdi>{event.name}</bdi> : t(rowLabels[row.kind])}
           </h2>
@@ -179,14 +187,14 @@ function rowGroups(rows: LogRow[], collapse: boolean) {
 }
 
 function TurnOverview({ turns, current, jump }: { turns: LogTurn[]; current?: number; jump: (id: number) => void }) {
-  const { t, number } = useI18n();
+  const { t } = useI18n();
   return (
     <nav className={logClasses['chat-log-overview']} aria-label={t('chat.logTurns')}>
       <ol>
         {turns.map((turn) => (
           <li key={turn.id}>
             <button type="button" aria-current={turn.id === current || undefined} onClick={() => jump(turn.id)}>
-              <span>{t('chat.logTurn', { number: number.format(turn.number) })}</span>
+              <span><LogSectionTitle turn={turn.number} /></span>
               <span className={logClasses['chat-log-track']} aria-hidden="true">
                 {turn.rows.map((row) => <span key={row.key} data-kind={row.kind} />)}
               </span>
@@ -198,17 +206,59 @@ function TurnOverview({ turns, current, jump }: { turns: LogTurn[]; current?: nu
   );
 }
 
-export const ChatLog = memo(function ChatLog({ entries, messages, liveReply, gmMode, visible, onOpenAgent }: {
-  entries: ActivityEntry[]; messages: ChatMessage[]; liveReply?: ChatMessage; gmMode: boolean; visible: boolean; onOpenAgent: (key: string) => void;
+function PromptPreviewControl({ messages, state, reload, gmMode }: {
+  messages: ChatMessage[]; state: ReturnType<typeof $promptPreview.getState>; reload: () => void; gmMode: boolean;
 }) {
   const { t } = useI18n();
-  const baseTurns = useMemo(() => visible ? chatLogTurns(entries, messages) : [], [entries, messages, visible]);
+  const [opened, setOpened] = useState(false);
+  const description = useId();
+  return <>
+    <Button type="button" variant="default" size="sm" leftSection={<Code size={15} aria-hidden="true" />} onClick={() => {
+      reload();
+      setOpened(true);
+    }}>{t('chat.logRawPrompt')}</Button>
+    <Modal opened={opened} onClose={() => setOpened(false)} title={t('chat.logRawPrompt')} size="xl" centered
+      aria-describedby={description} closeButtonProps={{ 'aria-label': t('common.close') }}>
+      <p id={description} className={logClasses['chat-log-prompt-description']}>
+        {t(gmMode ? 'chat.logRawGmDescription' : 'chat.logRawDescription')}
+      </p>
+      {(!state || state.status === 'loading') && <output>{t('chat.loading')}</output>}
+      {state?.status === 'error' && <div>
+        <p role="alert">{t(`error.${state.code}`)}</p>
+        <Button type="button" variant="default" onClick={reload}>{t('common.retryLoad')}</Button>
+      </div>}
+      {state?.status === 'ready' && (
+        // oxlint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- Let keyboard users scroll the raw messages.
+        <pre dir="ltr" tabIndex={0} className={[logClasses['chat-log-raw'], logClasses['chat-log-prompt']].join(' ')}>
+          {JSON.stringify(chatPromptMessages(state.data, messages), null, 2)}
+        </pre>
+      )}
+    </Modal>
+  </>;
+}
+
+export const ChatLog = memo(function ChatLog({ chatId, entries, messages, liveReply, gmMode, visible, onOpenAgent }: {
+  chatId: string; entries: ActivityEntry[]; messages: ChatMessage[]; liveReply?: ChatMessage;
+  gmMode: boolean; visible: boolean; onOpenAgent: (key: string) => void;
+}) {
+  const { t } = useI18n();
+  const [preview, load, hide] = useUnit([$promptPreview, promptPreviewRequested, promptPreviewHidden]);
+  const state = preview?.request.id === chatId ? preview : null;
+  const instruction = state?.data?.text;
+  const hasPlayerMessage = messages.some(({ role }) => role === 'user');
+  useEffect(() => {
+    if (!visible || !chatId) return;
+    if (!hasPlayerMessage) load(chatId);
+    return () => hide();
+  }, [visible, chatId, hasPlayerMessage, load, hide]);
+  const baseTurns = useMemo(() => visible ? chatLogTurns(entries, messages, instruction) : [], [entries, messages, instruction, visible]);
   const turns = liveReply ? withLiveLogReply(baseTurns, liveReply) : baseTurns;
-  return <ChatLogView visible={visible} turns={turns} emptyMessage={t(gmMode ? 'chat.gmModeDescription' : 'chat.logEmpty')} onOpenAgent={onOpenAgent} />;
+  return <ChatLogView visible={visible} turns={turns} emptyMessage={t(gmMode ? 'chat.gmModeDescription' : 'chat.logEmpty')} onOpenAgent={onOpenAgent}
+    controls={chatId ? <PromptPreviewControl messages={messages} state={state} reload={() => load(chatId)} gmMode={gmMode} /> : undefined} />;
 });
 
-export function ChatLogView({ turns, emptyMessage, visible, onOpenAgent }: {
-  turns: LogTurn[]; emptyMessage: string; visible: boolean; onOpenAgent: (key: string) => void;
+export function ChatLogView({ turns, emptyMessage, visible, onOpenAgent, controls }: {
+  turns: LogTurn[]; emptyMessage: string; visible: boolean; onOpenAgent: (key: string) => void; controls?: ReactNode;
 }) {
   const { t, locale, number } = useI18n();
   const [query, setQuery] = useState('');
@@ -220,6 +270,7 @@ export function ChatLogView({ turns, emptyMessage, visible, onOpenAgent }: {
   const id = useId();
   const inspectorId = `${id}-details`;
   const byKey = new Map(turns.flatMap((turn) => turn.rows.map((row) => [row.key, { row, turn }] as const)));
+  const numberedTurns = turns.filter(({ number }) => number !== undefined);
   const selected = selection ? byKey.get(selection) : undefined;
   const selectedKey = selected?.row.key;
   const needle = query.trim().toLocaleLowerCase(locale);
@@ -256,7 +307,7 @@ export function ChatLogView({ turns, emptyMessage, visible, onOpenAgent }: {
   }
 
   if (!visible) return null;
-  if (!turns.length) return <p className={[chatClasses['chat-section-empty'], logClasses['chat-log-empty']].join(' ')}>{emptyMessage}</p>;
+  if (!turns.length && !controls) return <p className={[chatClasses['chat-section-empty'], logClasses['chat-log-empty']].join(' ')}>{emptyMessage}</p>;
 
   const related = selected?.row.sourceKey ? byKey.get(selected.row.sourceKey) : undefined;
   return (
@@ -270,16 +321,17 @@ export function ChatLogView({ turns, emptyMessage, visible, onOpenAgent }: {
           leftSection={<Layers size={15} aria-hidden="true" />} onClick={() => setCollapse((value) => !value)}>
           {t('chat.logCollapseCalls')}
         </Button>
+        {controls}
         <output className={chatClasses['chat-sr-only']}>{needle && t('chat.logMatches', { count: number.format(matches) })}</output>
       </div>
-      {!needle && turns.length > 1 && <TurnOverview turns={turns} current={selected?.turn.id} jump={jump} />}
+      {!needle && numberedTurns.length > 1 && <TurnOverview turns={numberedTurns} current={selected?.turn.id} jump={jump} />}
       <div className={logClasses['chat-log-body']}>
         {/* oxlint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- The list scrolls independently via keyboard. */}
         <section className={logClasses['chat-log-list']} aria-label={t('chat.logTrajectory')} tabIndex={0}>
-          {!visibleTurns.length && <p className={chatClasses['chat-section-empty']}>{t('chat.logNoMatches')}</p>}
+          {!visibleTurns.length && <p className={chatClasses['chat-section-empty']}>{turns.length ? t('chat.logNoMatches') : emptyMessage}</p>}
           {visibleTurns.map((turn) => (
             <section className={logClasses['chat-log-turn']} key={turn.id}>
-              <h2 id={`${id}-turn-${turn.id}`} tabIndex={-1}>{t('chat.logTurn', { number: number.format(turn.number) })}</h2>
+              <h2 id={`${id}-turn-${turn.id}`} tabIndex={-1}><LogSectionTitle turn={turn.number} /></h2>
               <ol className={logClasses['chat-log-rows']}>
                 {rowGroups(turn.rows, collapse && !needle).map(({ rows, folded }) => {
                   const renderRow = (row: LogRow) => <LogEventRow row={row} key={row.key} inspectorId={inspectorId}

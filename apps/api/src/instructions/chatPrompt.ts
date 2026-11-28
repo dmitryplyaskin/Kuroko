@@ -9,7 +9,8 @@ export function createChatPrompt(store: ReturnType<typeof createInstructionStore
     const first = chat.messages[0];
     const opening = first?.realmStart ? first : undefined;
     const startId = chat.realmId ? opening?.realmStart?.id : undefined;
-    const render = renderer(userId, { chat: { title: chat.title, gm_mode: chat.gmMode } }, chat.realmId ?? draft?.worldId, startId);
+    const render = renderer(userId, { chat: { title: chat.title, gm_mode: chat.gmMode } }, chat.realmId ?? draft?.worldId, startId,
+      draft ? undefined : opening?.text.trim());
     const rendered = new Map<string, string>();
     const renderText = (text: string) => {
       const cached = rendered.get(text);
@@ -21,9 +22,6 @@ export function createChatPrompt(store: ReturnType<typeof createInstructionStore
     const latest = history.at(-1);
     if (latest?.role === 'user' && !renderText(latest.text).trim()) throw new PromptTemplateError();
     const instruction = renderText(draft?.text ?? (chat.realmId ? '{{ world().context }}' : '')).trim();
-    // Model histories begin with a user turn, so carry the opening in the system context.
-    const openingText = opening?.text.trim();
-    const text = [instruction, openingText && `Opening message:\n${openingText}`].filter(Boolean).join('\n\n');
-    return { text: text || null, messages: toLlmMessages(history, notes, renderText) };
+    return { text: instruction || null, messages: toLlmMessages(history, notes, renderText) };
   };
 }

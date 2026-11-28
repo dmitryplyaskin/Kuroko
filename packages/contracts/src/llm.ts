@@ -37,6 +37,7 @@ export type LlmMessage =
 export type LlmParameters = Partial<Omit<ConnectionSettings, 'model' | 'baseUrl' | 'openrouterProvider'>>;
 export type LlmRequest = {
   presetId?: string;
+  /** Conversation history may open with assistant text before the first player message. */
   messages: LlmMessage[];
   parameters?: LlmParameters;
   tools?: LlmTool[];

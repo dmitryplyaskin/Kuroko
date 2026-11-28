@@ -66,9 +66,11 @@ export type Agent = { key: string; parentKey?: string; identity: AgentIdentity; 
 
 export function chatActivityView(turns: ChatActivityTurn[], messages: ChatMessage[]) {
   const byPrompt = new Map<number, SourceEntry[]>(turns.map((turn) => [turn.promptId, turn.entries]));
-  for (const message of messages) {
-    if (message.role !== 'assistant' || byPrompt.has(message.id - 1) || !message.toolCalls?.length) continue;
-    byPrompt.set(message.id - 1, legacyEntries(message));
+  for (const [index, message] of messages.entries()) {
+    if (message.role !== 'assistant' || !message.toolCalls?.length) continue;
+    const preceding = messages[index - 1];
+    const promptId = preceding?.role === 'user' ? preceding.id : message.id - 1;
+    if (!byPrompt.has(promptId)) byPrompt.set(promptId, legacyEntries(message));
   }
   const entries: ActivityEntry[] = [];
   const agents = new Map<string, Agent>();

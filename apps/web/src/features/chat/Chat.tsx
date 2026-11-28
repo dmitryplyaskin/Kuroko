@@ -191,7 +191,7 @@ export default function Chat() {
       </Tabs.Panel>
       <Tabs.Panel className={logClasses['chat-log-pane']} value="log">
         <div className={chatClasses['chat-primary-log']} hidden={Boolean(agent)}>
-          <ChatLog key={chatId} visible={logVisible && !agent} entries={entries} messages={messages} gmMode={gmMode} onOpenAgent={selectAgent}
+          <ChatLog key={chatId} chatId={chatId} visible={logVisible && !agent} entries={entries} messages={messages} gmMode={gmMode} onOpenAgent={selectAgent}
             liveReply={logVisible && !agent && replyId !== null ? rows.at(-1) : undefined} />
         </div>
         {agent && <ChatLogView key={agent.key} visible={logVisible} turns={logVisible ? agentTurns : []} emptyMessage={t('chat.logEmpty')} onOpenAgent={selectAgent} />}

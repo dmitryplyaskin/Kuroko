@@ -151,6 +151,8 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+.chat-log-prompt-description { margin-block-end: 12px; color: var(--kr-muted); }
+.chat-log-prompt { max-block-size: min(64dvh, 42rem); overflow: auto; }
 .chat-log-metadata { display: grid; gap: 6px; padding-block-start: 8px; border-block-start: 1px solid var(--kr-border); font-size: .8125rem; }
 .chat-log-metadata > div { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: baseline; gap: 8px; }
 .chat-log-metadata dt { color: var(--kr-muted); }

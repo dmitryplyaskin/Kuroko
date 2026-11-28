@@ -63,7 +63,7 @@ export function createPromptRenderer(
   findPersona: (userId: number, id: string) => PersonaForPrompt | undefined,
   findActivePersona: (userId: number) => PersonaForPrompt | undefined,
 ) {
-  return (userId: number, context: Context, worldId?: string | null, currentStartId?: string) => {
+  return (userId: number, context: Context, worldId?: string | null, currentStartId?: string, openingText?: string) => {
     const worlds = new Map<string, WorldFields>();
     const realms = new Map<string, SavedRealm>();
     const pending = new Set<() => unknown>();
@@ -189,8 +189,11 @@ export function createPromptRenderer(
         starts: memo(() => orderedRealmRecords(realm.starts ?? []).map(({ record }) => startFields(record))),
         context: memo(() => {
           const player = readPlayer();
+          const startScenario = scenario();
+          const scenarioAlreadyInHistory = id === worldId && startId === currentStartId && startScenario.trim() === openingText;
           return [
-            realm.title, base(), scenario(), player ? ['Player persona', player.name, player.description].filter(Boolean).join('\n') : '',
+            realm.title, base(), scenarioAlreadyInHistory ? '' : startScenario,
+            player ? ['Player persona', player.name, player.description].filter(Boolean).join('\n') : '',
             ...selected.entries.map(({ title, content }) => `${title}\n${readText(content)}`),
           ].filter((text) => text.trim()).join('\n\n');
         }),

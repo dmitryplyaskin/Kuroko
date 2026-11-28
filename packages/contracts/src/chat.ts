@@ -56,6 +56,7 @@ export function readChatTitle(value: unknown): string | undefined {
 
 export const chatActivityKinds = ['reply', 'instruction', 'model', 'tool', 'agent'] as const;
 export const chatActivityStatuses = ['running', 'completed', 'failed', 'stopped'] as const;
+export type ChatInstructionDetails = { instruction: string; systemOnly?: true };
 export type ChatActivityEntry = {
   id: string;
   kind: (typeof chatActivityKinds)[number];

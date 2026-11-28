@@ -34,7 +34,7 @@ export function toLlmMessages(
     if (role === 'user') {
       const content = render(text);
       if (content.trim()) history.push({ role, content });
-    } else if (history.length) {
+    } else {
       // Earlier calls travel as text so the conversation can continue with a different provider or with tools disabled.
       const content = messageBlocks(message).map((block) => {
         if (block.kind === 'text') return message.edited ? render(block.text) : block.text;

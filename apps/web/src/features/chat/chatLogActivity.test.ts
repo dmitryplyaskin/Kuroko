@@ -23,17 +23,20 @@ test('shows a saved plain answer and uses the same single assistant row for a re
   }
 });
 
-test('shows the instruction before the user message in live and saved turns', () => {
+test('puts the initial instruction before live and saved turns', () => {
   const instruction = { ...event('0', 'instruction', { instruction: 'Отвечай кратко.\nСохраняй тон.' }), time: 3 };
   const pending = withLiveLogReply(log([instruction], [prompt]), { ...reply, text: '' });
   const waiting = { ...model('2', ''), status: 'running' as const };
   const live = withLiveLogReply(log([instruction, waiting], [prompt]), reply);
-  for (const [turn] of [pending, live, log([instruction, model('2', reply.text)]), log([instruction])]) {
-    assert.deepEqual(turn?.rows.map(({ kind }) => kind), ['instruction', 'user', 'assistant']);
-    assert.equal(logRowPreview(turn!.rows[0]!), 'Отвечай кратко.\nСохраняй тон.');
+  for (const [setup, turn] of [pending, live, log([instruction, model('2', reply.text)]), log([instruction])]) {
+    assert.equal(setup?.number, undefined);
+    assert.deepEqual(setup?.rows.map(({ kind }) => kind), ['instruction']);
+    assert.equal(turn?.number, 1);
+    assert.deepEqual(turn?.rows.map(({ kind }) => kind), ['user', 'assistant']);
+    assert.equal(logRowPreview(setup!.rows[0]!), 'Отвечай кратко.\nСохраняй тон.');
   }
-  assert.equal(pending[0]?.rows[2]?.pending, true);
-  assert.equal(live[0]?.rows[2]?.text, reply.text);
+  assert.equal(pending[1]?.rows[1]?.pending, true);
+  assert.equal(live[1]?.rows[1]?.text, reply.text);
 });
 
 test('shows an instruction again only after it changes or a turn uses no instruction', () => {
@@ -44,9 +47,40 @@ test('shows an instruction again only after it changes or a turn uses no instruc
   }] : []);
   const turns = chatLogTurns(chatActivityView(activity, messages).entries, messages);
   assert.deepEqual(turns.map(({ rows }) => rows.map(({ kind }) => kind)), [
-    ['instruction', 'user', 'assistant'], ['user', 'assistant'], ['instruction', 'user', 'assistant'],
-    ['user', 'assistant'], ['instruction', 'user', 'assistant'],
+    ['instruction'], ['user', 'assistant'], ['user', 'assistant'], ['user', 'instruction', 'assistant'],
+    ['user', 'assistant'], ['user', 'instruction', 'assistant'],
   ]);
+});
+
+test('shows a world start before turn one and removes the copied start from old instruction rows', () => {
+  const start: ChatMessage = { ...reply, id: 1, text: 'Открываются ворота.', realmStart: { id: 'gate', title: 'Ворота' } };
+  const player = { ...prompt, id: 4 };
+  const answer = { ...reply, id: 7 };
+  const next = { ...prompt, id: 9 };
+  const messages = [start, player, answer, next];
+  const old = event('0', 'instruction', { instruction: 'Короткие ответы.\n\nOpening message:\nВы у причала.' });
+  const realInstruction = 'Opening message:\nЭто часть инструкции.';
+  const activity = chatActivityView([
+    { promptId: player.id, entries: [old] },
+    { promptId: next.id, entries: [event('0', 'instruction', { instruction: realInstruction, systemOnly: true })] },
+  ], messages).entries;
+  const before = chatLogTurns([], [start]);
+  assert.deepEqual(before.map(({ number, rows }) => [number, rows[0]?.kind]), [[undefined, 'assistant']]);
+  const preview = chatLogTurns([], [start], 'Текущая инструкция.');
+  assert.deepEqual(preview[0]?.rows.map(({ kind }) => kind), ['instruction', 'assistant']);
+  const turns = chatLogTurns(activity, messages);
+  assert.deepEqual(turns.map(({ number, rows }) => [number, rows.map(({ kind }) => kind)]), [
+    [undefined, ['instruction', 'assistant']], [1, ['user', 'assistant']], [2, ['user', 'instruction']],
+  ]);
+  assert.equal(logRowPreview(turns[0]!.rows[0]!), 'Короткие ответы.');
+  assert.equal(logRowPreview(turns[2]!.rows[1]!), realInstruction);
+
+  const onlyOpening = chatActivityView([
+    { promptId: player.id, entries: [event('0', 'instruction', { instruction: `Opening message:\n${start.text}` })] },
+  ], messages).entries;
+  const clean = chatLogTurns(onlyOpening, messages);
+  assert.deepEqual(clean[0]?.rows.map(({ kind }) => kind), ['assistant']);
+  assert.deepEqual(clean[1]?.rows.map(({ kind }) => kind), ['user', 'assistant']);
 });
 
 test('keeps a recorded tool between model rounds and links it to the model that called it', () => {

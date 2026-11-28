@@ -1,7 +1,7 @@
 import { isLlmErrorCode } from '@kuroko/contracts/errors';
 import type { ChatActivityEntry, ChatCreateRequest, ChatReasoningBlock, ChatReplyVariantSelection, ChatSnapshot, ChatSummary, ChatToolCall, SavedChat } from '@kuroko/contracts/chat';
 import type { ActiveChatInstruction } from '@kuroko/contracts/instructions';
-import type { LlmAssistantPart, LlmCompletion, LlmEvent, LlmRequest, LlmTextDelta, LlmToolCall } from '@kuroko/contracts/llm';
+import type { LlmAssistantPart, LlmCompletion, LlmEvent, LlmMessage, LlmRequest, LlmTextDelta, LlmToolCall } from '@kuroko/contracts/llm';
 import { readSubagentResultName, type DelegateTaskEvent, type DelegateTaskRequest, type DelegateTaskResult, type ToolId } from '@kuroko/contracts/tools';
 import { createSubagentBatch, runToolCall, toolDeclarations } from '@kuroko/tool-runtime';
 import { chatInstructionActivity, createChatActivity, recordModelRequest } from '@kuroko/tool-runtime/chatActivity';
@@ -29,6 +29,17 @@ export const chatApi = {
     }),
 };
 
+export function readChatPrompt(session: ActiveSession, chatId: string, signal: AbortSignal, replaceId?: number) {
+  const query = new URLSearchParams({ chat: chatId });
+  if (replaceId !== undefined) query.set('replace', String(replaceId));
+  return sessionRequest<ActiveChatInstruction>(session, `/settings/instructions/active?${query}`, { signal });
+}
+
+export function chatPromptMessages({ text, messages }: ActiveChatInstruction, fallback: ChatSnapshot['messages']): LlmMessage[] {
+  const history = messages ?? toLlmMessages(fallback);
+  return text ? [{ role: 'system', content: text }, ...history] : history;
+}
+
 const maxToolRounds = 16;
 
 export type ChatReplyDelta = Extract<LlmTextDelta, { type: 'text_delta' }> | ({ type: 'reasoning_delta' } & ChatReasoningBlock);
@@ -52,14 +63,9 @@ export async function streamChatReply(
   onActivity: (entry: ChatActivityEntry) => void, uniqueToolIds: boolean, replaceId?: number,
 ): Promise<string> {
   const tools = enabledTools.length ? toolDeclarations(enabledTools) : undefined;
-  const query = new URLSearchParams({ chat: chatId });
-  if (replaceId !== undefined) query.set('replace', String(replaceId));
-  const { text: instruction, messages: rendered } = await sessionRequest<ActiveChatInstruction>(session, `/settings/instructions/active?${query}`, { signal });
-  const history = rendered ?? toLlmMessages(messages);
-  if (instruction) {
-    history.unshift({ role: 'system', content: instruction });
-    onActivity(chatInstructionActivity(instruction));
-  }
+  const prompt = await readChatPrompt(session, chatId, signal, replaceId);
+  const history = chatPromptMessages(prompt, messages);
+  if (prompt.text) onActivity(chatInstructionActivity(prompt.text));
   const savedCalls = messages.flatMap(({ toolCalls }) => toolCalls ?? []);
   const toolCalls: ChatToolCall[] = [];
   const recordedIds = new Set(savedCalls.map(({ id }) => id));

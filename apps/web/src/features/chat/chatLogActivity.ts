@@ -15,8 +15,8 @@ export type LogRow = {
   pending?: boolean;
 };
 
-export type LogTurn = { id: number; number: number; rows: LogRow[] };
-type Turn = { user?: ChatMessage; reply?: ChatMessage; entries: ActivityEntry[] };
+export type LogTurn = { id: number; number?: number; rows: LogRow[] };
+type Turn = { user: ChatMessage; replies: ChatMessage[] };
 
 function messageRow(message: ChatMessage, text = message.text, key = `message-${message.id}`): LogRow {
   return { key, kind: message.role, time: message.time, text };
@@ -73,37 +73,62 @@ function withLatestText(rows: LogRow[], reply: ChatMessage, pending: boolean) {
   return [...rows, { ...messageRow(reply, remaining), pending }];
 }
 
-export function chatLogTurns(entries: ActivityEntry[], messages: ChatMessage[]): LogTurn[] {
-  const turns = new Map<number, Turn>();
-  function turnFor(id: number) {
-    const turn = turns.get(id) ?? { entries: [] };
-    turns.set(id, turn);
-    return turn;
-  }
+function loggedInstruction({ details }: LogEvent, opening?: ChatMessage) {
+  const { instruction, systemOnly } = details;
+  if (typeof instruction !== 'string') return;
+  if (systemOnly || !opening?.realmStart) return instruction;
+  const marker = 'Opening message:\n';
+  const openingBlock = `${marker}${opening.text.trim()}`;
+  if (instruction === openingBlock) return '';
+  const suffix = `\n\n${openingBlock}`;
+  if (instruction.endsWith(suffix)) return instruction.slice(0, -suffix.length);
+  // An older entry can contain a different start if the player changed variants later.
+  const boundary = instruction.lastIndexOf(`\n\n${marker}`);
+  if (boundary >= 0) return instruction.slice(0, boundary);
+  return instruction.startsWith(marker) ? '' : instruction;
+}
+
+export function chatLogTurns(entries: ActivityEntry[], messages: ChatMessage[], initialInstruction?: string | null): LogTurn[] {
+  const byPrompt = Map.groupBy(entries, ({ promptId }) => promptId);
+  const turns: Turn[] = [];
+  const opening: LogRow[] = [];
+  const saved = (reply: ChatMessage) => savedRows(reply, byPrompt.get(reply.id - 1) ?? []);
   for (const message of messages) {
-    if (message.role === 'user') turnFor(message.id).user = message;
-    else turnFor(message.id - 1).reply = message;
+    const turn = turns.at(-1);
+    if (message.role === 'user') turns.push({ user: message, replies: [] });
+    else if (turn) turn.replies.push(message);
+    else opening.push(...saved(message));
   }
-  for (const entry of entries) turnFor(entry.promptId).entries.push(entry);
 
   let previousInstruction: string | undefined;
-  return [...turns].sort(([a], [b]) => a - b).map(([id, { user, reply, entries }], index) => {
-    const rows: LogRow[] = [];
-    const instruction = entries.find((entry): entry is LogEvent => !entry.agentId && entry.kind === 'instruction');
-    if (instruction && typeof instruction.details.instruction === 'string') {
-      if (instruction.details.instruction !== previousInstruction) rows.push(eventRow(instruction));
-      previousInstruction = instruction.details.instruction;
-    } else if (reply || entries.some(({ agentId, kind }) => !agentId && kind === 'model')) {
+  const numbered = turns.map(({ user, replies }, index): LogTurn => {
+    const [reply, ...otherReplies] = replies;
+    const activity = byPrompt.get(user.id) ?? [];
+    const rows = [messageRow(user)];
+    const instruction = activity.find((entry): entry is LogEvent => !entry.agentId && entry.kind === 'instruction');
+    const text = instruction && loggedInstruction(instruction, messages[0]);
+    if (instruction && text) {
+      if (text !== previousInstruction) {
+        const row = eventRow({ ...instruction, details: { instruction: text } });
+        if (index === 0) opening.unshift(row);
+        else rows.push(row);
+      }
+      previousInstruction = text;
+    } else if (instruction || reply || activity.some(({ agentId, kind }) => !agentId && kind === 'model')) {
       previousInstruction = undefined;
     }
-    if (user) rows.push(messageRow(user));
-    if (reply && (!entries.length || entries[0]?.legacyCallId !== undefined)) rows.push(...savedRows(reply, entries));
+    if (reply && (!activity.length || activity[0]?.legacyCallId !== undefined)) rows.push(...savedRows(reply, activity));
     else {
-      const recorded = recordedRows(entries);
+      const recorded = recordedRows(activity);
       rows.push(...(reply ? withLatestText(recorded, reply, false) : recorded));
     }
-    return { id, number: index + 1, rows };
+    rows.push(...otherReplies.flatMap(saved));
+    return { id: user.id, number: index + 1, rows };
   });
+  if (initialInstruction && !turns[0]?.replies.length && opening[0]?.kind !== 'instruction') {
+    opening.unshift({ key: 'initial-instruction', kind: 'instruction', time: messages[0]?.time ?? 0, text: initialInstruction });
+  }
+  return opening.length ? [{ id: 0, rows: opening }, ...numbered] : numbered;
 }
 
 export function agentLogTurns(tasks: AgentTask[]): LogTurn[] {
@@ -132,7 +157,7 @@ export function agentLogTurns(tasks: AgentTask[]): LogTurn[] {
 }
 
 export function withLiveLogReply(turns: LogTurn[], reply: ChatMessage): LogTurn[] {
-  return turns.map((turn) => turn.id === reply.id - 1
+  return turns.map((turn) => turn.number !== undefined && turn.id === reply.id - 1
     ? { ...turn, rows: withLatestText(turn.rows, reply, true) }
     : turn);
 }

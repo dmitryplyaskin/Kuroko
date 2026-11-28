@@ -1,8 +1,9 @@
-import type { ChatActivityEntry } from '@kuroko/contracts/chat';
+import type { ChatActivityEntry, ChatInstructionDetails } from '@kuroko/contracts/chat';
 import type { JsonObject, LlmCompletion, LlmRequest } from '@kuroko/contracts/llm';
 
 export function chatInstructionActivity(instruction: string): ChatActivityEntry {
-  return { id: '0', kind: 'instruction', status: 'completed', time: Date.now(), details: { instruction } };
+  const details = { instruction, systemOnly: true } satisfies ChatInstructionDetails;
+  return { id: '0', kind: 'instruction', status: 'completed', time: Date.now(), details };
 }
 
 export function createChatActivity<T>(report: (entry: ChatActivityEntry) => T) {

@@ -54,6 +54,7 @@ function readAssistantPart(value: unknown): LlmAssistantPart {
 function readMessages(values: unknown): LlmMessage[] {
   if (!Array.isArray(values) || !values.length) invalid();
   let sawUser = false;
+  let sawConversation = false;
   const pending = new Set<string>();
   const messages = values.map((value: unknown): LlmMessage => {
     const message = record(value);
@@ -68,21 +69,24 @@ function readMessages(values: unknown): LlmMessage[] {
     }
 
     if (pending.size) invalid();
-    if (role === 'system' && !sawUser && isText(content) && content.trim()) return { role, content };
+    if (role === 'system' && !sawConversation && isText(content) && content.trim()) return { role, content };
     if (role === 'user' && isText(content) && content.trim()) {
       sawUser = true;
+      sawConversation = true;
       return { role, content };
     }
-    if (role === 'assistant' && sawUser && Array.isArray(parts) && parts.length) {
+    if (role === 'assistant' && Array.isArray(parts) && parts.length) {
       if (openrouterReasoning !== undefined &&
         (!Array.isArray(openrouterReasoning) || !openrouterReasoning.every(jsonObject))) invalid();
       const assistantParts = parts.map(readAssistantPart);
+      if (!sawUser && assistantParts.some(({ type }) => type !== 'text')) invalid();
       if (!assistantParts.some((part) => part.type === 'toolCall' || (part.type === 'text' && part.text.trim()))) invalid();
       for (const part of assistantParts) {
         if (part.type !== 'toolCall') continue;
         if (pending.has(part.id)) invalid();
         pending.add(part.id);
       }
+      sawConversation = true;
       return { role, parts: assistantParts, openrouterReasoning };
     }
     return invalid();

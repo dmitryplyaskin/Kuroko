@@ -1675,7 +1675,8 @@ test('opens chats from owned realms and keeps the selected start with the conver
   ]);
   expect(await (await createChat(body)).json()).toEqual(chat);
   expect(await (await request(`/settings/instructions/active?chat=${chat.id}`, { cookie })).json()).toMatchObject({
-    text: 'Остров\n\nГород на берегу\n\nOpening message:\nДобро пожаловать в Остров.', messages: [],
+    text: 'Остров\n\nГород на берегу',
+    messages: [{ role: 'assistant', parts: [{ type: 'text', text: 'Добро пожаловать в Остров.' }] }],
   });
 
   const selected = await request(`${path}/reply-variant`, { method: 'PUT', cookie, body: { revision: chat.revision, replyId: 1, index: 1 } });
@@ -1692,10 +1693,29 @@ test('opens chats from owned realms and keeps the selected start with the conver
   const continued = await saved.json() as SavedChat;
   expect(continued).toMatchObject({ realmId: savedRealm.id, messages: [second.messages[0]!, { id: 2, role: 'user' }] });
   expect(await (await request(path, { cookie })).json()).toEqual(continued);
-  expect(await (await request(`/settings/instructions/active?chat=${chat.id}`, { cookie })).json()).toMatchObject({
-    text: 'Остров\n\nГород на берегу\n\nВолны бьют о берег.\n\nOpening message:\nВолны бьют о берег.',
-    messages: [{ role: 'user', content: 'Я ищу укрытие.' }],
+  const prepared = await (await request(`/settings/instructions/active?chat=${chat.id}`, { cookie })).json() as {
+    text: string; messages: LlmRequest['messages'];
+  };
+  expect(prepared).toEqual({
+    text: 'Остров\n\nГород на берегу',
+    messages: [{ role: 'assistant', parts: [{ type: 'text', text: 'Волны бьют о берег.' }] }, { role: 'user', content: 'Я ищу укрытие.' }],
   });
+  await saveGenerationPreset(cookie, 'openai', 'realm-start-test-key');
+  const upstreamMessages: unknown[] = [];
+  const upstream = mockGeneration((_url, init) => {
+    upstreamMessages.push(JSON.parse(String(init?.body)).messages);
+    return Response.json({ choices: [{ message: { content: 'Здесь есть укрытие.' }, finish_reason: 'stop' }] });
+  });
+  try {
+    const system = { role: 'system' as const, content: prepared.text };
+    expect((await request('/llm/generate', { method: 'POST', cookie, body: { messages: [system, ...prepared.messages] } })).status).toBe(200);
+    expect(upstreamMessages).toEqual([[system, { role: 'assistant', content: 'Волны бьют о берег.' }, { role: 'user', content: 'Я ищу укрытие.' }]]);
+    expect((await request('/llm/generate', { method: 'POST', cookie, body: {
+      messages: [prepared.messages[0], system, prepared.messages[1]],
+    } })).status).toBe(400);
+  } finally {
+    upstream.mockRestore();
+  }
 
   const realmPath = `/realms/${savedRealm.id}`;
   const updated = await request(realmPath, { method: 'PUT', cookie, body: {
@@ -1708,7 +1728,7 @@ test('opens chats from owned realms and keeps the selected start with the conver
   expect(renamed.status).toBe(200);
   expect(await renamed.json()).toEqual({ id: chat.id, title: 'Укрытие', updatedAt: reopened.updatedAt, realmId: savedRealm.id });
   expect(await (await request(`/settings/instructions/active?chat=${chat.id}`, { cookie })).json()).toMatchObject({
-    text: 'Каменный остров\n\nГород на берегу\n\nOpening message:\nВолны бьют о берег.',
+    text: 'Каменный остров\n\nГород на берегу',
   });
   expect((await request(realmPath, { method: 'DELETE', cookie })).status).toBe(204);
   const detached = await (await request(path, { cookie })).json() as SavedChat;
@@ -1920,7 +1940,7 @@ test('regenerates only the latest GM reply and restores its instructions and pri
   const originalInstruction = 'Описывай звуки.';
   const replacementInstruction = 'Делай описания короткими.';
   const logged = (promptId: number, instruction: string) => ({
-    promptId, entries: [{ kind: 'instruction' as const, details: { instruction } }],
+    promptId, entries: [{ kind: 'instruction' as const, details: { instruction, systemOnly: true } }],
   });
   expect((await useInstruction('Подробности', originalInstruction)).status).toBe(201);
   let scene: { text: string; notes: string } | undefined = { text: 'Видна дверь.', notes: 'Ключ лежит в кармане.' };
