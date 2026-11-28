@@ -1,5 +1,5 @@
 import { useI18n } from '../../shared/i18n/i18n';
-import { Anchor, Button, Group, Modal, Tabs, useComputedColorScheme } from '@mantine/core';
+import { Button, Group, Modal, Tabs, useComputedColorScheme } from '@mantine/core';
 import { createWatch } from 'effector';
 import { useProvidedScope, useUnit } from 'effector-react';
 import { Bot, List, MessageSquare } from 'lucide-react';
@@ -157,15 +157,8 @@ export default function Chat() {
     <Tabs className={chatClasses['chat-panel']} data-user-side={settings.userSide} value={activeTab}
       onChange={(value) => setSelectedTab({ entry, value })}
       keepMountedMode="display-none" variant="unstyled" style={chatDisplayStyle(settings, scheme)}>
+      <h1 className={chatClasses['chat-sr-only']} dir="auto" id="chat-title" ref={title} tabIndex={-1}>{chat?.title || t('chat.title')}</h1>
       <header className={chatClasses['chat-workspace-header']}>
-        <div className={chat && !agent ? chatClasses['chat-context'] : chatClasses['chat-sr-only']}>
-          <div className={chatClasses['chat-context-copy']}>
-            <h1 dir="auto" id="chat-title" ref={title} tabIndex={-1}>{chat?.title || t('chat.title')}</h1>
-            {realm && !agent && <Anchor component="button" type="button" size="sm" c="var(--kr-accent)" underline="always" dir="auto"
-              disabled={realms.disabled(realm.id)} onClick={() => realms.open(realm.id)}>{realm.title}</Anchor>}
-          </div>
-          {chat && !agent && <ChatActions chat={chat} locked={locked} surface="chat" onOpenLog={() => openLog(chat.id)} />}
-        </div>
         {agent && <AgentToolbar agent={agent} heading={agentHeading} onBack={backFromAgent} />}
         <Tabs.List className={chatClasses['chat-tabs']} aria-labelledby={agent ? 'chat-agent-title' : 'chat-title'}>
           <Tabs.Tab ref={chatTab} className={chatClasses['chat-tab']} value="chat" leftSection={<MessageSquare size={15} aria-hidden="true" />}>
@@ -180,6 +173,8 @@ export default function Chat() {
             </Tabs.Tab>
           )}
         </Tabs.List>
+        {chat && !agent && <ChatActions chat={chat} locked={locked} surface="chat" onOpenLog={() => openLog(chat.id)}
+          realm={realm ? { title: realm.title, disabled: realms.disabled(realm.id), onOpen: () => realms.open(realm.id) } : undefined} />}
       </header>
       {(missing || loadError || saveError) && (
         <div className={chatClasses['chat-status']}>
